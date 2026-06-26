@@ -35,6 +35,8 @@ function buildNodes(tracks) {
         name: track.name,
         artist: track.artist,
         albumArtUrl: track.album_art_url,
+        bpm: track.bpm ?? null,
+        camelot: track.camelot ?? null,
       },
       draggable: false,
       selectable: false,
