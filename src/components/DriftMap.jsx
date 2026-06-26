@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import {
   ReactFlow,
+  ReactFlowProvider,
   useNodesState,
   useViewport,
 } from '@xyflow/react'
@@ -14,7 +15,6 @@ const H = 800
 // 5%–95% padding as per spec
 const PAD = { x: [W * 0.05, W * 0.95], y: [H * 0.05, H * 0.95] }
 
-// Map audio feature values (0–100) to flow-space pixel coordinates.
 // X axis = mood/valence: dark (low) → left, bright (high) → right.
 // Y axis = energy: intense (high) → top (low Y), chill (low) → bottom (high Y).
 function toFlowPos(energy, mood) {
@@ -46,10 +46,12 @@ function buildNodes(tracks) {
 const nodeTypes = { track: TrackNode }
 
 const MONO = '"Space Mono", "B612 Mono", "Courier New", monospace'
-const AXIS_COLOR = 'rgba(255,255,255,0.11)'
+const AXIS_COLOR = 'rgba(255,255,255,0.15)'
 const LABEL_COLOR = 'rgba(255,255,255,0.28)'
 
-// Renders crosshair axes and quadrant labels, tracking the React Flow viewport.
+// Rendered as a sibling of <ReactFlow> (inside ReactFlowProvider) so that
+// position:absolute inset:0 resolves against the full 100vw×100vh wrapper,
+// while useViewport() still reads from the shared store.
 function AxisLayer() {
   const { x, y, zoom } = useViewport()
 
@@ -106,11 +108,10 @@ function AxisLayer() {
   )
 }
 
-export default function DriftMap({ tracks }) {
+function DriftMapInner({ tracks }) {
   const initialNodes = useMemo(() => buildNodes(tracks), [tracks])
   const [nodes, , onNodesChange] = useNodesState(initialNodes)
 
-  // Center flow-space origin on screen
   const defaultViewport = useMemo(() => ({
     x: window.innerWidth / 2 - W / 2,
     y: window.innerHeight / 2 - H / 2,
@@ -118,7 +119,7 @@ export default function DriftMap({ tracks }) {
   }), [])
 
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#0c0c0c' }}>
+    <div style={{ width: '100vw', height: '100vh', background: '#0c0c0c', position: 'relative' }}>
       <ReactFlow
         nodes={nodes}
         edges={[]}
@@ -136,9 +137,16 @@ export default function DriftMap({ tracks }) {
         maxZoom={3}
         style={{ background: '#0c0c0c' }}
         proOptions={{ hideAttribution: true }}
-      >
-        <AxisLayer />
-      </ReactFlow>
+      />
+      <AxisLayer />
     </div>
+  )
+}
+
+export default function DriftMap({ tracks }) {
+  return (
+    <ReactFlowProvider>
+      <DriftMapInner tracks={tracks} />
+    </ReactFlowProvider>
   )
 }
