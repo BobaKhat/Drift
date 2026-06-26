@@ -3,9 +3,7 @@
 
 export async function getAlbumArt(artist, title) {
   const term = encodeURIComponent(`${artist} ${title}`)
-  const res = await fetch(
-    `https://itunes.apple.com/search?term=${term}&entity=song&limit=1`,
-  )
+  const res = await fetch(`/api/itunes/search?term=${term}&entity=song&limit=1`)
   if (!res.ok) return null
   const data = await res.json()
   const url = data.results?.[0]?.artworkUrl100

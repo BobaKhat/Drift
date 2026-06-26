@@ -9,7 +9,7 @@ export function parseTrackString(input) {
   return { artist: match[1].trim(), title: match[2].trim() }
 }
 
-export async function analyzeTrack(trackString) {
+export async function analyzeTrack(trackString, { delayMs = 0 } = {}) {
   const { artist, title } = parseTrackString(trackString)
 
   // Return cached result if available (.limit(1) tolerates duplicate rows gracefully)
@@ -22,30 +22,49 @@ export async function analyzeTrack(trackString) {
 
   const cached = rows?.[0] ?? null
 
-  if (cached) {
+  // Only trust the cache if analysis actually succeeded — unanalyzed records get retried.
+  if (cached && cached.status !== 'unanalyzed') {
     console.log('[drift] cache hit:', cached.artist, '–', cached.name)
     return cached
   }
 
+  // Stagger SoundNet calls to stay within rate limits — delay only on cache miss.
+  if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs))
+
   console.log('[drift] analyzing:', artist, '–', title)
 
-  // Fetch album art regardless; attempt SoundNet but degrade gracefully on failure
-  const [featuresResult, albumArtUrl] = await Promise.all([
+  // Reuse existing album art if we already stored it; otherwise fetch.
+  const [soundnetResult, albumArtUrl] = await Promise.all([
     getAudioFeatures(artist, title).catch((err) => {
       console.warn('[drift] SoundNet failed, storing unanalyzed:', err.message)
       return null
     }),
-    getAlbumArt(artist, title),
+    cached?.album_art_url
+      ? Promise.resolve(cached.album_art_url)
+      : getAlbumArt(artist, title),
   ])
 
   const track = {
     name: title,
     artist,
-    album_art_url: albumArtUrl,
-    ...(featuresResult ?? {}),
+    album_art_url: cached?.album_art_url ?? albumArtUrl,
+    ...(soundnetResult ?? {}),
     source: 'soundnet',
     analyzed_at: new Date().toISOString(),
-    status: featuresResult ? (featuresResult.status ?? 'analyzed') : 'unanalyzed',
+    status: soundnetResult ? (soundnetResult.status ?? 'analyzed') : 'unanalyzed',
+  }
+
+  // UPDATE existing row if one already exists (avoids duplicate inserts on retry).
+  if (cached) {
+    const { data, error } = await supabase
+      .from('tracks')
+      .update(track)
+      .eq('id', cached.id)
+      .select()
+      .single()
+    if (error) throw new Error(`Supabase update failed: ${error.message}`)
+    console.log('[drift] updated track id:', data.id)
+    return data
   }
 
   const { data, error } = await supabase

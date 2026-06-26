@@ -35,7 +35,7 @@ async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
 }
 
 export async function getAudioFeatures(artist, title) {
-  const params = new URLSearchParams({ artist, title })
+  const params = new URLSearchParams({ artist, song: title })
   const res = await fetchWithRetry(`/api/soundnet/pktx/analysis?${params}`)
 
   const data = await res.json()

@@ -9,6 +9,12 @@ export default defineConfig(({ mode }) => {
     plugins: [react(), tailwindcss()],
     server: {
       proxy: {
+        // Proxies iTunes calls — Apple redirects break browser CORS on some queries
+        '/api/itunes': {
+          target: 'https://itunes.apple.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/itunes/, ''),
+        },
         // Proxies SoundNet calls to avoid CORS; API key stays server-side
         '/api/soundnet': {
           target: 'https://track-analysis.p.rapidapi.com',

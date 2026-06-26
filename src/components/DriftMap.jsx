@@ -14,23 +14,23 @@ const H = 800
 // 5%–95% padding as per spec
 const PAD = { x: [W * 0.05, W * 0.95], y: [H * 0.05, H * 0.95] }
 
-// Map audio feature value (0–100) to flow-space pixel coordinate.
-// Mood is inverted: high valence (bright) = top = low Y.
+// Map audio feature values (0–100) to flow-space pixel coordinates.
+// X axis = mood/valence: dark (low) → left, bright (high) → right.
+// Y axis = energy: intense (high) → top (low Y), chill (low) → bottom (high Y).
 function toFlowPos(energy, mood) {
-  const x = (energy / 100) * (PAD.x[1] - PAD.x[0]) + PAD.x[0]
-  const y = (1 - mood / 100) * (PAD.y[1] - PAD.y[0]) + PAD.y[0]
+  const x = (mood / 100) * (PAD.x[1] - PAD.x[0]) + PAD.x[0]
+  const y = (1 - energy / 100) * (PAD.y[1] - PAD.y[0]) + PAD.y[0]
   return { x, y }
 }
 
-function buildNodes(track) {
-  if (!track) return []
-  const pos = toFlowPos(track.energy ?? 50, track.mood ?? 50)
-  return [
-    {
-      id: track.id ?? 'track-0',
+function buildNodes(tracks) {
+  return tracks.map((track, i) => {
+    const pos = toFlowPos(track.energy ?? 50, track.mood ?? 50)
+    return {
+      id: track.id ?? `track-${i}`,
       type: 'track',
       position: pos,
-      origin: [0.5, 0.5], // center node on its coordinate
+      origin: [0.5, 0.5],
       data: {
         name: track.name,
         artist: track.artist,
@@ -39,8 +39,8 @@ function buildNodes(track) {
       draggable: false,
       selectable: false,
       connectable: false,
-    },
-  ]
+    }
+  })
 }
 
 const nodeTypes = { track: TrackNode }
@@ -91,23 +91,23 @@ function AxisLayer() {
         }}
       />
 
-      {/* Axis pole labels */}
-      <span style={{ position: 'absolute', top: cy - 22, left: 20, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>CHILL</span>
-      <span style={{ position: 'absolute', top: cy - 22, right: 20, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>INTENSE</span>
-      <span style={{ position: 'absolute', top: 14, left: cx + 12, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>BRIGHT</span>
-      <span style={{ position: 'absolute', bottom: 14, left: cx + 12, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>DARK</span>
+      {/* Axis pole labels — X: Dark/Bright, Y: Intense/Chill */}
+      <span style={{ position: 'absolute', top: cy - 22, left: 20, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>DARK</span>
+      <span style={{ position: 'absolute', top: cy - 22, right: 20, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>BRIGHT</span>
+      <span style={{ position: 'absolute', top: 14, left: cx + 12, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>INTENSE</span>
+      <span style={{ position: 'absolute', bottom: 14, left: cx + 12, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>CHILL</span>
 
       {/* Quadrant labels */}
-      <span style={{ position: 'absolute', top: cy - 44, left: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)' }}>Chill · Bright</span>
+      <span style={{ position: 'absolute', top: cy - 44, left: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)' }}>Intense · Dark</span>
       <span style={{ position: 'absolute', top: cy - 44, right: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)', textAlign: 'right' }}>Intense · Bright</span>
       <span style={{ position: 'absolute', bottom: 36, left: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)' }}>Chill · Dark</span>
-      <span style={{ position: 'absolute', bottom: 36, right: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)', textAlign: 'right' }}>Intense · Dark</span>
+      <span style={{ position: 'absolute', bottom: 36, right: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)', textAlign: 'right' }}>Chill · Bright</span>
     </div>
   )
 }
 
-export default function DriftMap({ track }) {
-  const initialNodes = useMemo(() => buildNodes(track), [track])
+export default function DriftMap({ tracks }) {
+  const initialNodes = useMemo(() => buildNodes(tracks), [tracks])
   const [nodes, , onNodesChange] = useNodesState(initialNodes)
 
   // Center flow-space origin on screen

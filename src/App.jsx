@@ -2,8 +2,13 @@ import { useState, useEffect } from 'react'
 import DriftMap from './components/DriftMap'
 import { analyzeTrack } from './lib/pipeline'
 
-// Hardcoded test track for V1 pipeline proof
-const TEST_TRACK = 'Massive Attack – Teardrop'
+const TEST_TRACKS = [
+  'Massive Attack – Teardrop',    // chill · dark   → bottom-left
+  'Skrillex – Bangarang',         // intense · dark  → top-left
+  'Bon Iver – Skinny Love',       // chill · dark-mid → bottom
+  'Daft Punk – Get Lucky',        // intense · bright → top-right
+  'Gesaffelstein – Pursuit',      // intense · dark  → top-left
+]
 
 const MONO = '"Space Mono", "B612 Mono", "Courier New", monospace'
 
@@ -25,16 +30,24 @@ function Shell({ children }) {
 }
 
 export default function App() {
-  const [track, setTrack] = useState(null)
+  const [tracks, setTracks] = useState([])
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    analyzeTrack(TEST_TRACK)
-      .then(setTrack)
-      .catch((err) => {
-        console.error('[drift] pipeline error:', err)
-        setError(err.message)
+    Promise.allSettled(TEST_TRACKS.map((t, i) => analyzeTrack(t, { delayMs: i * 2000 })))
+      .then((results) => {
+        const loaded = results
+          .filter((r) => r.status === 'fulfilled')
+          .map((r) => r.value)
+        results
+          .filter((r) => r.status === 'rejected')
+          .forEach((r) => console.error('[drift] track failed:', r.reason))
+        if (loaded.length === 0) {
+          setError('All tracks failed to load.')
+        } else {
+          setTracks(loaded)
+        }
       })
       .finally(() => setLoading(false))
   }, [])
@@ -73,9 +86,9 @@ export default function App() {
 
   return (
     <>
-      <DriftMap track={track} />
+      <DriftMap tracks={tracks} />
 
-      {/* Debug overlay — remove once pipeline is verified */}
+      {/* Debug overlay */}
       <div
         style={{
           position: 'fixed',
@@ -89,10 +102,11 @@ export default function App() {
           pointerEvents: 'none',
         }}
       >
-        <div>{track.artist} – {track.name}</div>
-        <div>E {track.energy?.toFixed(1)} · M {track.mood?.toFixed(1)} · BPM {track.bpm?.toFixed(0)}</div>
-        <div>Key {track.key ?? '—'} · Camelot {track.camelot ?? '—'}</div>
-        <div style={{ color: 'rgba(255,255,255,0.12)' }}>{track.id}</div>
+        {tracks.map((t) => (
+          <div key={t.id}>
+            {t.artist} – {t.name} · E {t.energy?.toFixed(1) ?? '—'} · M {t.mood?.toFixed(1) ?? '—'}
+          </div>
+        ))}
       </div>
     </>
   )
