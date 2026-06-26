@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0c0c0c;
+}
+
+/* Override React Flow's default white background */
+.react-flow__renderer {
+  background: #0c0c0c !important;
+}
+
+.react-flow__pane {
+  cursor: default !important;
+}
