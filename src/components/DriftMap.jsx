@@ -1,16 +1,17 @@
-import { useMemo } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
   useNodesState,
   useViewport,
+  useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TrackNode from './TrackNode'
 
 // Flow-space canvas dimensions
-const W = 1000
-const H = 800
+const W = 3000
+const H = 3000
 
 // 5%–95% padding as per spec
 const PAD = { x: [W * 0.05, W * 0.95], y: [H * 0.05, H * 0.95] }
@@ -110,15 +111,53 @@ function AxisLayer() {
   )
 }
 
+
 function DriftMapInner({ tracks }) {
   const initialNodes = useMemo(() => buildNodes(tracks), [tracks])
   const [nodes, , onNodesChange] = useNodesState(initialNodes)
+  const [minZoom, setMinZoom] = useState(0.01)
+  const rf = useReactFlow()
+  const hasFit = useRef(false)
 
-  const defaultViewport = useMemo(() => ({
-    x: window.innerWidth / 2 - W / 2,
-    y: window.innerHeight / 2 - H / 2,
-    zoom: 1,
-  }), [])
+  useEffect(() => {
+    if (hasFit.current || nodes.length === 0) return
+    // Wait until every node has been measured by ResizeObserver
+    const allMeasured = nodes.every((n) => n.measured?.width && n.measured?.height)
+    if (!allMeasured) return
+
+    // Compute bounding box directly from song node positions
+    const songNodes = nodes.filter((n) => n.type === 'track')
+    const xs = songNodes.map((n) => n.position.x)
+    const ys = songNodes.map((n) => n.position.y)
+    const minX = Math.min(...xs), maxX = Math.max(...xs)
+    const minY = Math.min(...ys), maxY = Math.max(...ys)
+    const spanX = maxX - minX || 1
+    const spanY = maxY - minY || 1
+
+    const PAD_FRAC = 0.12 // fraction of viewport as breathing room on each side
+    const vw = window.innerWidth, vh = window.innerHeight
+    const zoom = Math.min(
+      (vw * (1 - 2 * PAD_FRAC)) / spanX,
+      (vh * (1 - 2 * PAD_FRAC)) / spanY,
+    )
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    const x = vw / 2 - cx * zoom
+    const y = vh / 2 - cy * zoom
+
+    console.log(`[drift] bbox x=[${minX.toFixed(0)}, ${maxX.toFixed(0)}] y=[${minY.toFixed(0)}, ${maxY.toFixed(0)}] span=${spanX.toFixed(0)}×${spanY.toFixed(0)}`)
+    console.log(`[drift] viewport: zoom=${zoom.toFixed(4)} x=${x.toFixed(1)} y=${y.toFixed(1)}`)
+    songNodes.forEach((n) => {
+      const sx = n.position.x * zoom + x
+      const sy = n.position.y * zoom + y
+      const visible = sx >= 0 && sx <= vw && sy >= 0 && sy <= vh
+      console.log(`  "${n.data.name}": flow=(${n.position.x.toFixed(0)},${n.position.y.toFixed(0)}) screen=(${sx.toFixed(0)},${sy.toFixed(0)}) — ${visible ? '✓' : '✗ OFF-SCREEN'}`)
+    })
+
+    rf.setViewport({ x, y, zoom })
+    setMinZoom(zoom * 0.8)
+    hasFit.current = true
+  }, [nodes, rf])
 
   return (
     <div style={{ width: '100vw', height: '100vh', background: '#0c0c0c', position: 'relative' }}>
@@ -127,15 +166,14 @@ function DriftMapInner({ tracks }) {
         edges={[]}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
-        defaultViewport={defaultViewport}
-        fitView={false}
+
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
         panOnDrag
         zoomOnScroll
         zoomOnPinch
-        minZoom={0.3}
+        minZoom={minZoom}
         maxZoom={3}
         style={{ background: '#0c0c0c' }}
         proOptions={{ hideAttribution: true }}
