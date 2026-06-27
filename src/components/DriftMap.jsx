@@ -104,9 +104,9 @@ function AxisLayer() {
 }
 
 
-// 1000px overflow on each side of the 3000×3000 canvas — songs at the edges
+// 1500px overflow on each side of the 3000×3000 canvas — songs at the edges
 // can be centered without hitting a hard wall
-const TRANSLATE_EXTENT = [[-1000, -1000], [W + 1000, H + 1000]]
+const TRANSLATE_EXTENT = [[-1500, -1500], [W + 1500, H + 1500]]
 
 function DriftMapInner({ tracks }) {
   const initialNodes = useMemo(() => buildNodes(tracks), [tracks])
@@ -114,6 +114,18 @@ function DriftMapInner({ tracks }) {
   const [minZoom, setMinZoom] = useState(0.01)
   const rf = useReactFlow()
   const hasFit = useRef(false)
+  const wrapperRef = useRef(null)
+  const zoomTimer = useRef(null)
+
+  const handleWheel = useCallback((e) => {
+    // ctrlKey is true for pinch-to-zoom and ctrl+scroll — the zoom gesture
+    if (!e.ctrlKey) return
+    const el = wrapperRef.current
+    if (!el) return
+    el.classList.add('is-zooming')
+    clearTimeout(zoomTimer.current)
+    zoomTimer.current = setTimeout(() => el.classList.remove('is-zooming'), 150)
+  }, [])
 
   useEffect(() => {
     if (hasFit.current || nodes.length === 0) return
@@ -157,7 +169,12 @@ function DriftMapInner({ tracks }) {
   }, [nodes, rf])
 
   return (
-    <div style={{ width: '100vw', height: '100vh', background: '#0c0c0c', position: 'relative' }}>
+    <div
+      ref={wrapperRef}
+      className="drift-canvas"
+      onWheel={handleWheel}
+      style={{ width: '100vw', height: '100vh', background: '#0c0c0c', position: 'relative' }}
+    >
       <ReactFlow
         nodes={nodes}
         edges={[]}

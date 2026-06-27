@@ -21,3 +21,8 @@ html, body, #root {
 .react-flow__pane {
   cursor: default !important;
 }
+
+/* Smooth zoom steps only — class toggled via JS on wheel+ctrl (pinch/zoom), not on pan */
+.drift-canvas.is-zooming .react-flow__viewport {
+  transition: transform 80ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
