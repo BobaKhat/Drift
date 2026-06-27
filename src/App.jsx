@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import DriftMap from './components/DriftMap'
+import LeftNav from './components/LeftNav'
 import { analyzeTrack } from './lib/pipeline'
 
 const TEST_TRACKS = [
@@ -87,13 +88,14 @@ export default function App() {
   return (
     <>
       <DriftMap tracks={tracks} />
+      <LeftNav />
 
       {/* Debug overlay */}
       <div
         style={{
           position: 'fixed',
           bottom: 20,
-          left: 20,
+          left: 70,
           fontFamily: MONO,
           fontSize: 9,
           letterSpacing: '0.08em',

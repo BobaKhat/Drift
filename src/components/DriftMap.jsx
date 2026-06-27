@@ -1,10 +1,10 @@
-import { useMemo, useState, useRef, useEffect } from 'react'
+import { useMemo, useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
   useNodesState,
-  useViewport,
   useReactFlow,
+  useOnViewportChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TrackNode from './TrackNode'
@@ -52,65 +52,61 @@ const MONO = '"Space Mono", "B612 Mono", "Courier New", monospace'
 const AXIS_COLOR = 'rgba(255,255,255,0.15)'
 const LABEL_COLOR = 'rgba(255,255,255,0.28)'
 
-// Rendered as a sibling of <ReactFlow> (inside ReactFlowProvider) so that
-// position:absolute inset:0 resolves against the full 100vw×100vh wrapper,
-// while useViewport() still reads from the shared store.
+// AxisLayer writes positions directly to the DOM via refs — no React re-renders
+// on zoom/pan. useOnViewportChange fires in the same frame as the d3-zoom event,
+// while useViewport() would route through React's batch cycle (one frame late).
 function AxisLayer() {
-  const { x, y, zoom } = useViewport()
+  const rf = useReactFlow()
+  const hLineRef = useRef(null)
+  const vLineRef = useRef(null)
+  const darkRef = useRef(null)
+  const brightRef = useRef(null)
+  const intenseRef = useRef(null)
+  const chillRef = useRef(null)
+  const qiDarkRef = useRef(null)
+  const qiBrightRef = useRef(null)
 
-  // Flow-space center → screen-space pixel
-  const cx = (W / 2) * zoom + x
-  const cy = (H / 2) * zoom + y
+  const applyViewport = useCallback(({ x, y, zoom }) => {
+    const cx = (W / 2) * zoom + x
+    const cy = (H / 2) * zoom + y
+    if (hLineRef.current)    hLineRef.current.style.top      = `${cy}px`
+    if (vLineRef.current)    vLineRef.current.style.left     = `${cx}px`
+    if (darkRef.current)     darkRef.current.style.top       = `${cy - 22}px`
+    if (brightRef.current)   brightRef.current.style.top     = `${cy - 22}px`
+    if (intenseRef.current)  intenseRef.current.style.left   = `${cx + 12}px`
+    if (chillRef.current)    chillRef.current.style.left     = `${cx + 12}px`
+    if (qiDarkRef.current)   qiDarkRef.current.style.top     = `${cy - 44}px`
+    if (qiBrightRef.current) qiBrightRef.current.style.top   = `${cy - 44}px`
+  }, [])
+
+  // Set correct positions before first paint so there's no flash at (0,0)
+  useLayoutEffect(() => { applyViewport(rf.getViewport()) }, [applyViewport, rf])
+
+  // Track all subsequent viewport changes imperatively
+  useOnViewportChange({ onChange: applyViewport })
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Horizontal axis line */}
-      <div
-        style={{
-          position: 'absolute',
-          top: cy,
-          left: 0,
-          right: 0,
-          height: 1,
-          background: AXIS_COLOR,
-          transform: 'translateY(-0.5px)',
-        }}
-      />
-      {/* Vertical axis line */}
-      <div
-        style={{
-          position: 'absolute',
-          left: cx,
-          top: 0,
-          bottom: 0,
-          width: 1,
-          background: AXIS_COLOR,
-          transform: 'translateX(-0.5px)',
-        }}
-      />
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+      <div ref={hLineRef} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: AXIS_COLOR, transform: 'translateY(-0.5px)' }} />
+      <div ref={vLineRef} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: AXIS_COLOR, transform: 'translateX(-0.5px)' }} />
 
-      {/* Axis pole labels — X: Dark/Bright, Y: Intense/Chill */}
-      <span style={{ position: 'absolute', top: cy - 22, left: 20, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>DARK</span>
-      <span style={{ position: 'absolute', top: cy - 22, right: 20, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>BRIGHT</span>
-      <span style={{ position: 'absolute', top: 14, left: cx + 12, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>INTENSE</span>
-      <span style={{ position: 'absolute', bottom: 14, left: cx + 12, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>CHILL</span>
+      <span ref={darkRef}    style={{ position: 'absolute', top: 0, left: 20,  fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>DARK</span>
+      <span ref={brightRef}  style={{ position: 'absolute', top: 0, right: 20, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>BRIGHT</span>
+      <span ref={intenseRef} style={{ position: 'absolute', top: 14,    left: 0, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>INTENSE</span>
+      <span ref={chillRef}   style={{ position: 'absolute', bottom: 14, left: 0, fontSize: 9, fontFamily: MONO, letterSpacing: '0.15em', color: LABEL_COLOR }}>CHILL</span>
 
-      {/* Quadrant labels */}
-      <span style={{ position: 'absolute', top: cy - 44, left: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)' }}>Intense · Dark</span>
-      <span style={{ position: 'absolute', top: cy - 44, right: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)', textAlign: 'right' }}>Intense · Bright</span>
-      <span style={{ position: 'absolute', bottom: 36, left: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)' }}>Chill · Dark</span>
+      <span ref={qiDarkRef}   style={{ position: 'absolute', top: 0, left: 48,  fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)' }}>Intense · Dark</span>
+      <span ref={qiBrightRef} style={{ position: 'absolute', top: 0, right: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)', textAlign: 'right' }}>Intense · Bright</span>
+      <span style={{ position: 'absolute', bottom: 36, left: 48,  fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)' }}>Chill · Dark</span>
       <span style={{ position: 'absolute', bottom: 36, right: 48, fontSize: 9, fontFamily: MONO, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.10)', textAlign: 'right' }}>Chill · Bright</span>
     </div>
   )
 }
 
+
+// 1000px overflow on each side of the 3000×3000 canvas — songs at the edges
+// can be centered without hitting a hard wall
+const TRANSLATE_EXTENT = [[-1000, -1000], [W + 1000, H + 1000]]
 
 function DriftMapInner({ tracks }) {
   const initialNodes = useMemo(() => buildNodes(tracks), [tracks])
@@ -121,31 +117,32 @@ function DriftMapInner({ tracks }) {
 
   useEffect(() => {
     if (hasFit.current || nodes.length === 0) return
-    // Wait until every node has been measured by ResizeObserver
     const allMeasured = nodes.every((n) => n.measured?.width && n.measured?.height)
     if (!allMeasured) return
 
-    // Compute bounding box directly from song node positions
     const songNodes = nodes.filter((n) => n.type === 'track')
     const xs = songNodes.map((n) => n.position.x)
     const ys = songNodes.map((n) => n.position.y)
     const minX = Math.min(...xs), maxX = Math.max(...xs)
     const minY = Math.min(...ys), maxY = Math.max(...ys)
-    const spanX = maxX - minX || 1
-    const spanY = maxY - minY || 1
 
-    const PAD_FRAC = 0.12 // fraction of viewport as breathing room on each side
+    // Center on canvas midpoint so axis crosshair lands at screen center,
+    // then zoom to fit the outermost song from that fixed center point.
+    const canvasCx = W / 2
+    const canvasCy = H / 2
+    const extX = Math.max(Math.abs(minX - canvasCx), Math.abs(maxX - canvasCx)) || 1
+    const extY = Math.max(Math.abs(minY - canvasCy), Math.abs(maxY - canvasCy)) || 1
+
+    const PAD_FRAC = 0.12
     const vw = window.innerWidth, vh = window.innerHeight
     const zoom = Math.min(
-      (vw * (1 - 2 * PAD_FRAC)) / spanX,
-      (vh * (1 - 2 * PAD_FRAC)) / spanY,
+      (vw * (1 - 2 * PAD_FRAC)) / (2 * extX),
+      (vh * (1 - 2 * PAD_FRAC)) / (2 * extY),
     )
-    const cx = (minX + maxX) / 2
-    const cy = (minY + maxY) / 2
-    const x = vw / 2 - cx * zoom
-    const y = vh / 2 - cy * zoom
+    const x = vw / 2 - canvasCx * zoom
+    const y = vh / 2 - canvasCy * zoom
 
-    console.log(`[drift] bbox x=[${minX.toFixed(0)}, ${maxX.toFixed(0)}] y=[${minY.toFixed(0)}, ${maxY.toFixed(0)}] span=${spanX.toFixed(0)}×${spanY.toFixed(0)}`)
+    console.log(`[drift] songs x=[${minX.toFixed(0)}, ${maxX.toFixed(0)}] y=[${minY.toFixed(0)}, ${maxY.toFixed(0)}]`)
     console.log(`[drift] viewport: zoom=${zoom.toFixed(4)} x=${x.toFixed(1)} y=${y.toFixed(1)}`)
     songNodes.forEach((n) => {
       const sx = n.position.x * zoom + x
@@ -175,6 +172,7 @@ function DriftMapInner({ tracks }) {
         zoomOnPinch
         minZoom={minZoom}
         maxZoom={3}
+        translateExtent={TRANSLATE_EXTENT}
         style={{ background: '#0c0c0c' }}
         proOptions={{ hideAttribution: true }}
       />
