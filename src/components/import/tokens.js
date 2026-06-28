@@ -1,6 +1,6 @@
 // Design tokens lifted from the Figma "Component toolkit" + import frames.
 // Shared across all import-flow and panel UI so the bento/gadget aesthetic stays
-// consistent. The map HUD keeps its mono aesthetic separately (see DriftMap/TrackNode).
+// consistent. DM Sans is the single typeface across the whole app (map HUD included).
 
 export const C = {
   panel: '#0F0F0F',        // Containers/Panels — modal & panel backgrounds
@@ -22,7 +22,6 @@ export const C = {
 export const ACCENT1_FILL = 'rgba(20,20,22,0.2)'
 
 export const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
-export const MONO = '"Space Mono", "B612 Mono", "Courier New", monospace'
 
 // Effect styles (Figma): raised modules vs recessed wells.
 // Extrusion = drop shadow + inner highlight; used on cards/tiles/buttons.

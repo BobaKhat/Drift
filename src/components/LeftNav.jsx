@@ -21,7 +21,7 @@ const CARD = '#141416'
 const BORDER = '#222224'
 const ACCENT = '#F27F37'
 const ICON_REST = '#808080'
-const MONO = '"Space Mono", "B612 Mono", "Courier New", monospace'
+const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 
 // Recessed well — the three nav icons (pressed-in look). The top (logo) and bottom (profile)
 // buttons instead use pre-rendered glass-button PNGs (see imageButton below).
@@ -360,7 +360,7 @@ export default function LeftNav() {
           <>
             <div
               style={{
-                fontFamily: MONO,
+                fontFamily: FONT,
                 fontSize: 9,
                 letterSpacing: '0.20em',
                 color: 'rgba(255,255,255,0.40)',
@@ -375,7 +375,7 @@ export default function LeftNav() {
             ) : (
               <div
                 style={{
-                  fontFamily: MONO,
+                  fontFamily: FONT,
                   fontSize: 10,
                   letterSpacing: '0.06em',
                   color: 'rgba(255,255,255,0.18)',

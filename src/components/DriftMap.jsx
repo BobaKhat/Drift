@@ -7,26 +7,127 @@ import {
   useOnViewportChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import TrackNode from './TrackNode'
+import TrackNode, { ZOOM_PILL, ZOOM_CARD } from './TrackNode'
 
-// Flow-space canvas dimensions
-const W = 3000
-const H = 3000
+// Flow-space canvas dimensions. A large canvas gives songs room to separate as you
+// zoom in (Google Maps model, Decision Log #17) — the primary energy×mood mapping only
+// resolves songs to a coarse position, so the extra pixels are what reveals granularity.
+const W = 6000
+const H = 6000
 
-// 5%–95% padding as per spec
+// Map the 0–100 feature range into the inner 5%–95% of the canvas (Decision Log #22),
+// so songs at the extremes sit near the axis terminator pills, not on top of them.
 const PAD = { x: [W * 0.05, W * 0.95], y: [H * 0.05, H * 0.95] }
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+
+// Secondary-feature tiebreaker signal, ∈ [-0.5, 0.5] per axis. Each axis blends two features
+// so two songs that share one secondary value still separate on the other. BPM is raw, so
+// normalize it against a typical 60–180 range first. Deterministic — same track, same signal.
+// It's blended into the value-space jitter (not added as a canvas offset) so it can never push
+// a song out of its integer cell — keeping the strict-order and quadrant guarantees intact.
+function tiebreakerSignal(track) {
+  const dance = clamp(track.danceability ?? 50, 0, 100) / 100 - 0.5 // -0.5..0.5
+  const acoustic = clamp(track.acousticness ?? 50, 0, 100) / 100 - 0.5
+  const bpmN = (clamp(track.bpm ?? 120, 60, 180) - 60) / 120 - 0.5
+  return { sx: dance * 0.7 + acoustic * 0.3, sy: bpmN * 0.7 + acoustic * 0.3 }
+}
+
+// —— Deterministic jitter ————————————————————————————————————————————————————————
+// SoundNet rounds features to integers, so many songs share an exact value and stack on the
+// same pixel. We scatter each song within ±0.5 of its integer value — a standard overplotting
+// technique that visualizes measurement uncertainty, not invented positions. The offset is
+// seeded by the track's own data so the same song lands in the same spot across reloads. Two
+// independent values (x/y) come from the two halves of one 32-bit hash, so songs scatter in
+// 2D rather than along a diagonal.
+function hashStr(str) {
+  let h = 0x811c9dc5 // FNV-1a, 32-bit
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return h >>> 0
+}
+
+function jitterPair(track) {
+  const h = hashStr(`${track.id ?? ''}|${track.bpm ?? ''}|${track.danceability ?? ''}|${track.acousticness ?? ''}`)
+  // Each in [-0.5, 0.5). The open upper bound keeps strict order across integers: value v's
+  // jitter never reaches v+0.5, so it can't meet or pass (v+1)'s lowest jittered value.
+  const jx = (h & 0xffff) / 0x10000 - 0.5
+  const jy = ((h >>> 16) & 0xffff) / 0x10000 - 0.5
+  return { jx, jy }
+}
+
+// —— Density-based axis scaling ———————————————————————————————————————————————————
+// Map the 0–100 feature range to a 0–1 canvas fraction non-linearly: ranges where songs are
+// concentrated get more canvas, sparse ranges compress. It re-rules, it doesn't re-plot — the
+// mapping is monotonic so song order is preserved exactly. Each half (below/above 50) is
+// equalized independently and pinned to [0,0.5] / [0.5,1], so value 50 always lands on the
+// quadrant crosshair and no song leaves its vibe zone.
+const SCALE_BINS = 32
+const DENSITY_FLOOR = 0.2 // min weight per bin — keeps sparse ranges from collapsing to zero
+
+function buildHalfScale(values, lo, hi) {
+  const span = hi - lo
+  const hist = new Array(SCALE_BINS).fill(0)
+  for (const v of values) {
+    hist[clamp(Math.floor(((v - lo) / span) * SCALE_BINS), 0, SCALE_BINS - 1)] += 1
+  }
+  const maxCount = Math.max(1, ...hist)
+  // Cumulative bin edges weighted by density (+ floor), normalized to [0,1].
+  const edges = new Array(SCALE_BINS + 1)
+  edges[0] = 0
+  for (let i = 0; i < SCALE_BINS; i++) edges[i + 1] = edges[i] + DENSITY_FLOOR + hist[i] / maxCount
+  const total = edges[SCALE_BINS]
+  for (let i = 0; i <= SCALE_BINS; i++) edges[i] /= total
+  // Piecewise-linear value→fraction. Strictly increasing (floor > 0), so order holds with no ties.
+  return (v) => {
+    const t = clamp((v - lo) / span, 0, 1) * SCALE_BINS
+    const i = Math.min(SCALE_BINS - 1, Math.floor(t))
+    return edges[i] + (edges[i + 1] - edges[i]) * (t - i)
+  }
+}
+
+function buildAxisScale(values) {
+  const v = values.map((x) => clamp(x ?? 50, 0, 100))
+  const fLow = buildHalfScale(v.filter((x) => x < 50), 0, 50)
+  const fUp = buildHalfScale(v.filter((x) => x >= 50), 50, 100)
+  return (val) => {
+    const c = clamp(val, 0, 100)
+    return c < 50 ? 0.5 * fLow(c) : 0.5 + 0.5 * fUp(c)
+  }
+}
 
 // X axis = mood/valence: dark (low) → left, bright (high) → right.
 // Y axis = energy: intense (high) → top (low Y), chill (low) → bottom (high Y).
-function toFlowPos(energy, mood) {
-  const x = (mood / 100) * (PAD.x[1] - PAD.x[0]) + PAD.x[0]
-  const y = (1 - energy / 100) * (PAD.y[1] - PAD.y[0]) + PAD.y[0]
-  return { x, y }
+// scaleX/scaleY are the density remaps for the active library.
+function toFlowPos(track, scaleX, scaleY) {
+  const mood = track.mood ?? 50
+  const energy = track.energy ?? 50
+  const { jx, jy } = jitterPair(track)
+  const { sx, sy } = tiebreakerSignal(track)
+
+  // Blend hash jitter with the secondary-feature tiebreaker into one ±0.5 value-space offset
+  // per axis. Both stay in [-0.5, 0.5), so their average does too — which keeps each song inside
+  // its own integer cell. Order (energy 76 always above energy 75) and quadrant then hold
+  // automatically through the monotonic scale, with no clamping (which would pile songs at cell
+  // edges). The offset stretches with local density: dense (stretched) zones spread the scatter
+  // more, sparse (compressed) zones less.
+  const mx = mood + (jx + sx) / 2
+  const my = energy + (jy + sy) / 2
+  return {
+    x: scaleX(mx) * (PAD.x[1] - PAD.x[0]) + PAD.x[0],
+    y: (1 - scaleY(my)) * (PAD.y[1] - PAD.y[0]) + PAD.y[0],
+  }
 }
 
 function buildNodes(tracks) {
+  // Rebuild the density scales for the current library. Recomputed on every call — i.e. on
+  // each playlist swap; an axis-preset switch will rebuild here too once presets are wired up.
+  const scaleX = buildAxisScale(tracks.map((t) => t.mood))
+  const scaleY = buildAxisScale(tracks.map((t) => t.energy))
   return tracks.map((track, i) => {
-    const pos = toFlowPos(track.energy ?? 50, track.mood ?? 50)
+    const pos = toFlowPos(track, scaleX, scaleY)
     return {
       id: track.id ?? `track-${i}`,
       type: 'track',
@@ -100,72 +201,113 @@ function Bracket({ pos }) {
   return <div style={{ position: 'absolute', width: size, height: size, ...variants[pos] }} />
 }
 
-// AxisLayer writes positions directly to the DOM via refs — no React re-renders
-// on zoom/pan. useOnViewportChange fires in the same frame as the d3-zoom event,
-// while useViewport() would route through React's batch cycle (one frame late).
+// Small HUD chip naming the quadrant under the viewport centre once you're zoomed in.
+const zoneChipStyle = {
+  position: 'absolute',
+  left: EDGE + 30,
+  bottom: EDGE,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 7,
+  padding: '6px 14px',
+  borderRadius: 100,
+  background: '#0f0f0f',
+  border: '1px solid #000000',
+  boxShadow: '0px 0px 2.5px 0px #000000, inset 0px 0px 5px 0px rgba(80,80,80,0.5)',
+  fontFamily: FONT,
+  fontSize: 12,
+  fontWeight: 500,
+  letterSpacing: '0.02em',
+  color: '#cfcfcf',
+  whiteSpace: 'nowrap',
+  zIndex: 3,
+}
+
+// Crosshair opacity by zoom: full through the circle tier, fades across the pill tier, gone by
+// the card tier.
+function crosshairOpacityFor(zoom) {
+  return clamp((ZOOM_CARD - zoom) / (ZOOM_CARD - ZOOM_PILL), 0, 1)
+}
+
+// AxisLayer overlay. The crosshair lines mark value 50 on each axis (= canvas centre W/2, H/2)
+// and the pole pills sit at the crosshair endpoints: all of it lives in canvas space and
+// pans/zooms with the map, fading out as you zoom in since it's only an overview aid. A zone chip
+// names the quadrant under the viewport centre, fading in as the crosshair fades out.
+// Positions/opacities are written imperatively per frame (via useOnViewportChange) so the lines
+// and pills stay locked to the nodes with no batch-cycle lag — no React re-render on pan/zoom.
 function AxisLayer() {
   const rf = useReactFlow()
+  const rootRef = useRef(null)
   const hLineRef = useRef(null)
   const vLineRef = useRef(null)
   const intenseRef = useRef(null)
   const chillRef = useRef(null)
   const darkRef = useRef(null)
   const brightRef = useRef(null)
+  const chipRef = useRef(null)
+  const chipLabelRef = useRef(null)
+  const dimsRef = useRef({ w: 0, h: 0 })
 
   const applyViewport = useCallback(({ x, y, zoom }) => {
+    // Crosshair lines: canvas centre mapped to screen, faded by zoom.
     const cx = (W / 2) * zoom + x
     const cy = (H / 2) * zoom + y
-    if (hLineRef.current) hLineRef.current.style.top = `${cy}px`
-    if (vLineRef.current) vLineRef.current.style.left = `${cx}px`
-    // Intense/Chill ride the vertical axis (x = cx) along the top/bottom edges.
-    if (intenseRef.current) intenseRef.current.style.left = `${cx}px`
-    if (chillRef.current) chillRef.current.style.left = `${cx}px`
-    // Dark/Bright ride the horizontal axis (y = cy) along the left/right edges.
-    if (darkRef.current) darkRef.current.style.top = `${cy}px`
-    if (brightRef.current) brightRef.current.style.top = `${cy}px`
-  }, [])
+    const lineOpacity = crosshairOpacityFor(zoom)
+    if (hLineRef.current) { hLineRef.current.style.top = `${cy}px`; hLineRef.current.style.opacity = lineOpacity }
+    if (vLineRef.current) { vLineRef.current.style.left = `${cx}px`; vLineRef.current.style.opacity = lineOpacity }
 
-  // Inset each crosshair line so it stops at the terminator pills instead of bleeding
-  // past them to the card edge. The insets equal the pills' rendered size (constant — the
-  // pills only slide along the line, never change size), so this runs once, not per-frame.
-  const fitLines = useCallback(() => {
-    const { current: hLine } = hLineRef
-    const { current: vLine } = vLineRef
-    if (hLine && darkRef.current && brightRef.current) {
-      hLine.style.left = `${EDGE + darkRef.current.offsetWidth}px`
-      hLine.style.right = `${EDGE + brightRef.current.offsetWidth}px`
-    }
-    if (vLine && intenseRef.current && chillRef.current) {
-      vLine.style.top = `${EDGE + intenseRef.current.offsetHeight}px`
-      vLine.style.bottom = `${EDGE + chillRef.current.offsetHeight}px`
+    // Pills ride the crosshair endpoints — Intense/Chill slide along the vertical axis (x = cx),
+    // Dark/Bright along the horizontal (y = cy) — and fade with the lines (same opacity).
+    if (intenseRef.current) { intenseRef.current.style.left = `${cx}px`; intenseRef.current.style.opacity = lineOpacity }
+    if (chillRef.current) { chillRef.current.style.left = `${cx}px`; chillRef.current.style.opacity = lineOpacity }
+    if (darkRef.current) { darkRef.current.style.top = `${cy}px`; darkRef.current.style.opacity = lineOpacity }
+    if (brightRef.current) { brightRef.current.style.top = `${cy}px`; brightRef.current.style.opacity = lineOpacity }
+
+    // Zone chip: quadrant under the viewport centre; fades in as the crosshair fades out.
+    const { w, h } = dimsRef.current
+    if (chipRef.current && chipLabelRef.current) {
+      const cxCanvas = (w / 2 - x) / zoom
+      const cyCanvas = (h / 2 - y) / zoom
+      chipLabelRef.current.textContent = `${cyCanvas <= H / 2 ? 'Intense' : 'Chill'} · ${cxCanvas >= W / 2 ? 'Bright' : 'Dark'}`
+      chipRef.current.style.opacity = 1 - lineOpacity
     }
   }, [])
 
-  // Set correct positions before first paint so there's no flash at (0,0)
+  // Measure the card once (and on resize) for the zone-chip quadrant math, then refresh.
   useLayoutEffect(() => {
-    applyViewport(rf.getViewport())
-    fitLines()
-    // Webfont swap changes pill widths — re-measure once DM Sans has loaded.
-    document.fonts?.ready?.then(fitLines)
-  }, [applyViewport, fitLines, rf])
+    const el = rootRef.current
+    if (!el) return
+    const measure = () => { dimsRef.current = { w: el.clientWidth, h: el.clientHeight }; applyViewport(rf.getViewport()) }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [applyViewport, rf])
 
-  // Track all subsequent viewport changes imperatively
   useOnViewportChange({ onChange: applyViewport })
 
   return (
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
-      <div ref={hLineRef} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, background: AXIS_COLOR, transform: 'translateY(-0.5px)' }} />
-      <div ref={vLineRef} style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 1, background: AXIS_COLOR, transform: 'translateX(-0.5px)' }} />
+    <div ref={rootRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+      {/* Crosshair in canvas space (position set per frame) — marks value 50 on each axis. */}
+      <div ref={hLineRef} style={{ position: 'absolute', top: 0, left: EDGE, right: EDGE, height: 1, background: AXIS_COLOR, transform: 'translateY(-0.5px)' }} />
+      <div ref={vLineRef} style={{ position: 'absolute', left: 0, top: EDGE, bottom: EDGE, width: 1, background: AXIS_COLOR, transform: 'translateX(-0.5px)' }} />
 
       <Bracket pos="tl" />
       <Bracket pos="tr" />
       <Bracket pos="bl" />
       <Bracket pos="br" />
 
+      {/* Pole pills on the canvas crosshair — left/top set per frame; fade with the lines. */}
       <span ref={intenseRef} style={{ ...pillBase, top: EDGE, transform: 'translateX(-50%)', color: ACCENT1 }}>Intense</span>
       <span ref={chillRef} style={{ ...pillBase, bottom: EDGE, transform: 'translateX(-50%)', color: ACCENT1 }}>Chill</span>
       <span ref={darkRef} style={{ ...pillBase, left: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>Dark</span>
       <span ref={brightRef} style={{ ...pillBase, right: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>Bright</span>
+
+      {/* Zone chip — fades in when zoomed in, replacing the crosshair as orientation aid. */}
+      <div ref={chipRef} style={{ ...zoneChipStyle, opacity: 0 }}>
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1, flexShrink: 0 }} />
+        <span ref={chipLabelRef} />
+      </div>
     </div>
   )
 }
@@ -274,9 +416,13 @@ function ToolBar() {
   )
 }
 
-// 1500px overflow on each side of the 3000×3000 canvas — songs at the edges
+// 3000px overflow on each side of the 6000×6000 canvas — songs at the edges
 // can be centered without hitting a hard wall
-const TRANSLATE_EXTENT = [[-1500, -1500], [W + 1500, H + 1500]]
+const TRANSLATE_EXTENT = [[-3000, -3000], [W + 3000, H + 3000]]
+
+// Cap zoom so cards stay map-label sized: at 1.6× a 230px card is ~370px on screen,
+// keeping several cards in view rather than 1–2 filling the viewport.
+const MAX_ZOOM = 1.6
 
 function DriftMapInner({ tracks }) {
   const initialNodes = useMemo(() => buildNodes(tracks), [tracks])
@@ -314,12 +460,13 @@ function DriftMapInner({ tracks }) {
     const minX = Math.min(...xs), maxX = Math.max(...xs)
     const minY = Math.min(...ys), maxY = Math.max(...ys)
 
-    // Center on canvas midpoint so axis crosshair lands at screen center,
-    // then zoom to fit the outermost song from that fixed center point.
-    const canvasCx = W / 2
-    const canvasCy = H / 2
-    const extX = Math.max(Math.abs(minX - canvasCx), Math.abs(maxX - canvasCx)) || 1
-    const extY = Math.max(Math.abs(minY - canvasCy), Math.abs(maxY - canvasCy)) || 1
+    // Frame the songs' actual bounding box (not the whole canvas): center on the box's
+    // midpoint and zoom to fit its extent, so a clustered library fills the view instead
+    // of leaving empty canvas around it.
+    const bboxW = (maxX - minX) || 1
+    const bboxH = (maxY - minY) || 1
+    const bboxCx = (minX + maxX) / 2
+    const bboxCy = (minY + maxY) / 2
 
     // Measure the map card (ReactFlow's container), not the window — the canvas now lives
     // inside an inset card, so centering must use the card's own dimensions.
@@ -329,16 +476,21 @@ function DriftMapInner({ tracks }) {
 
     const PAD_FRAC = 0.12
     const zoom = Math.min(
-      (vw * (1 - 2 * PAD_FRAC)) / (2 * extX),
-      (vh * (1 - 2 * PAD_FRAC)) / (2 * extY),
+      (vw * (1 - 2 * PAD_FRAC)) / bboxW,
+      (vh * (1 - 2 * PAD_FRAC)) / bboxH,
+      MAX_ZOOM, // tightly-clustered libraries shouldn't zoom past the node morph tiers
     )
-    const x = vw / 2 - canvasCx * zoom
-    const y = vh / 2 - canvasCy * zoom
+    const x = vw / 2 - bboxCx * zoom
+    const y = vh / 2 - bboxCy * zoom
+
+    // Let users still zoom out to take in the full canvas, even though the default frames
+    // only the songs.
+    const canvasFitZoom = Math.min(vw / W, vh / H)
 
     console.log(`[drift] viewport: zoom=${zoom.toFixed(4)} x=${x.toFixed(1)} y=${y.toFixed(1)} (map ${Math.round(vw)}×${Math.round(vh)})`)
 
     rf.setViewport({ x, y, zoom })
-    setMinZoom(zoom * 0.8)
+    setMinZoom(Math.min(zoom, canvasFitZoom) * 0.8)
     hasFit.current = true
   }, [nodes, rf])
 
@@ -375,7 +527,7 @@ function DriftMapInner({ tracks }) {
         zoomOnScroll
         zoomOnPinch
         minZoom={minZoom}
-        maxZoom={3}
+        maxZoom={MAX_ZOOM}
         translateExtent={TRANSLATE_EXTENT}
         style={{ background: 'transparent' }}
         proOptions={{ hideAttribution: true }}

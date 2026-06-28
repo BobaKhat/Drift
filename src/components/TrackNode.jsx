@@ -2,19 +2,28 @@ import { memo, useRef, useEffect } from 'react'
 import { useViewport, useUpdateNodeInternals } from '@xyflow/react'
 
 // Tune these thresholds — spec says we'll adjust after seeing it
-const ZOOM_PILL = 1.1   // circle → pill
-const ZOOM_CARD = 1.8   // pill → card
+export const ZOOM_PILL = 0.55   // circle → pill (earlier so pills appear sooner)
+export const ZOOM_CARD = 1.0    // pill → card (0.45 pill band; cards by 1.0 to show more songs)
+
+// Circle on-screen size scales with zoom^CIRCLE_ZOOM_DAMP. A low exponent dampens the
+// scaling: circles stay large and barely shrink when zoomed out, while still growing a
+// little as you zoom in toward the pill threshold. (1 = scales fully with zoom; 0 = fixed
+// on-screen size.)
+const CIRCLE_ZOOM_DAMP = 0.3
 
 const EASING = 'cubic-bezier(0.16, 1, 0.3, 1)'
 const DUR = '400ms'
 
-const CIRCLE_SIZE = 36
+// Circle is sized in *screen* pixels (Google Maps pin behavior): we counter-scale the node
+// by 1/zoom in the circle tier so its on-screen diameter stays constant regardless of zoom,
+// up until the pill morph threshold. 32px base, no border in circle tier.
+const CIRCLE_SIZE = 32
 const PILL_ART = 30
 const CARD_ART = 42
 const PILL_W = 175
-const CARD_W = 300
+const CARD_W = 230
 
-const MONO = '"Space Mono", "B612 Mono", "Courier New", monospace'
+const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 
 function getTier(zoom) {
   if (zoom >= ZOOM_CARD) return 'card'
@@ -33,6 +42,10 @@ function TrackNode({ id, data }) {
   const isCircle = tier === 'circle'
   const isPill = tier === 'pill'
   const isCard = tier === 'card'
+
+  // Dampened counter-scale: on-screen size = CIRCLE_SIZE * zoom^CIRCLE_ZOOM_DAMP, achieved
+  // by scaling the node by zoom^(DAMP-1) against the pane's zoom transform.
+  const circleScale = Math.pow(zoom, CIRCLE_ZOOM_DAMP - 1)
 
   const updateNodeInternals = useUpdateNodeInternals()
   const prevTier = useRef(tier)
@@ -64,9 +77,9 @@ function TrackNode({ id, data }) {
         borderRadius: isCircle ? CIRCLE_SIZE / 2 : isPill ? 25 : 8,
         // surface
         background: isCircle ? 'transparent' : 'rgba(18,18,18,0.90)',
-        borderWidth: isCircle ? 2 : 1,
+        borderWidth: isCircle ? 0 : 1,
         borderStyle: 'solid',
-        borderColor: isCircle ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.12)',
+        borderColor: isCircle ? 'transparent' : 'rgba(255,255,255,0.12)',
         boxShadow: '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
         // layout
         gap: isCircle ? 0 : 10,
@@ -74,6 +87,10 @@ function TrackNode({ id, data }) {
         overflow: 'hidden',
         cursor: 'default',
         userSelect: 'none',
+        // Counter the pane's zoom scale so the circle holds a fixed on-screen size (map-pin
+        // behavior). Kept out of the transition below so it tracks zoom instantly with no
+        // rubber-banding; pill/card render at true canvas size and scale with zoom as normal.
+        transform: isCircle ? `scale(${circleScale})` : 'none',
         // transitions
         transition: t('width', 'height', 'border-radius', 'background', 'border-color', 'border-width', 'padding', 'gap'),
       }}
@@ -128,27 +145,27 @@ function TrackNode({ id, data }) {
       >
         <div
           style={{
-            fontFamily: MONO,
+            fontFamily: FONT,
             fontSize: 11,
             letterSpacing: '0.02em',
             color: 'rgba(255,255,255,0.9)',
             lineHeight: 1.3,
-            whiteSpace: isCard ? 'normal' : 'nowrap',
+            whiteSpace: 'nowrap',
             overflow: 'hidden',
-            textOverflow: isPill ? 'ellipsis' : 'unset',
+            textOverflow: 'ellipsis',
           }}
         >
           {name}
         </div>
         <div
           style={{
-            fontFamily: MONO,
+            fontFamily: FONT,
             fontSize: 9,
             letterSpacing: '0.03em',
             color: 'rgba(255,255,255,0.4)',
-            whiteSpace: isCard ? 'normal' : 'nowrap',
+            whiteSpace: 'nowrap',
             overflow: 'hidden',
-            textOverflow: isPill ? 'ellipsis' : 'unset',
+            textOverflow: 'ellipsis',
           }}
         >
           {artist}
@@ -169,7 +186,7 @@ function TrackNode({ id, data }) {
         >
           <div
             style={{
-              fontFamily: MONO,
+              fontFamily: FONT,
               fontSize: 11,
               letterSpacing: '0.02em',
               color: 'rgba(255,255,255,0.9)',
@@ -181,7 +198,7 @@ function TrackNode({ id, data }) {
           </div>
           <div
             style={{
-              fontFamily: MONO,
+              fontFamily: FONT,
               fontSize: 9,
               letterSpacing: '0.03em',
               color: 'rgba(255,255,255,0.4)',
