@@ -10,12 +10,12 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #0c0c0c;
+  background: #000000;
 }
 
-/* Override React Flow's default white background */
+/* React Flow is transparent so the map card's background + dot grid show through */
 .react-flow__renderer {
-  background: #0c0c0c !important;
+  background: transparent !important;
 }
 
 .react-flow__pane {
