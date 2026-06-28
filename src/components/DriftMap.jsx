@@ -110,12 +110,18 @@ const TRANSLATE_EXTENT = [[-1500, -1500], [W + 1500, H + 1500]]
 
 function DriftMapInner({ tracks }) {
   const initialNodes = useMemo(() => buildNodes(tracks), [tracks])
-  const [nodes, , onNodesChange] = useNodesState(initialNodes)
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [minZoom, setMinZoom] = useState(0.01)
   const rf = useReactFlow()
   const hasFit = useRef(false)
   const wrapperRef = useRef(null)
   const zoomTimer = useRef(null)
+
+  // Switching playlists swaps the visible songs: rebuild nodes and re-fit the viewport.
+  useEffect(() => {
+    setNodes(buildNodes(tracks))
+    hasFit.current = false
+  }, [tracks, setNodes])
 
   const handleWheel = useCallback((e) => {
     // ctrlKey is true for pinch-to-zoom and ctrl+scroll — the zoom gesture

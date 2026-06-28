@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import PlaylistPanel from './PlaylistPanel'
 
 const RAIL_W = 50
 const PANEL_W = 320
@@ -182,16 +183,20 @@ export default function LeftNav() {
             >
               {panel.label}
             </div>
-            <div
-              style={{
-                fontFamily: MONO,
-                fontSize: 10,
-                letterSpacing: '0.06em',
-                color: 'rgba(255,255,255,0.18)',
-              }}
-            >
-              Coming soon
-            </div>
+            {panel.id === 'playlists' ? (
+              <PlaylistPanel />
+            ) : (
+              <div
+                style={{
+                  fontFamily: MONO,
+                  fontSize: 10,
+                  letterSpacing: '0.06em',
+                  color: 'rgba(255,255,255,0.18)',
+                }}
+              >
+                Coming soon
+              </div>
+            )}
           </>
         )}
       </div>

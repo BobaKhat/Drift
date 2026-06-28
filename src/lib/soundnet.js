@@ -1,3 +1,5 @@
+import { createPacer } from './rateLimit'
+
 // "-11 dB" → -11, bare number passthrough, null on failure
 function parseLoudness(raw) {
   if (raw == null) return null
@@ -21,8 +23,13 @@ function parseDuration(raw) {
 // Vite dev proxy at /api/soundnet strips CORS. For production, add a Vercel Function.
 // CRITICAL: SoundNet returns HTTP 200 on misses — check for `error` key in body.
 
+// SoundNet rate-limits bursts (≥6 concurrent → HTTP 429), so pace every attempt to
+// ≥220ms apart (~4.5/sec, just under the 5/sec ceiling). See rateLimit.js for why.
+const pace = createPacer(220)
+
 async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
+    await pace()
     const res = await fetch(url)
     if (res.status === 429) {
       if (attempt === retries) throw new Error('SoundNet rate limit hit — wait 30s and try again')

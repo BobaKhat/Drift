@@ -15,6 +15,14 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api\/itunes/, ''),
         },
+        // Proxies the public Spotify track page (no auth) to dodge browser CORS.
+        // We scrape Open Graph tags for artist + title — Spotify's oEmbed endpoint
+        // returns only the track title, not the artist, so it can't resolve a URL alone.
+        '/api/spotify': {
+          target: 'https://open.spotify.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/spotify/, ''),
+        },
         // Proxies SoundNet calls to avoid CORS; API key stays server-side
         '/api/soundnet': {
           target: 'https://track-analysis.p.rapidapi.com',
