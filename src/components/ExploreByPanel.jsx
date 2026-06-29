@@ -66,7 +66,7 @@ export default function ExploreByPanel() {
                 )}
                 <span style={{
                   fontFamily: FONT, fontSize: 16, fontWeight: 500,
-                  color: active ? '#fff' : TEXT_SEC,
+                  color: active ? ACCENT1 : TEXT_SEC,
                   transition: 'color 180ms ease',
                   position: 'relative',
                 }}>
