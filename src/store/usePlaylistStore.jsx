@@ -25,6 +25,21 @@ export function PlaylistProvider({ children }) {
   const [progress, setProgress] = useState({ current: 0, total: 0, name: '' })
   const [reconciliation, setReconciliation] = useState(null) // { mapped, unresolved }
 
+  // Active axis preset. 'custom' uses customXFeature/customYFeature.
+  const [activePanel, setActivePanel] = useState(null)
+  const togglePanel = (id) => setActivePanel((prev) => (prev === id ? null : id))
+
+  const [activePreset, setActivePresetKey] = useState('vibe')
+  const [customXFeature, setCustomXFeature] = useState('mood')
+  const [customYFeature, setCustomYFeature] = useState('energy')
+
+  const setActivePreset = (key) => setActivePresetKey(key)
+  const setCustomPreset = (xFeature, yFeature) => {
+    setCustomXFeature(xFeature)
+    setCustomYFeature(yFeature)
+    setActivePresetKey('custom')
+  }
+
   // When "Import more" targets the current playlist, this holds its id (null = create new).
   const importTargetRef = useRef(null)
 
@@ -173,6 +188,14 @@ export function PlaylistProvider({ children }) {
     loadDemo,
     finishReconcile,
     retry,
+    activePanel,
+    setActivePanel,
+    togglePanel,
+    activePreset,
+    customXFeature,
+    customYFeature,
+    setActivePreset,
+    setCustomPreset,
   }
 
   return <PlaylistContext.Provider value={value}>{children}</PlaylistContext.Provider>

@@ -8,6 +8,8 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TrackNode, { ZOOM_PILL, ZOOM_CARD } from './TrackNode'
+import { usePlaylistStore } from '../store/usePlaylistStore'
+import { getFeatureValue, resolvePreset } from '../lib/presets'
 
 // Flow-space canvas dimensions. A large canvas gives songs room to separate as you
 // zoom in (Google Maps model, Decision Log #17) — the primary energy×mood mapping only
@@ -101,33 +103,26 @@ function buildAxisScale(values) {
 // X axis = mood/valence: dark (low) → left, bright (high) → right.
 // Y axis = energy: intense (high) → top (low Y), chill (low) → bottom (high Y).
 // scaleX/scaleY are the density remaps for the active library.
-function toFlowPos(track, scaleX, scaleY) {
-  const mood = track.mood ?? 50
-  const energy = track.energy ?? 50
+function toFlowPos(track, scaleX, scaleY, xFeature, yFeature) {
+  const xVal = getFeatureValue(track, xFeature)
+  const yVal = getFeatureValue(track, yFeature)
   const { jx, jy } = jitterPair(track)
   const { sx, sy } = tiebreakerSignal(track)
 
-  // Blend hash jitter with the secondary-feature tiebreaker into one ±0.5 value-space offset
-  // per axis. Both stay in [-0.5, 0.5), so their average does too — which keeps each song inside
-  // its own integer cell. Order (energy 76 always above energy 75) and quadrant then hold
-  // automatically through the monotonic scale, with no clamping (which would pile songs at cell
-  // edges). The offset stretches with local density: dense (stretched) zones spread the scatter
-  // more, sparse (compressed) zones less.
-  const mx = mood + (jx + sx) / 2
-  const my = energy + (jy + sy) / 2
+  const mx = xVal + (jx + sx) / 2
+  const my = yVal + (jy + sy) / 2
   return {
     x: scaleX(mx) * (PAD.x[1] - PAD.x[0]) + PAD.x[0],
     y: (1 - scaleY(my)) * (PAD.y[1] - PAD.y[0]) + PAD.y[0],
   }
 }
 
-function buildNodes(tracks) {
-  // Rebuild the density scales for the current library. Recomputed on every call — i.e. on
-  // each playlist swap; an axis-preset switch will rebuild here too once presets are wired up.
-  const scaleX = buildAxisScale(tracks.map((t) => t.mood))
-  const scaleY = buildAxisScale(tracks.map((t) => t.energy))
+function buildNodes(tracks, presetConfig) {
+  const { xFeature = 'mood', yFeature = 'energy' } = presetConfig ?? {}
+  const scaleX = buildAxisScale(tracks.map((t) => getFeatureValue(t, xFeature)))
+  const scaleY = buildAxisScale(tracks.map((t) => getFeatureValue(t, yFeature)))
   return tracks.map((track, i) => {
-    const pos = toFlowPos(track, scaleX, scaleY)
+    const pos = toFlowPos(track, scaleX, scaleY, xFeature, yFeature)
     return {
       id: track.id ?? `track-${i}`,
       type: 'track',
@@ -267,7 +262,7 @@ function crosshairOpacityFor(zoom) {
 // names the quadrant under the viewport centre, fading in as the crosshair fades out.
 // Positions/opacities are written imperatively per frame (via useOnViewportChange) so the lines
 // and pills stay locked to the nodes with no batch-cycle lag — no React re-render on pan/zoom.
-function AxisLayer() {
+function AxisLayer({ preset }) {
   const rf = useReactFlow()
   const rootRef = useRef(null)
   const hLineRef = useRef(null)
@@ -280,6 +275,13 @@ function AxisLayer() {
   const chipLabelRef = useRef(null)
   const dimsRef = useRef({ w: 0, h: 0 })
   const [chipOpen, setChipOpen] = useState(false)
+
+  // Keep preset labels in a ref so applyViewport (stable useCallback) always reads the latest
+  // values without needing to be recreated on every preset change.
+  const labelsRef = useRef({ yHigh: preset.yHigh, yLow: preset.yLow, xHigh: preset.xHigh, xLow: preset.xLow })
+  useEffect(() => {
+    labelsRef.current = { yHigh: preset.yHigh, yLow: preset.yLow, xHigh: preset.xHigh, xLow: preset.xLow }
+  }, [preset])
 
   const applyViewport = useCallback(({ x, y, zoom }) => {
     // Crosshair lines: canvas centre mapped to screen, faded by zoom.
@@ -299,10 +301,10 @@ function AxisLayer() {
     // Zone chip: quadrant under the viewport centre; fades in as the crosshair fades out.
     const { w, h } = dimsRef.current
     if (chipRef.current && chipLabelRef.current) {
+      const { yHigh, yLow, xHigh, xLow } = labelsRef.current
       const cxCanvas = (w / 2 - x) / zoom
       const cyCanvas = (h / 2 - y) / zoom
-      chipLabelRef.current.textContent = `${cyCanvas <= H / 2 ? 'Intense' : 'Chill'} · ${cxCanvas >= W / 2 ? 'Bright' : 'Dark'}`
-      // Opacity managed purely via DOM — no React state — so pan/zoom updates are zero-cost.
+      chipLabelRef.current.textContent = `${cyCanvas <= H / 2 ? yHigh : yLow} · ${cxCanvas >= W / 2 ? xHigh : xLow}`
       chipRef.current.style.opacity = 1 - lineOpacity
     }
   }, [])
@@ -333,15 +335,20 @@ function AxisLayer() {
 
   useOnViewportChange({ onChange: applyViewport })
 
-  // Pan to the center of one of the four quadrants.
   const panToZone = useCallback((label) => {
-    const intense = label.startsWith('Intense')
-    const bright = label.endsWith('Bright')
-    rf.setCenter(bright ? (W * 3) / 4 : W / 4, intense ? H / 4 : (H * 3) / 4, { zoom: 0.4, duration: 600 })
+    const { yHigh, xHigh } = labelsRef.current
+    const isTop = label.startsWith(yHigh)
+    const isRight = label.endsWith(xHigh)
+    rf.setCenter(isRight ? (W * 3) / 4 : W / 4, isTop ? H / 4 : (H * 3) / 4, { zoom: 0.4, duration: 600 })
     setChipOpen(false)
   }, [rf])
 
-  const zones = ['Intense · Bright', 'Intense · Dark', 'Chill · Bright', 'Chill · Dark']
+  const zones = useMemo(() => [
+    `${preset.yHigh} · ${preset.xHigh}`,
+    `${preset.yHigh} · ${preset.xLow}`,
+    `${preset.yLow} · ${preset.xHigh}`,
+    `${preset.yLow} · ${preset.xLow}`,
+  ], [preset])
 
   return (
     <div ref={rootRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
@@ -355,10 +362,10 @@ function AxisLayer() {
       <Bracket pos="br" />
 
       {/* Pole pills on the canvas crosshair — left/top set per frame; fade with the lines. */}
-      <span ref={intenseRef} style={{ ...pillBase, top: EDGE, transform: 'translateX(-50%)', color: ACCENT1 }}>Intense</span>
-      <span ref={chillRef} style={{ ...pillBase, bottom: EDGE, transform: 'translateX(-50%)', color: ACCENT1 }}>Chill</span>
-      <span ref={darkRef} style={{ ...pillBase, left: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>Dark</span>
-      <span ref={brightRef} style={{ ...pillBase, right: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>Bright</span>
+      <span ref={intenseRef} style={{ ...pillBase, top: EDGE, transform: 'translateX(-50%)', color: ACCENT1 }}>{preset.yHigh}</span>
+      <span ref={chillRef}   style={{ ...pillBase, bottom: EDGE, transform: 'translateX(-50%)', color: ACCENT1 }}>{preset.yLow}</span>
+      <span ref={darkRef}    style={{ ...pillBase, left: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>{preset.xLow}</span>
+      <span ref={brightRef}  style={{ ...pillBase, right: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>{preset.xHigh}</span>
 
       {/* Zone chip — fades in when zoomed in, replacing the crosshair as orientation aid.
           Opacity is managed imperatively; clicking opens a 4-quadrant pan shortcut. */}
@@ -686,7 +693,13 @@ const TRANSLATE_EXTENT = [[-3000, -3000], [W + 3000, H + 3000]]
 const MAX_ZOOM = 1.6
 
 function DriftMapInner({ tracks }) {
-  const initialNodes = useMemo(() => buildNodes(tracks), [tracks])
+  const { activePreset, customXFeature, customYFeature, setActivePanel } = usePlaylistStore()
+  const presetConfig = useMemo(
+    () => resolvePreset(activePreset, customXFeature, customYFeature),
+    [activePreset, customXFeature, customYFeature]
+  )
+
+  const initialNodes = useMemo(() => buildNodes(tracks, presetConfig), [tracks, presetConfig])
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [minZoom, setMinZoom] = useState(0.01)
   const rf = useReactFlow()
@@ -695,11 +708,11 @@ function DriftMapInner({ tracks }) {
   const zoomTimer = useRef(null)
   const highlightTimer = useRef(null)
 
-  // Switching playlists swaps the visible songs: rebuild nodes and re-fit the viewport.
+  // Rebuild and re-fit whenever tracks or preset changes.
   useEffect(() => {
-    setNodes(buildNodes(tracks))
+    setNodes(buildNodes(tracks, presetConfig))
     hasFit.current = false
-  }, [tracks, setNodes])
+  }, [tracks, presetConfig, setNodes])
 
   const handleWheel = useCallback((e) => {
     // ctrlKey is true for pinch-to-zoom and ctrl+scroll — the zoom gesture
@@ -796,6 +809,7 @@ function DriftMapInner({ tracks }) {
         edges={[]}
         onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
+        onPaneClick={() => setActivePanel(null)}
 
         nodesDraggable={false}
         nodesConnectable={false}
@@ -809,9 +823,9 @@ function DriftMapInner({ tracks }) {
         style={{ background: 'transparent' }}
         proOptions={{ hideAttribution: true }}
       />
-      <AxisLayer />
+      <AxisLayer preset={presetConfig} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
-      <ToolBar rf={rf} presetName="Vibe" />
+      <ToolBar rf={rf} presetName={presetConfig.label} />
     </div>
   )
 }

@@ -44,15 +44,18 @@ async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
 export async function getAudioFeatures(artist, title) {
   const params = new URLSearchParams({ artist, song: title })
   const url = `/api/soundnet/pktx/analysis?${params}`
+
+  // Log both the decoded form (readable) and the raw encoded query string (exact wire format)
+  console.log(`[soundnet] artist="${artist}" | song="${title}"`)
+  console.log(`[soundnet] encoded query string: ${params.toString()}`)
   console.log(`[soundnet] → GET ${url}`)
-  console.log(`[soundnet]   params: artist="${artist}" | song="${title}"`)
 
   const res = await fetchWithRetry(url)
 
   const data = await res.json()
 
-  console.log(`[soundnet]   raw response keys:`, Object.keys(data))
-  console.log(`[soundnet]   title="${data.title ?? data.song_title ?? '(none)'}" artist="${data.artist ?? data.artist_name ?? '(none)'}" error="${data.error ?? '(none)'}"`)
+  // Full response body so we can compare against RapidAPI test UI output
+  console.log(`[soundnet] full response body:`, JSON.stringify(data, null, 2))
 
   if (data.error) throw new Error(`SoundNet miss: ${data.error}`)
 

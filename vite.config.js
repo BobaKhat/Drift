@@ -32,6 +32,8 @@ export default defineConfig(({ mode }) => {
             proxy.on('proxyReq', (proxyReq) => {
               proxyReq.setHeader('X-RapidAPI-Key', env.VITE_RAPIDAPI_KEY || '')
               proxyReq.setHeader('X-RapidAPI-Host', 'track-analysis.p.rapidapi.com')
+              // Log exact URL forwarded to RapidAPI — catches encoding differences vs test UI
+              console.log(`[proxy/soundnet] → https://track-analysis.p.rapidapi.com${proxyReq.path}`)
             })
           },
         },

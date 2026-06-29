@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import PlaylistPanel from './PlaylistPanel'
+import ExploreByPanel from './ExploreByPanel'
+import { usePlaylistStore } from '../store/usePlaylistStore'
 import brandmark from '../assets/brandmark.png'
 import logo from '../assets/Logo.png'
 
@@ -12,7 +14,7 @@ const RAIL_GAP = 10
 const CIRCLE = 60
 const GLYPH = 25
 const GAP = 20
-const PANEL_W = 320
+const PANEL_W = 374
 const PANEL_LEFT = RAIL_INSET + RAIL_W + RAIL_GAP // map card's left edge (113) — panel overlays the map
 
 const RAIL_BG = '#0F0F0F'
@@ -284,11 +286,7 @@ function RailButton({ label, Icon, isActive, onClick, media }) {
 }
 
 export default function LeftNav() {
-  const [activePanel, setActivePanel] = useState(null)
-
-  function toggle(id) {
-    setActivePanel((prev) => (prev === id ? null : id))
-  }
+  const { activePanel, togglePanel } = usePlaylistStore()
 
   const panel = NAV_ITEMS.find((p) => p.id === activePanel)
 
@@ -325,7 +323,7 @@ export default function LeftNav() {
               label={item.label}
               Icon={item.Icon}
               isActive={activePanel === item.id}
-              onClick={() => toggle(item.id)}
+              onClick={() => togglePanel(item.id)}
             />
           ))}
         </nav>
@@ -356,7 +354,9 @@ export default function LeftNav() {
           padding: '28px 22px',
         }}
       >
-        {panel && (
+        {panel && panel.id === 'explore' ? (
+          <ExploreByPanel />
+        ) : panel ? (
           <>
             <div
               style={{
@@ -385,7 +385,7 @@ export default function LeftNav() {
               </div>
             )}
           </>
-        )}
+        ) : null}
       </div>
     </>
   )

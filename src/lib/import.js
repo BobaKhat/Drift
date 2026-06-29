@@ -41,15 +41,18 @@ async function processEntry(entry) {
 
     let { artist, title } = entry
     let spotifyArtUrl = null
+    let spotifyDuration = null
     if (entry.type === 'spotify') {
       const r = await resolveSpotifyUrl(entry.url)
       artist = r.artist
       title = r.title
       spotifyArtUrl = r.ogImage
+      spotifyDuration = r.duration ?? null
       if (!artist || !title) throw new Error('could not resolve Spotify link')
+      console.log(`[import] spotifyArtUrl=${spotifyArtUrl ?? 'null'} spotifyDuration=${spotifyDuration ?? 'null'}`)
     }
 
-    const track = await analyzeTrackParts(artist, title, { spotifyArtUrl })
+    const track = await analyzeTrackParts(artist, title, { spotifyArtUrl, spotifyDuration })
 
     // SoundNet misses are stored as 'unanalyzed' by the pipeline (it caught all variations).
     if (!track || track.status === 'unanalyzed') {

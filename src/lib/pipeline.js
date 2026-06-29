@@ -50,40 +50,45 @@ function firstArtistOnly(artist) {
 // Deduplication against the original (and prior variants) happens in runCascade
 // so identical queries never consume rate-limit budget.
 function buildRetryVariations(artist, title) {
-  const aLow      = artist.toLowerCase()
-  const tLow      = title.toLowerCase()
-  const aStrip    = stripFeaturedArtist(artist)
-  const tStrip    = stripParentheticals(title)
-  const aFirst    = firstArtistOnly(artist)           // original case — critical for SoundNet
-  const aFirstLow = aFirst.toLowerCase()
-  const tStripLow = tStrip.toLowerCase()
+  const aLow        = artist.toLowerCase()
+  const tLow        = title.toLowerCase()
+  const aStrip      = stripFeaturedArtist(artist)
+  const tStrip      = stripParentheticals(title)
+  const aParens     = stripParentheticals(artist)     // "Malaa (Alter Ego)" → "Malaa"
+  const aFirst      = firstArtistOnly(artist)         // original case — critical for SoundNet
+  const aFirstClean = stripParentheticals(aFirst)     // comma-split then strip parens: "Malaa (Alter Ego), ÆON:MODE" → "Malaa"
+  const aFirstLow   = aFirst.toLowerCase()
+  const tStripLow   = tStrip.toLowerCase()
   return [
-    { label: 'lowercase',       artist: aLow,      title: tLow      },
-    { label: 'strip-feat',      artist: aStrip,    title            },
-    { label: 'strip-parens',    artist,            title: tStrip    },
-    { label: 'comma-split',     artist: aFirst,    title            }, // NEW: first artist, original case
-    { label: 'comma-split+low', artist: aFirstLow, title: tLow      },
-    { label: 'all-combined',    artist: aFirstLow, title: tStripLow },
+    { label: 'lowercase',          artist: aLow,        title: tLow      },
+    { label: 'strip-feat',         artist: aStrip,      title            },
+    { label: 'strip-parens',       artist,              title: tStrip    },
+    { label: 'strip-artist-parens',artist: aParens,     title            }, // Spotify disambiguation tags in artist e.g. "Malaa (Alter Ego)"
+    { label: 'comma-split',        artist: aFirst,      title            },
+    { label: 'comma-clean',        artist: aFirstClean, title            }, // comma-split + strip artist parens combined
+    { label: 'comma-split+low',    artist: aFirstLow,   title: tLow      },
+    { label: 'all-combined',       artist: aFirstLow,   title: tStripLow },
   ]
 }
 
 const RETRY_DELAY_MS = 300
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// Cascade: try original + up to 6 variations, with iTunes corroboration at each SoundNet hit.
+// Cascade: try original + up to 8 variations, with iTunes corroboration at each SoundNet hit.
 //
 // Corroboration rules (per hit):
 //   iTunes no result → accept (underground/niche track iTunes doesn't carry)
 //   iTunes title matches → accept (corroborated)
 //   iTunes title differs → reject this variation and continue to the next one
 //
-// This means title mismatches feed back into the cascade rather than immediately marking
-// unresolved — a later variation might find the correct track.
+// Duration guard (Spotify imports only): if spotifyDuration is provided, every accepted hit
+// is also checked against SoundNet's returned duration. Delta > 15s → reject and continue.
+// This catches SoundNet returning a different version (e.g. extended mix) on the first try.
 //
 // Returns { features, itunes, usedArtist, usedTitle, retriedCount, lastArtist, lastTitle }.
 // itunes is always resolved before return (used for album art even on failure).
 // Does NOT touch Supabase — the caller owns caching so failed variants aren't stored.
-async function runCascade(artist, title) {
+async function runCascade(artist, title, spotifyDuration = null) {
   console.log(`[drift] [cascade] "${artist}" – "${title}"`)
 
   // iTunes starts immediately and runs in parallel with SoundNet calls.
@@ -139,6 +144,14 @@ async function runCascade(artist, title) {
     // SoundNet hit — corroborate with iTunes before accepting
     await resolveItunes()
     const foundTitle = itunes?.trackName
+
+    // Duration guard: if we have a Spotify duration, reject any SoundNet result whose
+    // duration deviates by more than 15 seconds — it's a different version.
+    const snDur = features.duration
+    if (spotifyDuration != null && snDur != null && Math.abs(snDur - spotifyDuration) > 15) {
+      console.log(`[drift]   ${pad} rejected (duration mismatch: Spotify ${fmtDuration(spotifyDuration)} vs SoundNet ${fmtDuration(snDur)})`)
+      continue
+    }
 
     if (foundTitle == null) {
       // No iTunes coverage — self-verify before accepting. Compare SoundNet's matched
@@ -196,7 +209,7 @@ function fmtDuration(sec) {
 //
 // Returns the Supabase row augmented with _meta: { versionWarning, retriedCount,
 // lastArtist, lastTitle } for the reconciliation layer. _meta is NOT stored in the DB.
-export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null } = {}) {
+export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null } = {}) {
   // Return cached result if available (.limit(1) tolerates duplicate rows gracefully)
   const { data: rows } = await supabase
     .from('tracks')
@@ -218,7 +231,7 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
 
   // Cascade handles SoundNet (original + variations) and iTunes corroboration together.
   // iTunes runs in parallel inside runCascade; result is always resolved before return.
-  const cascade = await runCascade(artist, title)
+  const cascade = await runCascade(artist, title, spotifyDuration)
   const { itunes } = cascade
   const features = cascade.features  // null if all variations failed/rejected
   // _matchedTitle/_matchedArtist are self-verification fields used inside runCascade only.
@@ -249,10 +262,14 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
     }
   }
 
+  const itunesArt = itunes?.albumArtUrl ?? null
+  const resolvedArt = itunesArt ?? spotifyArtUrl ?? cached?.album_art_url ?? null
+  console.log(`[drift] album_art_url resolution: iTunes="${itunesArt ?? 'null'}" Spotify="${spotifyArtUrl ?? 'null'}" → using="${resolvedArt ?? 'null'}"`)
+
   const track = {
     name: title,
     artist,
-    album_art_url: itunes?.albumArtUrl ?? spotifyArtUrl ?? cached?.album_art_url ?? null,
+    album_art_url: resolvedArt,
     ...(features ? featuresToStore : {}),
     source: 'soundnet',
     analyzed_at: new Date().toISOString(),
