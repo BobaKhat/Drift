@@ -15,6 +15,7 @@ export async function searchItunes(artist, title) {
     albumArtUrl: r.artworkUrl100 ? r.artworkUrl100.replace('100x100bb', '600x600bb') : null,
     trackName: r.trackName ?? null,
     artistName: r.artistName ?? null,
+    durationMs: r.trackTimeMillis ?? null,
   }
 }
 

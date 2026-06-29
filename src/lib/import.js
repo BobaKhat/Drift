@@ -2,7 +2,8 @@ import { parseTrackString, analyzeTrackParts } from './pipeline'
 import { isSpotifyTrackUrl, resolveSpotifyUrl } from './oembed'
 
 // Import orchestration: parse a pasted blob, resolve each line, analyze, and split results
-// into mapped (plotted) vs unresolved (shown on reconciliation).
+// into mapped (plotted), warnings (version-mismatch flagged), and unresolved (shown on
+// reconciliation).
 
 // Bounded concurrency: process 2 entries at a time with a 300ms gap between pairs. This lets
 // two slow SoundNet round-trips overlap (≈halving wall-clock vs strictly sequential) while
@@ -30,27 +31,50 @@ export function parseInput(text) {
     })
 }
 
-// Analyze a single parsed entry → either a mapped track row or an unresolved record.
+// Analyze a single parsed entry → { track, warning? } | { unresolved }.
+// _meta from analyzeTrackParts threads through here so callers get retry info.
 async function processEntry(entry) {
   try {
     if (entry.type === 'unparseable') {
-      return { unresolved: { originalText: entry.originalText, artist: '', title: '', reason: "couldn't read this line" } }
+      return { unresolved: { originalText: entry.originalText, artist: '', title: '', reason: "couldn't read this line", triedVariations: 0 } }
     }
 
     let { artist, title } = entry
+    let spotifyArtUrl = null
     if (entry.type === 'spotify') {
       const r = await resolveSpotifyUrl(entry.url)
       artist = r.artist
       title = r.title
+      spotifyArtUrl = r.ogImage
       if (!artist || !title) throw new Error('could not resolve Spotify link')
     }
 
-    const track = await analyzeTrackParts(artist, title)
-    // SoundNet misses are stored as 'unanalyzed' by the pipeline (it caught the error key).
+    const track = await analyzeTrackParts(artist, title, { spotifyArtUrl })
+
+    // SoundNet misses are stored as 'unanalyzed' by the pipeline (it caught all variations).
     if (!track || track.status === 'unanalyzed') {
-      return { unresolved: { originalText: entry.originalText, artist, title, reason: 'not found' } }
+      return {
+        unresolved: {
+          originalText: entry.originalText,
+          artist,
+          title,
+          reason: 'not found',
+          // lastAttempt lets the reconciliation panel prefill the best variation attempted
+          lastAttempt: {
+            artist: track?._meta?.lastArtist ?? artist,
+            title: track?._meta?.lastTitle ?? title,
+          },
+          triedVariations: track?._meta?.retriedCount ?? 0,
+        },
+      }
     }
-    return { track }
+
+    // Surface version mismatch warning so the reconciliation panel can flag it.
+    const warning = track._meta?.versionWarning
+      ? { originalText: entry.originalText, ...track._meta.versionWarning }
+      : null
+
+    return { track, warning }
   } catch (err) {
     return {
       unresolved: {
@@ -58,22 +82,25 @@ async function processEntry(entry) {
         artist: entry.artist || '',
         title: entry.title || '',
         reason: err.message || 'failed',
+        triedVariations: 0,
       },
     }
   }
 }
 
 // Run a full import. Calls onProgress({ current, total, name }) after each track.
-// Returns { mapped: trackRows[], unresolved: [{ originalText, artist, title, reason }] }.
+// Returns { mapped, unresolved, warnings }.
+//   mapped    — successfully analyzed track rows (includes version-warned tracks)
+//   unresolved — tracks that couldn't be found after all variations
+//   warnings   — subset of mapped tracks that had a duration-mismatch, with display data
 //
-// Processes entries in pairs (CONCURRENCY = 2) with a PAIR_DELAY gap between pairs. Capping
-// at 2 keeps us under the throttle threshold that broke the old 5-wide bursts, while the
-// overlap roughly halves import time versus strictly sequential.
+// Processes entries in pairs (CONCURRENCY = 2) with a PAIR_DELAY gap between pairs.
 export async function runImport(text, onProgress = () => {}) {
   const entries = parseInput(text)
   const total = entries.length
   const mapped = []
   const unresolved = []
+  const warnings = []
   let done = 0
 
   for (let i = 0; i < entries.length; i += CONCURRENCY) {
@@ -81,8 +108,12 @@ export async function runImport(text, onProgress = () => {}) {
     await Promise.all(
       pair.map(async (entry) => {
         const result = await processEntry(entry)
-        if (result.track) mapped.push(result.track)
-        else unresolved.push(result.unresolved)
+        if (result.track) {
+          mapped.push(result.track)
+          if (result.warning) warnings.push(result.warning)
+        } else {
+          unresolved.push(result.unresolved)
+        }
         done += 1
         onProgress({ current: done, total, name: entry.title || entry.originalText })
       }),
@@ -90,7 +121,7 @@ export async function runImport(text, onProgress = () => {}) {
     if (i + CONCURRENCY < entries.length) await sleep(PAIR_DELAY)
   }
 
-  return { mapped, unresolved }
+  return { mapped, unresolved, warnings }
 }
 
 // Re-analyze a single edited unresolved entry. Returns the track row on success, else null.

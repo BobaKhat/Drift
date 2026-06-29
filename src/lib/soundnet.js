@@ -43,9 +43,16 @@ async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
 
 export async function getAudioFeatures(artist, title) {
   const params = new URLSearchParams({ artist, song: title })
-  const res = await fetchWithRetry(`/api/soundnet/pktx/analysis?${params}`)
+  const url = `/api/soundnet/pktx/analysis?${params}`
+  console.log(`[soundnet] → GET ${url}`)
+  console.log(`[soundnet]   params: artist="${artist}" | song="${title}"`)
+
+  const res = await fetchWithRetry(url)
 
   const data = await res.json()
+
+  console.log(`[soundnet]   raw response keys:`, Object.keys(data))
+  console.log(`[soundnet]   title="${data.title ?? data.song_title ?? '(none)'}" artist="${data.artist ?? data.artist_name ?? '(none)'}" error="${data.error ?? '(none)'}"`)
 
   if (data.error) throw new Error(`SoundNet miss: ${data.error}`)
 
@@ -73,5 +80,10 @@ export async function getAudioFeatures(artist, title) {
     popularity:       data.popularity ?? null,
     missing_features: missing.length ? missing : null,
     status:           missing.length ? 'partial' : 'analyzed',
+    // Matched metadata SoundNet may return alongside features.
+    // Used for self-verification when iTunes has no coverage.
+    // Null when the API doesn't include these fields — callers fall back to the sent query.
+    _matchedTitle:  data.title ?? data.song_title ?? data.track_title ?? null,
+    _matchedArtist: data.artist ?? data.artist_name ?? data.author ?? null,
   }
 }

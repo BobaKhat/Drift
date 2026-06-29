@@ -92,11 +92,12 @@ export function PlaylistProvider({ children }) {
     setImportState('progress')
     try {
       const result = await runImport(text, setProgress)
+      // result shape: { mapped, unresolved, warnings }
       setReconciliation(result)
       setImportState('reconcile')
     } catch (err) {
       console.error('[drift] import failed:', err)
-      setReconciliation({ mapped: [], unresolved: [] })
+      setReconciliation({ mapped: [], unresolved: [], warnings: [] })
       setImportState('reconcile')
     }
   }, [])
@@ -136,15 +137,21 @@ export function PlaylistProvider({ children }) {
   }, [refreshPlaylists, activate, closeImport])
 
   // Retry one edited unresolved row (matched by its original pasted line); on success move
-  // it into the mapped bucket.
+  // it into the mapped bucket. If the retry surfaces a version warning, add it to warnings.
   const retry = useCallback(async (originalText, artist, title) => {
     const track = await retryUnresolved(artist, title)
     if (!track) return false
     setReconciliation((prev) => {
       if (!prev) return prev
+      const newWarning = track._meta?.versionWarning
+        ? { originalText, ...track._meta.versionWarning }
+        : null
       return {
         mapped: [...prev.mapped, track],
         unresolved: prev.unresolved.filter((u) => u.originalText !== originalText),
+        warnings: newWarning
+          ? [...(prev.warnings ?? []), newWarning]
+          : (prev.warnings ?? []),
       }
     })
     return true

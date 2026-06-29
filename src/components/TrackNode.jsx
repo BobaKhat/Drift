@@ -36,7 +36,7 @@ function t(...props) {
 }
 
 function TrackNode({ id, data }) {
-  const { albumArtUrl, artist, name, bpm, camelot } = data
+  const { albumArtUrl, artist, name, bpm, camelot, highlighted } = data
   const { zoom } = useViewport()
   const tier = getTier(zoom)
   const isCircle = tier === 'circle'
@@ -80,7 +80,9 @@ function TrackNode({ id, data }) {
         borderWidth: isCircle ? 0 : 1,
         borderStyle: 'solid',
         borderColor: isCircle ? 'transparent' : 'rgba(255,255,255,0.12)',
-        boxShadow: '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
+        boxShadow: highlighted
+          ? '0 0 0 2.5px #F27F37, 0 0 18px rgba(242,127,55,0.45)'
+          : '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
         // layout
         gap: isCircle ? 0 : 10,
         padding: isCircle ? 0 : '10px 15px 10px 15px',

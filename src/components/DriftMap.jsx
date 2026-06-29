@@ -139,6 +139,7 @@ function buildNodes(tracks) {
         albumArtUrl: track.album_art_url,
         bpm: track.bpm ?? null,
         camelot: track.camelot ?? null,
+        highlighted: false,
       },
       draggable: false,
       selectable: false,
@@ -202,6 +203,8 @@ function Bracket({ pos }) {
 }
 
 // Small HUD chip naming the quadrant under the viewport centre once you're zoomed in.
+// Opacity is controlled imperatively (no React state) so pan/zoom updates are instant and
+// avoid re-renders on every frame. pointerEvents: 'auto' overrides the parent's 'none'.
 const zoneChipStyle = {
   position: 'absolute',
   left: EDGE + 30,
@@ -221,6 +224,35 @@ const zoneChipStyle = {
   color: '#cfcfcf',
   whiteSpace: 'nowrap',
   zIndex: 3,
+  cursor: 'pointer',
+  pointerEvents: 'auto',
+}
+
+// Zone option row in the chip dropdown.
+function ZoneOption({ label, onSelect, isLast }) {
+  const [hovered, setHovered] = useState(false)
+  return (
+    <div
+      onMouseDown={onSelect}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        padding: '9px 16px',
+        cursor: 'pointer',
+        fontFamily: FONT,
+        fontSize: 12,
+        fontWeight: 500,
+        letterSpacing: '0.02em',
+        color: '#cfcfcf',
+        background: hovered ? 'rgba(255,255,255,0.06)' : 'transparent',
+        borderBottom: isLast ? 'none' : `1px solid ${BORDER}`,
+        whiteSpace: 'nowrap',
+        userSelect: 'none',
+      }}
+    >
+      {label}
+    </div>
+  )
 }
 
 // Crosshair opacity by zoom: full through the circle tier, fades across the pill tier, gone by
@@ -247,6 +279,7 @@ function AxisLayer() {
   const chipRef = useRef(null)
   const chipLabelRef = useRef(null)
   const dimsRef = useRef({ w: 0, h: 0 })
+  const [chipOpen, setChipOpen] = useState(false)
 
   const applyViewport = useCallback(({ x, y, zoom }) => {
     // Crosshair lines: canvas centre mapped to screen, faded by zoom.
@@ -269,14 +302,28 @@ function AxisLayer() {
       const cxCanvas = (w / 2 - x) / zoom
       const cyCanvas = (h / 2 - y) / zoom
       chipLabelRef.current.textContent = `${cyCanvas <= H / 2 ? 'Intense' : 'Chill'} · ${cxCanvas >= W / 2 ? 'Bright' : 'Dark'}`
+      // Opacity managed purely via DOM — no React state — so pan/zoom updates are zero-cost.
       chipRef.current.style.opacity = 1 - lineOpacity
     }
   }, [])
 
+  // Close chip dropdown on click outside.
+  useEffect(() => {
+    if (!chipOpen) return
+    const handler = (e) => {
+      if (!chipRef.current?.contains(e.target)) setChipOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [chipOpen])
+
   // Measure the card once (and on resize) for the zone-chip quadrant math, then refresh.
+  // Initialize chip opacity to 0 here (not in JSX style) so React re-renders triggered by
+  // chipOpen state don't reset the imperatively-managed opacity value.
   useLayoutEffect(() => {
     const el = rootRef.current
     if (!el) return
+    if (chipRef.current) chipRef.current.style.opacity = '0'
     const measure = () => { dimsRef.current = { w: el.clientWidth, h: el.clientHeight }; applyViewport(rf.getViewport()) }
     measure()
     const ro = new ResizeObserver(measure)
@@ -285,6 +332,16 @@ function AxisLayer() {
   }, [applyViewport, rf])
 
   useOnViewportChange({ onChange: applyViewport })
+
+  // Pan to the center of one of the four quadrants.
+  const panToZone = useCallback((label) => {
+    const intense = label.startsWith('Intense')
+    const bright = label.endsWith('Bright')
+    rf.setCenter(bright ? (W * 3) / 4 : W / 4, intense ? H / 4 : (H * 3) / 4, { zoom: 0.4, duration: 600 })
+    setChipOpen(false)
+  }, [rf])
+
+  const zones = ['Intense · Bright', 'Intense · Dark', 'Chill · Bright', 'Chill · Dark']
 
   return (
     <div ref={rootRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
@@ -303,17 +360,52 @@ function AxisLayer() {
       <span ref={darkRef} style={{ ...pillBase, left: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>Dark</span>
       <span ref={brightRef} style={{ ...pillBase, right: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>Bright</span>
 
-      {/* Zone chip — fades in when zoomed in, replacing the crosshair as orientation aid. */}
-      <div ref={chipRef} style={{ ...zoneChipStyle, opacity: 0 }}>
+      {/* Zone chip — fades in when zoomed in, replacing the crosshair as orientation aid.
+          Opacity is managed imperatively; clicking opens a 4-quadrant pan shortcut. */}
+      <div
+        ref={chipRef}
+        style={zoneChipStyle}
+        onClick={() => setChipOpen((o) => !o)}
+      >
         <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1, flexShrink: 0 }} />
         <span ref={chipLabelRef} />
+        <svg width="9" height="5" viewBox="0 0 9 5" fill="none" style={{ flexShrink: 0, marginLeft: 1 }}>
+          <path d="M1 1L4.5 4.5L8 1" stroke="#888" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+
+        {/* Dropdown — opens above the chip since it sits at the bottom of the card. */}
+        {chipOpen && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              bottom: 'calc(100% + 8px)',
+              left: 0,
+              background: '#0f0f0f',
+              borderRadius: 12,
+              border: `1px solid ${BORDER}`,
+              boxShadow: '0 -4px 24px rgba(0,0,0,0.7)',
+              overflow: 'hidden',
+              minWidth: 170,
+            }}
+          >
+            {zones.map((zone, i) => (
+              <ZoneOption
+                key={zone}
+                label={zone}
+                onSelect={() => panToZone(zone)}
+                isLast={i === zones.length - 1}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
 
-// —— Map chrome (visual only; functionality lands in a later slice) ————————————————
+// —— Map chrome ————————————————————————————————————————————————————————————————
 
 const barShadow = '4px 4px 2.5px 0px rgba(0,0,0,0.9), inset 1px 1.5px 3px 0px #373737'
 
@@ -326,22 +418,172 @@ function MagnifierIcon({ color }) {
   )
 }
 
-// Top-left search pill.
-function SearchBar() {
+// Individual search result row.
+function SearchResult({ track, onSelect, isLast }) {
+  const [hovered, setHovered] = useState(false)
   return (
     <div
+      onMouseDown={() => onSelect(track)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
-        position: 'absolute', left: 19, top: 19, width: 350, zIndex: 4,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '8px 10px 8px 30px', background: CARD, borderRadius: 100, boxShadow: barShadow,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '10px 16px',
+        cursor: 'pointer',
+        background: hovered ? 'rgba(255,255,255,0.05)' : 'transparent',
+        borderBottom: isLast ? 'none' : `1px solid ${BORDER}`,
+        userSelect: 'none',
       }}
     >
-      <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 500, color: TEXT_SECONDARY, whiteSpace: 'nowrap' }}>
-        Find a Song on Your Map
-      </span>
-      <div style={{ width: 42, height: 42, borderRadius: '50%', border: `1.5px solid ${ACCENT1}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-        <MagnifierIcon color={ACCENT1} />
+      <div style={{ width: 36, height: 36, borderRadius: 5, overflow: 'hidden', flexShrink: 0 }}>
+        {track.album_art_url ? (
+          <img
+            src={track.album_art_url}
+            alt=""
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            draggable={false}
+          />
+        ) : (
+          <div style={{ width: '100%', height: '100%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>
+            ♪
+          </div>
+        )}
       </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontFamily: FONT, fontSize: 13, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {track.name}
+        </div>
+        <div style={{ fontFamily: FONT, fontSize: 11, color: TEXT_SECONDARY, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {track.artist}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Top-left search pill — type-ahead search over the active playlist.
+function SearchBar({ tracks, rf, onHighlight }) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen] = useState(false)
+  const wrapperRef = useRef(null)
+  const inputRef = useRef(null)
+
+  const results = useMemo(() => {
+    if (query.length < 2) return []
+    const q = query.toLowerCase()
+    return tracks
+      .filter((t) => t.name?.toLowerCase().includes(q) || t.artist?.toLowerCase().includes(q))
+      .slice(0, 8)
+  }, [query, tracks])
+
+  // Dismiss on click outside.
+  useEffect(() => {
+    const handler = (e) => {
+      if (!wrapperRef.current?.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const handleSelect = useCallback((track) => {
+    setQuery('')
+    setOpen(false)
+    const node = rf.getNode(track.id)
+    if (node) {
+      // Zoom to at least card tier so the song is readable after navigation.
+      const targetZoom = Math.max(rf.getViewport().zoom, ZOOM_CARD + 0.1)
+      rf.setCenter(node.position.x, node.position.y, { zoom: targetZoom, duration: 600 })
+    }
+    onHighlight(track.id)
+  }, [rf, onHighlight])
+
+  const showDropdown = open && query.length >= 2
+
+  return (
+    <div ref={wrapperRef} style={{ position: 'absolute', left: 19, top: 19, width: 350, zIndex: 4 }}>
+      {/* Pill */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 10px 8px 22px',
+          background: CARD,
+          borderRadius: 100,
+          boxShadow: barShadow,
+        }}
+      >
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
+          onFocus={() => { if (query.length >= 2) setOpen(true) }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { setOpen(false); setQuery(''); inputRef.current?.blur() }
+          }}
+          placeholder="Find a Song on Your Map"
+          style={{
+            flex: 1,
+            background: 'transparent',
+            border: 'none',
+            outline: 'none',
+            fontFamily: FONT,
+            fontSize: 14,
+            fontWeight: 500,
+            color: query ? '#fff' : TEXT_SECONDARY,
+          }}
+        />
+        <div
+          onClick={() => inputRef.current?.focus()}
+          style={{
+            width: 42,
+            height: 42,
+            borderRadius: '50%',
+            border: `1.5px solid ${ACCENT1}`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            cursor: 'pointer',
+          }}
+        >
+          <MagnifierIcon color={ACCENT1} />
+        </div>
+      </div>
+
+      {/* Results dropdown */}
+      {showDropdown && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 8px)',
+            left: 0,
+            right: 0,
+            background: CARD,
+            borderRadius: 16,
+            border: `1px solid ${BORDER}`,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.65)',
+            overflow: 'hidden',
+          }}
+        >
+          {results.length === 0 ? (
+            <div style={{ padding: '14px 20px', fontFamily: FONT, fontSize: 13, color: TEXT_SECONDARY }}>
+              No songs found
+            </div>
+          ) : (
+            results.map((track, i) => (
+              <SearchResult
+                key={track.id}
+                track={track}
+                onSelect={handleSelect}
+                isLast={i === results.length - 1}
+              />
+            ))
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -350,14 +592,22 @@ function ToolDivider() {
   return <div style={{ width: 1, height: 28, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
 }
 
-function ToolButton({ children }) {
+function ToolButton({ children, onClick }) {
   return (
     <div
+      onClick={onClick}
       style={{
-        width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: CARD, color: '#9a9a9a',
+        width: 40,
+        height: 40,
+        borderRadius: '50%',
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: CARD,
+        color: '#9a9a9a',
         boxShadow: 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px rgba(0,0,0,0.7)',
+        cursor: onClick ? 'pointer' : 'default',
       }}
     >
       {children}
@@ -365,9 +615,17 @@ function ToolButton({ children }) {
   )
 }
 
-// Top-right toolbar: active preset + view controls.
-function ToolBar() {
+// Top-right toolbar: active preset label + zoom controls.
+function ToolBar({ rf, presetName = 'Vibe' }) {
   const stroke = '#9a9a9a'
+
+  const handleFitView = useCallback(() => {
+    rf.fitView({ padding: 0.12, maxZoom: MAX_ZOOM, duration: 600 })
+  }, [rf])
+
+  const handleZoomIn = useCallback(() => rf.zoomIn({ duration: 200 }), [rf])
+  const handleZoomOut = useCallback(() => rf.zoomOut({ duration: 200 }), [rf])
+
   return (
     <div
       style={{
@@ -379,11 +637,12 @@ function ToolBar() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 500, color: TEXT_SECONDARY }}>Preset</span>
         <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1 }} />
-        <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: '#fff' }}>Vibe</span>
+        <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: '#fff' }}>{presetName}</span>
       </div>
       <ToolDivider />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <ToolButton>
+        {/* Center: fit all songs in view */}
+        <ToolButton onClick={handleFitView}>
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
             <circle cx="9" cy="9" r="3" stroke={stroke} strokeWidth="1.5" />
             <line x1="9" y1="1.5" x2="9" y2="3.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
@@ -392,7 +651,8 @@ function ToolBar() {
             <line x1="14.5" y1="9" x2="16.5" y2="9" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </ToolButton>
-        <ToolButton>
+        {/* Zoom in */}
+        <ToolButton onClick={handleZoomIn}>
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
             <circle cx="7.5" cy="7.5" r="5" stroke={stroke} strokeWidth="1.5" />
             <line x1="11.4" y1="11.4" x2="15.5" y2="15.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
@@ -400,7 +660,8 @@ function ToolBar() {
             <line x1="7.5" y1="5.3" x2="7.5" y2="9.7" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         </ToolButton>
-        <ToolButton>
+        {/* Zoom out */}
+        <ToolButton onClick={handleZoomOut}>
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
             <circle cx="7.5" cy="7.5" r="5" stroke={stroke} strokeWidth="1.5" />
             <line x1="11.4" y1="11.4" x2="15.5" y2="15.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
@@ -432,6 +693,7 @@ function DriftMapInner({ tracks }) {
   const hasFit = useRef(false)
   const wrapperRef = useRef(null)
   const zoomTimer = useRef(null)
+  const highlightTimer = useRef(null)
 
   // Switching playlists swaps the visible songs: rebuild nodes and re-fit the viewport.
   useEffect(() => {
@@ -494,6 +756,21 @@ function DriftMapInner({ tracks }) {
     hasFit.current = true
   }, [nodes, rf])
 
+  // Apply a 2-second orange highlight ring to the searched song, then clear it.
+  const handleHighlight = useCallback((trackId) => {
+    clearTimeout(highlightTimer.current)
+    setNodes((prev) => prev.map((n) => ({
+      ...n,
+      data: { ...n.data, highlighted: n.id === trackId },
+    })))
+    highlightTimer.current = setTimeout(() => {
+      setNodes((prev) => prev.map((n) => ({
+        ...n,
+        data: { ...n.data, highlighted: false },
+      })))
+    }, 2000)
+  }, [setNodes])
+
   return (
     <div
       ref={wrapperRef}
@@ -533,8 +810,8 @@ function DriftMapInner({ tracks }) {
         proOptions={{ hideAttribution: true }}
       />
       <AxisLayer />
-      <SearchBar />
-      <ToolBar />
+      <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
+      <ToolBar rf={rf} presetName="Vibe" />
     </div>
   )
 }

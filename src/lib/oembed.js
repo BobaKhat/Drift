@@ -22,7 +22,8 @@ export function isSpotifyTrackUrl(line) {
   return TRACK_URL.test(line.trim())
 }
 
-// Pull { artist, title } out of the embed page's __NEXT_DATA__ JSON.
+// Pull { artist, title, ogImage } out of the embed page's __NEXT_DATA__ JSON.
+// ogImage is the og:image URL from the same HTML — no extra fetch needed.
 function parseEmbed(html) {
   const m = html.match(/<script id="__NEXT_DATA__"[^>]*>(.*?)<\/script>/s)
   if (!m) throw new Error('embed payload missing (throttled?)')
@@ -33,7 +34,14 @@ function parseEmbed(html) {
     (entity?.artists || []).map((a) => a?.name).filter(Boolean).join(', ') ||
     entity?.subtitle ||
     ''
-  return { artist, title }
+
+  // og:image attribute order varies — handle both orderings
+  const ogMatch =
+    html.match(/<meta\s[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/) ??
+    html.match(/<meta\s[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/)
+  const ogImage = ogMatch?.[1] ?? null
+
+  return { artist, title, ogImage }
 }
 
 export async function resolveSpotifyUrl(url) {
@@ -50,9 +58,9 @@ export async function resolveSpotifyUrl(url) {
       if (res.status === 429) throw new Error('Spotify throttled (429)')
       if (!res.ok) throw new Error(`Spotify embed HTTP ${res.status}`)
 
-      const { artist, title } = parseEmbed(await res.text())
+      const { artist, title, ogImage } = parseEmbed(await res.text())
       if (!artist || !title) throw new Error('could not resolve Spotify link')
-      return { artist, title }
+      return { artist, title, ogImage }
     } catch (err) {
       lastErr = err
       if (attempt < 3) await new Promise((r) => setTimeout(r, 800 * attempt))

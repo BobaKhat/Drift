@@ -25,6 +25,10 @@ export function titleSimilarity(requested, found) {
 }
 
 // True when the found title sufficiently corroborates the requested title.
+// Also accepts substring containment: "Commas" ⊂ "Fuck Up Some Commas" (clean title variant).
 export function titlesMatch(requested, found, threshold = 0.5) {
-  return titleSimilarity(requested, found) >= threshold
+  if (titleSimilarity(requested, found) >= threshold) return true
+  const a = (requested || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+  const b = (found    || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+  return a.length > 0 && b.length > 0 && (a.includes(b) || b.includes(a))
 }
