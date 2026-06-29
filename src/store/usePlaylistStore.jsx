@@ -27,6 +27,9 @@ export function PlaylistProvider({ children }) {
 
   // Active axis preset. 'custom' uses customXFeature/customYFeature.
   const [activePanel, setActivePanel] = useState(null)
+
+  // Compass quadrant the map viewport centre is currently in.
+  const [activeQuadrant, setActiveQuadrant] = useState(null) // 'TR'|'TL'|'BR'|'BL'|null
   const togglePanel = (id) => setActivePanel((prev) => (prev === id ? null : id))
 
   const [activePreset, setActivePresetKey] = useState('vibe')
@@ -191,6 +194,8 @@ export function PlaylistProvider({ children }) {
     activePanel,
     setActivePanel,
     togglePanel,
+    activeQuadrant,
+    setActiveQuadrant,
     activePreset,
     customXFeature,
     customYFeature,

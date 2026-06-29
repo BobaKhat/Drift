@@ -10,6 +10,7 @@ import '@xyflow/react/dist/style.css'
 import TrackNode, { ZOOM_PILL, ZOOM_CARD } from './TrackNode'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
+import CompassPreview from './CompassPreview'
 
 // Flow-space canvas dimensions. A large canvas gives songs room to separate as you
 // zoom in (Google Maps model, Decision Log #17) — the primary energy×mood mapping only
@@ -276,6 +277,10 @@ function AxisLayer({ preset }) {
   const dimsRef = useRef({ w: 0, h: 0 })
   const [chipOpen, setChipOpen] = useState(false)
 
+  const { setActiveQuadrant } = usePlaylistStore()
+  const setActiveQuadrantRef = useRef(setActiveQuadrant)
+  useEffect(() => { setActiveQuadrantRef.current = setActiveQuadrant }, [setActiveQuadrant])
+
   // Keep preset labels in a ref so applyViewport (stable useCallback) always reads the latest
   // values without needing to be recreated on every preset change.
   const labelsRef = useRef({ yHigh: preset.yHigh, yLow: preset.yLow, xHigh: preset.xHigh, xLow: preset.xLow })
@@ -307,6 +312,14 @@ function AxisLayer({ preset }) {
       chipLabelRef.current.textContent = `${cyCanvas <= H / 2 ? yHigh : yLow} · ${cxCanvas >= W / 2 ? xHigh : xLow}`
       chipRef.current.style.opacity = 1 - lineOpacity
     }
+
+    // Compass quadrant: TR/TL/BR/BL based on canvas centre of the viewport.
+    const qx = (w / 2 - x) / zoom
+    const qy = (h / 2 - y) / zoom
+    const quadrant = qy <= H / 2
+      ? (qx >= W / 2 ? 'TR' : 'TL')
+      : (qx >= W / 2 ? 'BR' : 'BL')
+    setActiveQuadrantRef.current(quadrant)
   }, [])
 
   // Close chip dropdown on click outside.
@@ -622,64 +635,101 @@ function ToolButton({ children, onClick }) {
   )
 }
 
-// Top-right toolbar: active preset label + zoom controls.
-function ToolBar({ rf, presetName = 'Vibe' }) {
+// Top-right toolbar: active preset label + zoom controls + compass dropdown.
+function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
   const stroke = '#9a9a9a'
+  const [compassOpen, setCompassOpen] = useState(false)
 
   const handleFitView = useCallback(() => {
     rf.fitView({ padding: 0.12, maxZoom: MAX_ZOOM, duration: 600 })
   }, [rf])
 
-  const handleZoomIn = useCallback(() => rf.zoomIn({ duration: 200 }), [rf])
+  const handleZoomIn  = useCallback(() => rf.zoomIn({ duration: 200 }), [rf])
   const handleZoomOut = useCallback(() => rf.zoomOut({ duration: 200 }), [rf])
 
   return (
-    <div
-      style={{
-        position: 'absolute', right: 19, top: 19, zIndex: 4,
+    <div style={{
+      position: 'absolute', right: 19, top: 19, zIndex: 4,
+      display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10,
+    }}>
+      {/* Toolbar pill */}
+      <div style={{
         display: 'flex', alignItems: 'center', gap: 16,
         padding: '8px 22px', background: CARD, borderRadius: 100, boxShadow: barShadow,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 500, color: TEXT_SECONDARY }}>Preset</span>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1 }} />
-        <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: '#fff' }}>{presetName}</span>
+        position: 'relative',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 500, color: TEXT_SECONDARY }}>Preset</span>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1 }} />
+          <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: '#fff' }}>{presetName}</span>
+        </div>
+        <ToolDivider />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ToolButton onClick={handleFitView}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <circle cx="9" cy="9" r="3" stroke={stroke} strokeWidth="1.5" />
+              <line x1="9" y1="1.5" x2="9" y2="3.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="9" y1="14.5" x2="9" y2="16.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="1.5" y1="9" x2="3.5" y2="9" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="14.5" y1="9" x2="16.5" y2="9" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </ToolButton>
+          <ToolButton onClick={handleZoomIn}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <circle cx="7.5" cy="7.5" r="5" stroke={stroke} strokeWidth="1.5" />
+              <line x1="11.4" y1="11.4" x2="15.5" y2="15.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="5.3" y1="7.5" x2="9.7" y2="7.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="7.5" y1="5.3" x2="7.5" y2="9.7" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </ToolButton>
+          <ToolButton onClick={handleZoomOut}>
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <circle cx="7.5" cy="7.5" r="5" stroke={stroke} strokeWidth="1.5" />
+              <line x1="11.4" y1="11.4" x2="15.5" y2="15.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="5.3" y1="7.5" x2="9.7" y2="7.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </ToolButton>
+        </div>
+        <ToolDivider />
+        {/* Chevron toggle — rotates when compass is open */}
+        <button
+          onClick={() => setCompassOpen((o) => !o)}
+          style={{
+            background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'transform 220ms ease',
+            transform: compassOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+          }}
+        >
+          <svg width="13" height="8" viewBox="0 0 13 8" fill="none">
+            <path d="M1 1.5L6.5 6.5L12 1.5" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {/* Inset shadow overlay */}
+        <div style={{
+          position: 'absolute', inset: 0, borderRadius: 'inherit',
+          boxShadow: 'inset 1px 1.5px 3px 0px #373737',
+          pointerEvents: 'none',
+        }} />
       </div>
-      <ToolDivider />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {/* Center: fit all songs in view */}
-        <ToolButton onClick={handleFitView}>
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <circle cx="9" cy="9" r="3" stroke={stroke} strokeWidth="1.5" />
-            <line x1="9" y1="1.5" x2="9" y2="3.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-            <line x1="9" y1="14.5" x2="9" y2="16.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-            <line x1="1.5" y1="9" x2="3.5" y2="9" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-            <line x1="14.5" y1="9" x2="16.5" y2="9" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </ToolButton>
-        {/* Zoom in */}
-        <ToolButton onClick={handleZoomIn}>
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <circle cx="7.5" cy="7.5" r="5" stroke={stroke} strokeWidth="1.5" />
-            <line x1="11.4" y1="11.4" x2="15.5" y2="15.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-            <line x1="5.3" y1="7.5" x2="9.7" y2="7.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-            <line x1="7.5" y1="5.3" x2="7.5" y2="9.7" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </ToolButton>
-        {/* Zoom out */}
-        <ToolButton onClick={handleZoomOut}>
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <circle cx="7.5" cy="7.5" r="5" stroke={stroke} strokeWidth="1.5" />
-            <line x1="11.4" y1="11.4" x2="15.5" y2="15.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-            <line x1="5.3" y1="7.5" x2="9.7" y2="7.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </ToolButton>
-      </div>
-      <ToolDivider />
-      <svg width="13" height="8" viewBox="0 0 13 8" fill="none">
-        <path d="M1 1.5L6.5 6.5L12 1.5" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+
+      {/* Compass card — slides in below toolbar when open */}
+      {compassOpen && (
+        <div style={{
+          width: 373, padding: 15, borderRadius: 20,
+          background: CARD,
+          filter: 'drop-shadow(4px 4px 2.5px black)',
+          position: 'relative',
+        }}>
+          <CompassPreview presetKey={activePreset} />
+          {/* Inset shadow on card */}
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: 'inherit',
+            boxShadow: 'inset 1px 1.5px 3px 0px #373737',
+            pointerEvents: 'none',
+          }} />
+        </div>
+      )}
     </div>
   )
 }
@@ -825,7 +875,7 @@ function DriftMapInner({ tracks }) {
       />
       <AxisLayer preset={presetConfig} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
-      <ToolBar rf={rf} presetName={presetConfig.label} />
+      <ToolBar rf={rf} presetName={presetConfig.label} activePreset={activePreset} />
     </div>
   )
 }
