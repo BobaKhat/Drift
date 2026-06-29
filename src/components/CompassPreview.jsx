@@ -47,9 +47,10 @@ const pillText = {
   lineHeight: 'normal', whiteSpace: 'nowrap', position: 'relative',
 }
 
-export default function CompassPreview({ presetKey }) {
+export default function CompassPreview({ presetKey, locked = false }) {
   const p = PRESETS[presetKey] ?? PRESETS.vibe
-  const { activeQuadrant } = usePlaylistStore()
+  const { activeQuadrant: storeQuadrant } = usePlaylistStore()
+  const activeQuadrant = locked ? null : storeQuadrant
 
   // Active quadrant dims non-active sectors; null = all visible (panel before any pan)
   const qOp = (q) => activeQuadrant == null ? 1 : activeQuadrant === q ? 1 : 0.12

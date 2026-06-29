@@ -97,7 +97,7 @@ export default function ExploreByPanel() {
 
         {/* Compass preview */}
         <div style={{ marginTop: 35, paddingBottom: 20 }}>
-          <CompassPreview presetKey={activePreset} />
+          <CompassPreview presetKey={activePreset} locked />
         </div>
       </div>
     </div>
