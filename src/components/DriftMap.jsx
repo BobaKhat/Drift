@@ -5,9 +5,10 @@ import {
   useNodesState,
   useReactFlow,
   useOnViewportChange,
+  useStoreApi,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import TrackNode, { ZOOM_PILL, ZOOM_CARD } from './TrackNode'
+import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, getTier, getNodeScale } from './TrackNode'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
 import CompassPreview from './CompassPreview'
@@ -257,6 +258,40 @@ function crosshairOpacityFor(zoom) {
   return clamp((ZOOM_CARD - zoom) / (ZOOM_CARD - ZOOM_PILL), 0, 1)
 }
 
+// Drive per-frame zoom work (the node counter-scale) WITHOUT a second useOnViewportChange: that
+// hook stores a single `onViewportChange` handler, so a second subscriber would clobber AxisLayer's
+// (which owns it for the crosshair/pills). Instead we subscribe to the ReactFlow store's transform
+// imperatively — it fires on interactive AND programmatic viewport changes, with no React
+// re-render — and coalesce to ~30fps with requestAnimationFrame (trailing edge, so the final zoom
+// always lands). Only zoom changes schedule work; pan (zoom unchanged) is a no-op for scaling.
+const VIEWPORT_FRAME_MS = 32 // ~30fps
+
+function useThrottledZoom(onZoom) {
+  const store = useStoreApi()
+  const cbRef = useRef(onZoom)
+  useEffect(() => { cbRef.current = onZoom })
+
+  useEffect(() => {
+    let raf = 0
+    let last = 0
+    let zoom = store.getState().transform[2]
+    const run = () => {
+      const now = performance.now()
+      if (now - last < VIEWPORT_FRAME_MS) { raf = requestAnimationFrame(run); return }
+      last = now
+      raf = 0
+      cbRef.current?.(zoom)
+    }
+    const unsub = store.subscribe((s) => {
+      const z = s.transform[2]
+      if (z === zoom) return
+      zoom = z
+      if (!raf) raf = requestAnimationFrame(run)
+    })
+    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
+  }, [store])
+}
+
 // AxisLayer overlay. The crosshair lines mark value 50 on each axis (= canvas centre W/2, H/2)
 // and the pole pills sit at the crosshair endpoints: all of it lives in canvas space and
 // pans/zooms with the map, fading out as you zoom in since it's only an overview aid. A zone chip
@@ -280,6 +315,7 @@ function AxisLayer({ preset }) {
   const { setActiveQuadrant } = usePlaylistStore()
   const setActiveQuadrantRef = useRef(setActiveQuadrant)
   useEffect(() => { setActiveQuadrantRef.current = setActiveQuadrant }, [setActiveQuadrant])
+  const prevQuadrantRef = useRef(null)
 
   // Keep preset labels in a ref so applyViewport (stable useCallback) always reads the latest
   // values without needing to be recreated on every preset change.
@@ -319,7 +355,12 @@ function AxisLayer({ preset }) {
     const quadrant = qy <= H / 2
       ? (qx >= W / 2 ? 'TR' : 'TL')
       : (qx >= W / 2 ? 'BR' : 'BL')
-    setActiveQuadrantRef.current(quadrant)
+    // Only push to the store when it actually changes — this fired every frame before, churning
+    // store subscribers (the compass widgets) on every pan even when the quadrant was unchanged.
+    if (quadrant !== prevQuadrantRef.current) {
+      prevQuadrantRef.current = quadrant
+      setActiveQuadrantRef.current(quadrant)
+    }
   }, [])
 
   // Close chip dropdown on click outside.
@@ -641,7 +682,7 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
   const [compassOpen, setCompassOpen] = useState(false)
 
   const handleFitView = useCallback(() => {
-    rf.fitView({ padding: 0.12, maxZoom: MAX_ZOOM, duration: 600 })
+    rf.fitView({ padding: 0.12, maxZoom: FIT_MAX_ZOOM, duration: 600 })
   }, [rf])
 
   const handleZoomIn  = useCallback(() => rf.zoomIn({ duration: 200 }), [rf])
@@ -738,9 +779,17 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
 // can be centered without hitting a hard wall
 const TRANSLATE_EXTENT = [[-3000, -3000], [W + 3000, H + 3000]]
 
-// Cap zoom so cards stay map-label sized: at 1.6× a 230px card is ~370px on screen,
-// keeping several cards in view rather than 1–2 filling the viewport.
-const MAX_ZOOM = 1.6
+// Manual zoom ceiling. Cards grow only slowly with zoom (dampened counter-scale — see NODE_PIN /
+// NODE_PIN_EXP in TrackNode) while the canvas spreads at full zoom, so zooming deeper mostly
+// separates songs and lets you pull individual cards out of a dense cluster. Hence a generous
+// ceiling. translateExtent is in flow-space (zoom-independent) and its 3000px margin already
+// covers centering at this zoom.
+const MAX_ZOOM = 3.5
+
+// Auto-fit (initial load + the fit-view button) is capped lower than MAX_ZOOM so a tightly
+// clustered library opens with surrounding context instead of slamming to the manual ceiling;
+// the user can then zoom deeper by hand.
+const FIT_MAX_ZOOM = 1.6
 
 function DriftMapInner({ tracks }) {
   const { activePreset, customXFeature, customYFeature, setActivePanel } = usePlaylistStore()
@@ -757,6 +806,10 @@ function DriftMapInner({ tracks }) {
   const wrapperRef = useRef(null)
   const zoomTimer = useRef(null)
   const highlightTimer = useRef(null)
+  // Tier is global (depends only on zoom) — held once here and broadcast via context so nodes
+  // re-render only on a threshold crossing, not on every zoom frame.
+  const [tier, setTier] = useState('circle')
+  const tierRef = useRef('circle')
 
   // Rebuild and re-fit whenever tracks or preset changes.
   useEffect(() => {
@@ -773,6 +826,23 @@ function DriftMapInner({ tracks }) {
     clearTimeout(zoomTimer.current)
     zoomTimer.current = setTimeout(() => el.classList.remove('is-zooming'), 150)
   }, [])
+
+  // Counter-scale + tier driver (throttled to ~30fps). Writes the scale factor into the
+  // --node-scale CSS var so every node rescales via CSS with no React re-render, and flips tier
+  // state only when a threshold is crossed.
+  const applyZoom = useCallback((zoom) => {
+    wrapperRef.current?.style.setProperty('--node-scale', String(getNodeScale(zoom)))
+    const next = getTier(zoom)
+    if (next !== tierRef.current) {
+      tierRef.current = next
+      setTier(next)
+    }
+  }, [])
+  useThrottledZoom(applyZoom)
+
+  // Seed the var + tier from the current viewport before first paint (the watcher only fires on a
+  // change), so nodes mount at the right scale/tier instead of flashing the default.
+  useLayoutEffect(() => { applyZoom(rf.getViewport().zoom) }, [applyZoom, rf])
 
   useEffect(() => {
     if (hasFit.current || nodes.length === 0) return
@@ -803,7 +873,7 @@ function DriftMapInner({ tracks }) {
     const zoom = Math.min(
       (vw * (1 - 2 * PAD_FRAC)) / bboxW,
       (vh * (1 - 2 * PAD_FRAC)) / bboxH,
-      MAX_ZOOM, // tightly-clustered libraries shouldn't zoom past the node morph tiers
+      FIT_MAX_ZOOM, // don't auto-open a tight cluster slammed to the manual ceiling
     )
     const x = vw / 2 - bboxCx * zoom
     const y = vh / 2 - bboxCy * zoom
@@ -854,25 +924,34 @@ function DriftMapInner({ tracks }) {
         zIndex: 1,
       }}
     >
-      <ReactFlow
-        nodes={nodes}
-        edges={[]}
-        onNodesChange={onNodesChange}
-        nodeTypes={nodeTypes}
-        onPaneClick={() => setActivePanel(null)}
+      {/* Broadcast the current tier to every node. Tier changes only on a threshold crossing, so
+          this re-renders nodes rarely; between crossings they hold steady while the --node-scale
+          CSS var (set on this wrapper) rescales them with no React work. */}
+      <ZoomTierContext.Provider value={tier}>
+        <ReactFlow
+          nodes={nodes}
+          edges={[]}
+          onNodesChange={onNodesChange}
+          nodeTypes={nodeTypes}
+          onPaneClick={() => setActivePanel(null)}
 
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        panOnDrag
-        zoomOnScroll
-        zoomOnPinch
-        minZoom={minZoom}
-        maxZoom={MAX_ZOOM}
-        translateExtent={TRANSLATE_EXTENT}
-        style={{ background: 'transparent' }}
-        proOptions={{ hideAttribution: true }}
-      />
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
+          panOnDrag
+          zoomOnScroll
+          zoomOnPinch
+          minZoom={minZoom}
+          maxZoom={MAX_ZOOM}
+          translateExtent={TRANSLATE_EXTENT}
+          // Cull off-screen nodes during pan/zoom — only mount the ones inside the viewport.
+          // Big win with 150+ songs. Culling uses each node's measured layout box (not its CSS
+          // counter-scale transform), so edge nodes may mount/unmount a few px late while panning.
+          onlyRenderVisibleElements={true}
+          style={{ background: 'transparent' }}
+          proOptions={{ hideAttribution: true }}
+        />
+      </ZoomTierContext.Provider>
       <AxisLayer preset={presetConfig} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
       <ToolBar rf={rf} presetName={presetConfig.label} activePreset={activePreset} />
