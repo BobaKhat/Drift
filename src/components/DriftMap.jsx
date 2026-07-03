@@ -2,15 +2,19 @@ import { useMemo, useState, useRef, useEffect, useCallback, useLayoutEffect } fr
 import {
   ReactFlow,
   ReactFlowProvider,
+  ConnectionMode,
   useNodesState,
   useReactFlow,
   useOnViewportChange,
   useStoreApi,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, getTier, getNodeScale } from './TrackNode'
+import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, BuildContext, getTier, getNodeScale } from './TrackNode'
+import WireEdge from './WireEdge'
+import WireDragLayer from './WireDragLayer'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
+import { computeChainGraph } from '../lib/setChain'
 import CompassPreview from './CompassPreview'
 
 // Flow-space canvas dimensions. A large canvas gives songs room to separate as you
@@ -146,6 +150,7 @@ function buildNodes(tracks, presetConfig) {
 }
 
 const nodeTypes = { track: TrackNode }
+const edgeTypes = { wire: WireEdge }
 
 const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 const AXIS_COLOR = 'rgba(255,255,255,0.10)'
@@ -792,7 +797,10 @@ const MAX_ZOOM = 3.5
 const FIT_MAX_ZOOM = 1.6
 
 function DriftMapInner({ tracks }) {
-  const { activePreset, customXFeature, customYFeature, setActivePanel } = usePlaylistStore()
+  const {
+    activePreset, customXFeature, customYFeature, setActivePanel,
+    buildMode, chain, inCardOverrides, addHead, connectSong, registerMapControls,
+  } = usePlaylistStore()
   const presetConfig = useMemo(
     () => resolvePreset(activePreset, customXFeature, customYFeature),
     [activePreset, customXFeature, customYFeature]
@@ -806,6 +814,37 @@ function DriftMapInner({ tracks }) {
   const wrapperRef = useRef(null)
   const zoomTimer = useRef(null)
   const highlightTimer = useRef(null)
+  const dragRef = useRef(null) // WireDragLayer imperative handle
+
+  // Chain graph: derive the wires + per-node socket assignments from the ordered chain and the
+  // songs' canvas positions (taken from initialNodes so this never depends on the mutable `nodes`
+  // state, avoiding a re-inject loop). Positions only shift on a preset/track rebuild.
+  const chainGraph = useMemo(() => {
+    const posById = {}
+    for (const n of initialNodes) posById[n.id] = n.position
+    return computeChainGraph(chain, posById, inCardOverrides)
+  }, [chain, initialNodes, inCardOverrides])
+
+  const edges = useMemo(() => (buildMode ? chainGraph.edges : []), [buildMode, chainGraph])
+  const chainSet = useMemo(() => new Set(chain), [chain])
+
+  // Inject build-mode presentation into node data: socket dots for chain songs, the head halo,
+  // the tail's grabbable outgoing socket, and dimming for everything not in the set. Runs only on
+  // a build-state change (user actions / preset rebuild), so nodes stay static between crossings.
+  useEffect(() => {
+    setNodes((prev) => prev.map((n) => {
+      const inChain = chainSet.has(n.id)
+      const sockets = buildMode ? chainGraph.socketsByNode[n.id] : undefined
+      const isHead = buildMode && n.id === chainGraph.headId
+      const dimmed = buildMode && !inChain
+      const isTail = buildMode && n.id === chainGraph.tailId
+      const d = n.data
+      if (d.sockets === sockets && d.isHead === isHead && d.dimmed === dimmed && d.isTail === isTail) {
+        return n // nothing changed for this node — keep the same reference (no re-render)
+      }
+      return { ...n, data: { ...d, sockets, isHead, dimmed, isTail } }
+    }))
+  }, [buildMode, chainGraph, chainSet, setNodes])
   // Tier is global (depends only on zoom) — held once here and broadcast via context so nodes
   // re-render only on a threshold crossing, not on every zoom frame.
   const [tier, setTier] = useState('circle')
@@ -904,6 +943,37 @@ function DriftMapInner({ tracks }) {
     }, 2000)
   }, [setNodes])
 
+  // Pan the map to a track and flash it — used by the toolbar search and, via registerMapControls,
+  // by the panel search which lives outside this ReactFlowProvider (Decision Log #56).
+  const focusTrackOnMap = useCallback((trackId) => {
+    const node = rf.getNode(trackId)
+    if (node) {
+      const targetZoom = Math.max(rf.getViewport().zoom, ZOOM_CARD + 0.1)
+      rf.setCenter(node.position.x, node.position.y, { zoom: targetZoom, duration: 600 })
+    }
+    handleHighlight(trackId)
+  }, [rf, handleHighlight])
+
+  useEffect(() => { registerMapControls({ focusTrack: focusTrackOnMap }) }, [registerMapControls, focusTrackOnMap])
+
+  // In build mode, clicking a song with an empty chain seats it as the head (Decision Log #38, #42).
+  // Once a head exists, songs join only by wiring, so further clicks are ignored.
+  const handleNodeClick = useCallback((_e, node) => {
+    if (buildMode && chain.length === 0) addHead(node.id)
+  }, [buildMode, chain.length, addHead])
+
+  // The set-builder panel isn't closeable while building (Decision Log #53), so a pane click only
+  // dismisses panels outside build mode.
+  const handlePaneClick = useCallback(() => {
+    if (!buildMode) setActivePanel(null)
+  }, [buildMode, setActivePanel])
+
+  // Bridge a tail socket's pointerdown (in TrackNode) to the drag overlay's imperative handle.
+  const startWireDrag = useCallback((sourceId, cardinal, event) => {
+    dragRef.current?.start(sourceId, cardinal, event)
+  }, [])
+  const buildCtx = useMemo(() => ({ buildMode, startWireDrag }), [buildMode, startWireDrag])
+
   return (
     <div
       ref={wrapperRef}
@@ -928,30 +998,42 @@ function DriftMapInner({ tracks }) {
           this re-renders nodes rarely; between crossings they hold steady while the --node-scale
           CSS var (set on this wrapper) rescales them with no React work. */}
       <ZoomTierContext.Provider value={tier}>
-        <ReactFlow
-          nodes={nodes}
-          edges={[]}
-          onNodesChange={onNodesChange}
-          nodeTypes={nodeTypes}
-          onPaneClick={() => setActivePanel(null)}
+        <BuildContext.Provider value={buildCtx}>
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            onPaneClick={handlePaneClick}
+            onNodeClick={handleNodeClick}
+            // Loose so a node's source+target handles both register bounds — the wires (which use
+            // our own sourceHandle/targetHandle) resolve to the right cardinal regardless of type.
+            connectionMode={ConnectionMode.Loose}
 
-          nodesDraggable={false}
-          nodesConnectable={false}
-          elementsSelectable={false}
-          panOnDrag
-          zoomOnScroll
-          zoomOnPinch
-          minZoom={minZoom}
-          maxZoom={MAX_ZOOM}
-          translateExtent={TRANSLATE_EXTENT}
-          // Cull off-screen nodes during pan/zoom — only mount the ones inside the viewport.
-          // Big win with 150+ songs. Culling uses each node's measured layout box (not its CSS
-          // counter-scale transform), so edge nodes may mount/unmount a few px late while panning.
-          onlyRenderVisibleElements={true}
-          style={{ background: 'transparent' }}
-          proOptions={{ hideAttribution: true }}
-        />
+            nodesDraggable={false}
+            nodesConnectable={false}
+            elementsSelectable={false}
+            panOnDrag
+            zoomOnScroll
+            zoomOnPinch
+            minZoom={minZoom}
+            maxZoom={MAX_ZOOM}
+            translateExtent={TRANSLATE_EXTENT}
+            // Cull off-screen nodes during pan/zoom — only mount the ones inside the viewport.
+            // Big win with 150+ songs. Culling uses each node's measured layout box (not its CSS
+            // counter-scale transform), so edge nodes may mount/unmount a few px late while panning.
+            // Disabled in build mode so chain wires never blink out when an endpoint pans off-screen.
+            onlyRenderVisibleElements={!buildMode}
+            style={{ background: 'transparent' }}
+            proOptions={{ hideAttribution: true }}
+          />
+        </BuildContext.Provider>
       </ZoomTierContext.Provider>
+      {/* Wire-drag overlay — only mounted in build mode; draws the dashed drag wire + feedback. */}
+      {buildMode && (
+        <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} />
+      )}
       <AxisLayer preset={presetConfig} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
       <ToolBar rf={rf} presetName={presetConfig.label} activePreset={activePreset} />

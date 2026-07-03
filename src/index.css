@@ -34,3 +34,35 @@ html, body, #root {
 .drift-canvas.is-zooming .react-flow__viewport {
   transition: transform 80ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
+
+/* Set-builder wire anchors: invisible handles pinned to each node's center — they only exist so
+   React Flow can position the edge endpoints. The visible socket dots are drawn separately. */
+.react-flow__handle.wire-anchor {
+  width: 1px;
+  height: 1px;
+  min-width: 0;
+  min-height: 0;
+  background: transparent;
+  border: none;
+  opacity: 0;
+  pointer-events: none;
+  /* All four cardinals sit at the node center — override React Flow's per-position offsets
+     (handle-right sets right:0, handle-bottom sets bottom:0) so every handle's measured bounds
+     land at center. The custom edge then offsets each endpoint out to its boundary socket. */
+  left: 50%;
+  top: 50%;
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+}
+
+/* Grabbable outgoing socket (tail song) — grab cursor, active grabbing cursor while dragging. */
+.wire-grab { cursor: grab; }
+.wire-grab:active { cursor: grabbing; }
+
+/* While a wire is being dragged, hide the tail's static socket dot — the drag overlay draws a
+   moving origin dot at the live boundary instead, so the socket appears to follow the cursor. */
+.drift-canvas.wiring .wire-grab { opacity: 0; }
+
+/* Chain wires shouldn't intercept pointer events (drag hit-testing is done manually). */
+.react-flow__edge { pointer-events: none; }

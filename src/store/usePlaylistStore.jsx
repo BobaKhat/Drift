@@ -7,6 +7,7 @@ import {
   ensureDemoLibrary,
 } from '../lib/playlists'
 import { runImport, retryUnresolved } from '../lib/import'
+import { saveSet } from '../lib/sets'
 
 // Central app state for the playlist model + import flow.
 // One playlist is active on the map at a time; the import flow is a small state machine:
@@ -42,6 +43,61 @@ export function PlaylistProvider({ children }) {
     setCustomYFeature(yFeature)
     setActivePresetKey('custom')
   }
+
+  // —— Set builder ——————————————————————————————————————————————————————————————
+  // Build mode is a state overlay on the map, bound to the "Set Creation" rail panel: the
+  // panel is always open while building and not closeable (Decision Log #53). `chain` is the
+  // ordered list of track ids (index 0 = head). It's non-destructive across panel toggles —
+  // only Save or a playlist switch clears it.
+  const buildMode = activePanel === 'sets'
+  const [chain, setChain] = useState([]) // track ids, position 1..n
+  // The incoming-socket edge chosen (by the snap) for each connected target, so the latched wire
+  // lands where the drag preview showed it rather than snapping to a recomputed edge.
+  const [inCardOverrides, setInCardOverrides] = useState({})
+  const [savingSet, setSavingSet] = useState(false)
+
+  // Clicking a song with an empty chain seats it as the head (Decision Log #38, #42). Once a
+  // head exists, further songs join only by wiring (connectSong).
+  const addHead = useCallback((trackId) => {
+    if (!trackId) return
+    setChain((prev) => (prev.length === 0 ? [trackId] : prev))
+  }, [])
+
+  // Latch a wire from the current tail to `targetId` (Decision Log #33 — sequential, one-to-one).
+  // `inCardinal` is the target edge the wire snapped to. No-op if already in the chain.
+  const connectSong = useCallback((targetId, inCardinal) => {
+    if (!targetId) return
+    setChain((prev) => (prev.includes(targetId) ? prev : [...prev, targetId]))
+    if (inCardinal) setInCardOverrides((prev) => ({ ...prev, [targetId]: inCardinal }))
+  }, [])
+
+  const clearChain = useCallback(() => { setChain([]); setInCardOverrides({}) }, [])
+
+  // Persist the set to Supabase, then clear the chain (Decision Log #57). Gated at ≥2 songs
+  // (Decision Log #39) — the panel disables the button, this is the backstop.
+  const saveCurrentSet = useCallback(async (name) => {
+    if (chain.length < 2 || !activePlaylistId) return
+    setSavingSet(true)
+    try {
+      const tracksById = Object.fromEntries(activeTracks.map((t) => [t.id, t]))
+      await saveSet({ playlistId: activePlaylistId, name, chain, tracksById })
+      setChain([])
+      setInCardOverrides({})
+    } catch (err) {
+      console.error('[drift] saveSet failed:', err)
+    } finally {
+      setSavingSet(false)
+    }
+  }, [chain, activePlaylistId, activeTracks])
+
+  // The map registers imperative controls (pan/highlight a track) here so the panel search —
+  // which lives outside the map's ReactFlowProvider — can drive it (Decision Log #56).
+  const mapControlsRef = useRef(null)
+  const registerMapControls = useCallback((controls) => { mapControlsRef.current = controls }, [])
+  const focusTrack = useCallback((trackId) => { mapControlsRef.current?.focusTrack?.(trackId) }, [])
+
+  // A chain references ids from the active playlist — switching playlists invalidates it.
+  useEffect(() => { setChain([]); setInCardOverrides({}) }, [activePlaylistId])
 
   // When "Import more" targets the current playlist, this holds its id (null = create new).
   const importTargetRef = useRef(null)
@@ -201,6 +257,16 @@ export function PlaylistProvider({ children }) {
     customYFeature,
     setActivePreset,
     setCustomPreset,
+    buildMode,
+    chain,
+    inCardOverrides,
+    addHead,
+    connectSong,
+    clearChain,
+    saveCurrentSet,
+    savingSet,
+    registerMapControls,
+    focusTrack,
   }
 
   return <PlaylistContext.Provider value={value}>{children}</PlaylistContext.Provider>

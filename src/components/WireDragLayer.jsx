@@ -1,0 +1,254 @@
+import { forwardRef, useImperativeHandle, useRef } from 'react'
+import { useReactFlow } from '@xyflow/react'
+import { getNodeScale, getTier, HEAD_CIRCLE_BUMP } from './TrackNode'
+import { CARDINAL_VECTOR, facing, nearestCardinal } from '../lib/setChain'
+import { WIRE_STRONG } from './WireEdge'
+
+// The wire-drag interaction (Decision Log #40, #41). The user grabs the tail's outgoing socket and
+// drags: a dashed white wire trails the cursor, flashes the compatibility color (green in Slice 8)
+// over a valid target, and shows an error ✕ at the wire-end over an occupied one (a song already in
+// the chain). Release on a valid target latches the connection; release on empty space cancels.
+//
+// It's driven imperatively — pointer moves update the overlay's SVG nodes directly (coalesced to
+// animation frames) so a fast drag never triggers React re-renders. The parent starts a drag via
+// the imperative `start` handle; `onConnect(targetId)` fires on a valid release.
+//
+// Screen math mirrors the map's AxisLayer: container-relative px = flowCoord * zoom + viewportOffset.
+
+const DASH_WHITE = 'rgba(255,255,255,0.85)'
+
+// Cursor-to-socket distance (screen px) at which the wire tip snaps onto a valid target's incoming
+// socket. Inside this radius the wire locks to the socket and the target illuminates; outside it,
+// the wire follows the cursor freely.
+const SNAP_RADIUS = 48
+
+// On-screen offset (px) from a node's center out to its boundary socket along `cardinal`, scaled
+// the same way the node's DOM is (counter-scale × circle-tier head bump × zoom). Width feeds the
+// E/W sockets, height the N/S sockets.
+function socketOffset(cardinal, node, scale, zoom, isHead, tier) {
+  const v = CARDINAL_VECTOR[cardinal] || CARDINAL_VECTOR.E
+  const horiz = cardinal === 'E' || cardinal === 'W'
+  const dim = horiz ? (node.measured?.width ?? 32) : (node.measured?.height ?? 32)
+  const bump = isHead && tier === 'circle' ? HEAD_CIRCLE_BUMP : 1
+  const r = (dim / 2) * scale * bump * zoom
+  return { x: v.x * r, y: v.y * r }
+}
+
+// Free drag: exit the source along its cardinal, drift toward the cursor.
+function bezierPath(sx, sy, cardinal, ex, ey) {
+  const v = CARDINAL_VECTOR[cardinal] || CARDINAL_VECTOR.E
+  const dist = Math.hypot(ex - sx, ey - sy)
+  const off = Math.max(48, dist * 0.42)
+  const c1x = sx + v.x * off
+  const c1y = sy + v.y * off
+  const c2x = ex - v.x * off * 0.35
+  const c2y = ey - v.y * off * 0.35
+  return `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}`
+}
+
+// Snapped: exit the source along outCard and enter the target socket along inCard (inCard points
+// target→source, so offsetting the control point outward from the socket curves the wire in). This
+// mirrors the latched WireEdge, so the snap preview matches the final wire.
+function bezierBoth(sx, sy, outCard, ex, ey, inCard) {
+  const v1 = CARDINAL_VECTOR[outCard] || CARDINAL_VECTOR.E
+  const v2 = CARDINAL_VECTOR[inCard] || CARDINAL_VECTOR.W
+  const dist = Math.hypot(ex - sx, ey - sy)
+  const off = Math.max(48, dist * 0.42)
+  const c1x = sx + v1.x * off
+  const c1y = sy + v1.y * off
+  const c2x = ex + v2.x * off
+  const c2y = ey + v2.y * off
+  return `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}`
+}
+
+const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet, onConnect }, ref) {
+  const rf = useReactFlow()
+  const pathRef = useRef(null)
+  const originSocketRef = useRef(null)
+  const targetSocketRef = useRef(null)
+  const errorRef = useRef(null)
+
+  // Live drag bookkeeping — refs (not state) so pointer moves never re-render.
+  const drag = useRef(null) // { sourceId, cardinal } | null
+  const result = useRef({ mode: 'empty', targetId: null })
+  const lastEvent = useRef(null)
+  const raf = useRef(0)
+
+  const containerRect = () => containerRef.current?.getBoundingClientRect()
+
+  // Flow center → container-relative px.
+  const toScreen = (pos, vp) => ({ x: pos.x * vp.zoom + vp.x, y: pos.y * vp.zoom + vp.y })
+
+  const render = () => {
+    raf.current = 0
+    const d = drag.current
+    const e = lastEvent.current
+    const rect = containerRect()
+    if (!d || !e || !rect) return
+
+    const vp = rf.getViewport()
+    const scale = getNodeScale(vp.zoom)
+    const tier = getTier(vp.zoom)
+    const sourceNode = rf.getNode(d.sourceId)
+    if (!sourceNode) return
+
+    const srcCenter = toScreen(sourceNode.position, vp)
+    const cursor = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+
+    // Magnetic snap: the wire snaps to the valid (non-chain) song whose BODY the cursor is nearest,
+    // once within SNAP_RADIUS of any edge. The incoming socket is then placed on whichever cardinal
+    // faces the cursor (relative to the target's center) — mirroring the outgoing hover-reveal — and
+    // updates every frame as the cursor moves around the node. Chain songs under the cursor are
+    // occupied.
+    let snapNode = null
+    let snapSocket = null
+    let snapInCard = null
+    let snapDist = Infinity
+    let occupied = false
+    for (const n of rf.getNodes()) {
+      const w = n.measured?.width
+      if (!w) continue
+      const h = n.measured?.height ?? w
+      const c = toScreen(n.position, vp)
+      const hw = (w / 2) * vp.zoom * scale
+      const hh = (h / 2) * vp.zoom * scale
+      // Distance from the cursor to the node's box (0 when inside).
+      const ex = Math.max(Math.abs(cursor.x - c.x) - hw, 0)
+      const ey = Math.max(Math.abs(cursor.y - c.y) - hh, 0)
+      const edgeDist = Math.hypot(ex, ey)
+      if (chainSet.has(n.id)) {
+        if (edgeDist <= 8) occupied = true
+        continue
+      }
+      if (edgeDist <= SNAP_RADIUS && edgeDist < snapDist) {
+        snapDist = edgeDist
+        snapNode = n
+        snapInCard = nearestCardinal(cursor.x - c.x, cursor.y - c.y) // edge facing the cursor
+        const off = socketOffset(snapInCard, n, scale, vp.zoom, false, tier)
+        snapSocket = { x: c.x + off.x, y: c.y + off.y }
+      }
+    }
+    const snapped = !!snapNode
+
+    const mode = snapped ? 'snapped' : occupied ? 'occupied' : 'empty'
+    result.current = { mode, targetId: snapped ? snapNode.id : null, inCardinal: snapInCard }
+
+    // Source outgoing socket: when snapped, aim at the target center so the exit edge matches the
+    // final latched wire; otherwise follow the cursor so all four edges stay reachable.
+    const aim = snapped ? toScreen(snapNode.position, vp) : cursor
+    const outCard = facing(srcCenter, aim)
+    const srcOff = socketOffset(outCard, sourceNode, scale, vp.zoom, sourceNode.data?.isHead, tier)
+    const src = { x: srcCenter.x + srcOff.x, y: srcCenter.y + srcOff.y }
+
+    // Wire: locked to the socket + solid green when snapped, else dashed white to the cursor.
+    const path = pathRef.current
+    if (path) {
+      if (snapped) {
+        path.setAttribute('d', bezierBoth(src.x, src.y, outCard, snapSocket.x, snapSocket.y, snapInCard))
+        path.setAttribute('stroke', WIRE_STRONG)
+        path.setAttribute('stroke-dasharray', 'none')
+        path.style.filter = `drop-shadow(0 0 5px ${WIRE_STRONG})`
+      } else {
+        path.setAttribute('d', bezierPath(src.x, src.y, outCard, cursor.x, cursor.y))
+        path.setAttribute('stroke', DASH_WHITE)
+        path.setAttribute('stroke-dasharray', '6 6')
+        path.style.filter = 'none'
+      }
+    }
+
+    // Origin socket dot — the tail's outgoing socket (7px hollow) at the live source boundary.
+    const origin = originSocketRef.current
+    if (origin) {
+      const bump = sourceNode.data?.isHead && tier === 'circle' ? HEAD_CIRCLE_BUMP : 1
+      origin.setAttribute('r', (7 / 2) * scale * vp.zoom * bump)
+      origin.setAttribute('cx', src.x)
+      origin.setAttribute('cy', src.y)
+    }
+
+    // Incoming socket on the snapped target (12px filled) — only shown while snapped.
+    const sock = targetSocketRef.current
+    if (sock) {
+      if (snapped) {
+        sock.setAttribute('r', (12 / 2) * scale * vp.zoom)
+        sock.setAttribute('cx', snapSocket.x)
+        sock.setAttribute('cy', snapSocket.y)
+        sock.style.display = 'block'
+      } else {
+        sock.style.display = 'none'
+      }
+    }
+
+    // Error ✕ over an occupied song when not snapped (Decision Log #41).
+    const err = errorRef.current
+    if (err) {
+      if (mode === 'occupied') {
+        err.setAttribute('transform', `translate(${cursor.x}, ${cursor.y})`)
+        err.style.display = 'block'
+      } else {
+        err.style.display = 'none'
+      }
+    }
+  }
+
+  const onMove = (e) => {
+    lastEvent.current = e
+    if (!raf.current) raf.current = requestAnimationFrame(render)
+  }
+
+  const finish = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+    if (raf.current) { cancelAnimationFrame(raf.current); raf.current = 0 }
+    drag.current = null
+    lastEvent.current = null
+    containerRef.current?.classList.remove('wiring') // restore the tail's static socket dot
+    // Hide overlay.
+    if (pathRef.current) pathRef.current.style.display = 'none'
+    if (originSocketRef.current) originSocketRef.current.style.display = 'none'
+    if (targetSocketRef.current) targetSocketRef.current.style.display = 'none'
+    if (errorRef.current) errorRef.current.style.display = 'none'
+  }
+
+  const onUp = () => {
+    const { mode, targetId, inCardinal } = result.current
+    if (mode === 'snapped' && targetId) onConnect(targetId, inCardinal) // latch at the snapped edge
+    finish()
+  }
+
+  useImperativeHandle(ref, () => ({
+    start(sourceId, cardinal, event) {
+      // Keep the pane from panning / the node from registering a click.
+      event.stopPropagation()
+      event.preventDefault()
+      drag.current = { sourceId, cardinal }
+      result.current = { mode: 'empty', targetId: null }
+      lastEvent.current = event
+      containerRef.current?.classList.add('wiring') // hide the node's static grab socket
+      if (pathRef.current) {
+        pathRef.current.style.display = 'block'
+        pathRef.current.setAttribute('stroke', DASH_WHITE)
+        pathRef.current.setAttribute('stroke-dasharray', '6 6')
+      }
+      if (originSocketRef.current) originSocketRef.current.style.display = 'block'
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      render()
+    },
+  }))
+
+  return (
+    <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
+      <path ref={pathRef} style={{ display: 'none' }} fill="none" stroke={DASH_WHITE} strokeWidth={2} strokeDasharray="6 6" strokeLinecap="round" />
+      {/* Outgoing socket: 7px hollow (near-black fill, thin orange ring). */}
+      <circle ref={originSocketRef} style={{ display: 'none' }} r={4} fill="#060606" stroke="#F27F37" strokeWidth={1} />
+      {/* Incoming socket: 12px filled orange with a black ring + soft glow. */}
+      <circle ref={targetSocketRef} style={{ display: 'none', filter: 'drop-shadow(0 0 5px rgba(242,127,55,0.8))' }} r={6} fill="#F27F37" stroke="#000000" strokeWidth={2} />
+      <g ref={errorRef} style={{ display: 'none' }}>
+        <circle r={9} fill="#0c0c0c" stroke="#FF2B2B" strokeWidth={1.5} />
+        <path d="M -3.5 -3.5 L 3.5 3.5 M 3.5 -3.5 L -3.5 3.5" stroke="#FF2B2B" strokeWidth={1.6} strokeLinecap="round" />
+      </g>
+    </svg>
+  )
+})
+
+export default WireDragLayer

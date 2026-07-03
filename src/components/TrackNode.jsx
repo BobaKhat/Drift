@@ -1,5 +1,6 @@
-import { memo, useRef, useEffect, useContext, createContext } from 'react'
-import { useUpdateNodeInternals } from '@xyflow/react'
+import { memo, useRef, useState, useCallback, useEffect, useContext, createContext, Fragment } from 'react'
+import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react'
+import { nearestCardinal } from '../lib/setChain'
 
 // Tune these thresholds — spec says we'll adjust after seeing it
 export const ZOOM_PILL = 0.55   // circle → pill (earlier so pills appear sooner)
@@ -39,11 +40,20 @@ const PILL_W = 175
 const CARD_W = 230
 
 const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
+const ACCENT1 = '#F27F37' // set-builder head accent + sockets (Decision Log color styles)
+
+// Circle-tier head size bump (Decision Log #42). Shared with WireEdge/WireDragLayer so the wire's
+// boundary offset matches the visually-bumped socket position exactly.
+export const HEAD_CIRCLE_BUMP = 1.14
 
 // Tier (circle/pill/card) depends only on zoom, so it is identical for every node. The map computes
 // it once and broadcasts it through this context, so a node re-renders only when the tier actually
 // changes (a threshold crossing) — never on every zoom frame.
 export const ZoomTierContext = createContext('circle')
+
+// Build-mode context: whether the set builder is active, plus the callback a tail node's outgoing
+// socket calls to begin a wire drag. Global (not per-node) so it lives in context, not node data.
+export const BuildContext = createContext({ buildMode: false, startWireDrag: null })
 
 export function getTier(zoom) {
   if (zoom >= ZOOM_CARD) return 'card'
@@ -79,12 +89,89 @@ const subStyle = {
   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
 }
 
+// Cardinal → React Flow Position (for edge curve direction) and → boundary placement of the
+// visible socket dot. Handles all sit at the node CENTER so edges never drift as the node
+// counter-scales (see DriftMap edge notes); the dots ride the boundary and the bezier exits
+// through them because the edge carries the cardinal Position.
+const HANDLE_POSITION = { N: Position.Top, E: Position.Right, S: Position.Bottom, W: Position.Left }
+const SOCKET_PLACEMENT = {
+  N: { left: '50%', top: 0, transform: 'translate(-50%, -50%)' },
+  S: { left: '50%', bottom: 0, transform: 'translate(-50%, 50%)' },
+  E: { right: 0, top: '50%', transform: 'translate(50%, -50%)' },
+  W: { left: 0, top: '50%', transform: 'translate(-50%, -50%)' },
+}
+
+// A socket dot on a chain song (visual only — the node surface handles pointer input). Per the
+// Figma socket SVGs: OUT = 7px hollow (near-black fill, thin orange ring); IN = 12px filled orange
+// with a black ring. `extraClass` tags the tail's hover-revealed outgoing socket so it can be
+// hidden while a wire is being dragged.
+const SOCKET_NEAR_BLACK = '#060606'
+function Socket({ cardinal, role, extraClass }) {
+  const isOut = role === 'out'
+  const size = isOut ? 7 : 12
+  return (
+    <div
+      className={extraClass}
+      style={{
+        position: 'absolute',
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        background: isOut ? SOCKET_NEAR_BLACK : ACCENT1,
+        border: isOut ? `1px solid ${ACCENT1}` : '2px solid #000000',
+        boxShadow: isOut ? 'none' : `0 0 6px rgba(242,127,55,0.7)`,
+        pointerEvents: 'none',
+        zIndex: 4,
+        ...SOCKET_PLACEMENT[cardinal],
+      }}
+    />
+  )
+}
+
+// Anchor glyph shown on the head song's card (Decision Log #42, card zoom).
+function AnchorIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+      <circle cx="12" cy="5" r="2.4" stroke={ACCENT1} strokeWidth="1.6" />
+      <path d="M12 7.4V21M12 21c-3.6 0-6.5-2.9-6.5-6.5M12 21c3.6 0 6.5-2.9 6.5-6.5M5 12h3M16 12h3"
+        stroke={ACCENT1} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function TrackNode({ id, data }) {
-  const { albumArtUrl, artist, name, bpm, camelot, highlighted } = data
+  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail } = data
   const tier = useContext(ZoomTierContext)
+  const { buildMode, startWireDrag } = useContext(BuildContext)
   const isCircle = tier === 'circle'
   const isPill = tier === 'pill'
   const isCard = tier === 'card'
+
+  // Tail hover-reveal: the outgoing socket is hidden until the cursor is over the tail song, then it
+  // appears on the edge nearest the cursor (kept off the incoming edge). A pointerdown anywhere on
+  // the node starts the wire drag from that edge. Only the tail wires this up.
+  const [hoverOut, setHoverOut] = useState(null)
+  const grabbable = buildMode && isTail
+  const inCardinal = sockets ? Object.keys(sockets).find((c) => sockets[c] === 'in') : null
+
+  // Measure off the element the handler is bound to (e.currentTarget = the node root), so the
+  // origin is always the node's own center — never a stale ref or an ancestor's box.
+  const cardinalFromEvent = useCallback((e) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    const dx = e.clientX - (r.left + r.width / 2)
+    const dy = e.clientY - (r.top + r.height / 2)
+    return nearestCardinal(dx, dy, inCardinal)
+  }, [inCardinal])
+
+  const onTailPointerMove = useCallback((e) => {
+    const c = cardinalFromEvent(e)
+    setHoverOut((prev) => (prev === c ? prev : c))
+  }, [cardinalFromEvent])
+  const onTailPointerLeave = useCallback(() => setHoverOut(null), [])
+  const onTailPointerDown = useCallback((e) => {
+    const c = cardinalFromEvent(e)
+    if (c) startWireDrag?.(id, c, e)
+  }, [cardinalFromEvent, startWireDrag, id])
 
   // Re-measure ReactFlow's record of this node when the tier (and thus its size/handles) changes.
   // Guarded by prevTier so a culling-driven mount at the current tier doesn't fire it.
@@ -106,10 +193,29 @@ function TrackNode({ id, data }) {
     transition: ART_TRANSITION,
   }
 
+  // Head treatment differs per tier (Decision Log #42). Circle: orange halo + slight size bump.
+  // Pill: orange accent border + glow. Card: lighter border + anchor icon.
+  const headBorderColor = isHead
+    ? (isCard ? 'rgba(255,255,255,0.5)' : ACCENT1)
+    : (isCircle ? 'transparent' : 'rgba(255,255,255,0.12)')
+  const headGlow = isHead && !isCircle
+    ? `0 0 0 1px ${ACCENT1}, 0 0 16px rgba(242,127,55,0.45)`
+    : null
+
+  // Counter-scale is driven by the shared --node-scale var; the head gets a small circle-tier size
+  // bump layered on top of it.
+  const scaleExpr = isHead && isCircle
+    ? `scale(calc(var(--node-scale, 1) * ${HEAD_CIRCLE_BUMP}))`
+    : 'scale(var(--node-scale, 1))'
+
   return (
     <div
       title={isCircle ? `${artist} – ${name}` : undefined}
+      onPointerMove={grabbable ? onTailPointerMove : undefined}
+      onPointerLeave={grabbable ? onTailPointerLeave : undefined}
+      onPointerDown={grabbable ? onTailPointerDown : undefined}
       style={{
+        position: 'relative',
         display: 'flex', flexDirection: 'row', alignItems: 'center',
         // dimensions — explicit height for circle/pill so text at width:0 can't inflate it
         width: isCircle ? CIRCLE_SIZE : isPill ? PILL_W : CARD_W,
@@ -118,50 +224,92 @@ function TrackNode({ id, data }) {
         borderRadius: isCircle ? CIRCLE_SIZE / 2 : isPill ? 25 : 8,
         background: isCircle ? 'transparent' : 'rgba(18,18,18,0.90)',
         borderWidth: isCircle ? 0 : 1, borderStyle: 'solid',
-        borderColor: isCircle ? 'transparent' : 'rgba(255,255,255,0.12)',
+        borderColor: headBorderColor,
         boxShadow: highlighted
           ? '0 0 0 2.5px #F27F37, 0 0 18px rgba(242,127,55,0.45)'
-          : '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
+          : headGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
         gap: isCircle ? 0 : 10,
         padding: isCircle ? 0 : '10px 15px',
-        overflow: 'hidden', cursor: 'default', userSelect: 'none',
+        cursor: grabbable ? 'grab' : 'default', userSelect: 'none',
+        // Non-chain songs dim while build mode is active, so what's in the set reads clearly
+        // against what isn't (Decision Log — Slice 8 spec: ~70%).
+        opacity: dimmed ? 0.7 : 1,
         // Counter the pane's zoom. The factor lives in the --node-scale CSS var, written by the map
         // once per throttled frame, so zooming rescales every node via CSS with no React re-render.
         // Out of the transition (tracks zoom instantly, no rubber-banding); the 400ms morph below
         // animates width/shape only.
-        transform: 'scale(var(--node-scale, 1))',
+        transform: scaleExpr,
         transition: ROOT_TRANSITION,
       }}
     >
+      {/* Edge anchors: source + target handle per cardinal, all pinned to the node CENTER. Keeping
+          them centered means their measured bounds don't move as the node counter-scales, so wires
+          never drift mid-zoom; the edge still exits in the right direction because it carries the
+          cardinal Position. Both types exist so an edge's sourceHandle and targetHandle both
+          resolve to the intended cardinal (a source-only handle isn't found as a target). */}
+      {/* Fragment (not a wrapper element): the Handles are position:absolute, so as direct children
+          they're out of flow and never become flex items — a wrapping <span> would take a flex slot
+          and, with the row gap, inject phantom empty space before the album art. */}
+      {(['N', 'E', 'S', 'W']).map((c) => (
+        <Fragment key={c}>
+          <Handle id={c} type="source" position={HANDLE_POSITION[c]} className="wire-anchor" isConnectable={false} />
+          <Handle id={c} type="target" position={HANDLE_POSITION[c]} className="wire-anchor" isConnectable={false} />
+        </Fragment>
+      ))}
+
+      {/* Circle-tier head halo — an orange glowing ring around the pin (Decision Log #42). */}
+      {isHead && isCircle && (
+        <div style={{
+          position: 'absolute', inset: -6, borderRadius: '50%',
+          border: `2px solid ${ACCENT1}`,
+          boxShadow: `0 0 14px 2px rgba(242,127,55,0.55)`,
+          pointerEvents: 'none', zIndex: 0,
+        }} />
+      )}
+
       {/* Album art — the constant anchor across all tiers; its size/shape morph between tiers. */}
       {albumArtUrl ? (
         <img
           src={albumArtUrl}
           alt={`${name} – ${artist}`}
           draggable={false}
-          style={{ ...artStyle, objectFit: 'cover', display: 'block' }}
+          style={{ ...artStyle, objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }}
         />
       ) : (
-        <div style={{ ...artStyle, background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>
+        <div style={{ ...artStyle, position: 'relative', zIndex: 1, background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>
           ♪
         </div>
       )}
 
       {/* Pill: title only — minimal DOM (background + image + title), the lighter spread-view node. */}
-      {isPill && <div style={{ ...nameStyle, flex: 1, minWidth: 0 }}>{name}</div>}
+      {isPill && <div style={{ ...nameStyle, flex: 1, minWidth: 0, position: 'relative', zIndex: 1 }}>{name}</div>}
 
       {/* Card: full detail (name/artist + BPM/Camelot). Only a handful are on-screen at this depth. */}
       {isCard && (
         <>
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <div style={nameStyle}>{name}</div>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              {isHead && <AnchorIcon />}
+              <div style={nameStyle}>{name}</div>
+            </div>
             <div style={subStyle}>{artist}</div>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0, position: 'relative', zIndex: 1 }}>
             <div style={{ ...nameStyle, overflow: 'visible' }}>{bpm != null ? `${Math.round(bpm)} BPM` : '—'}</div>
             <div style={{ ...subStyle, overflow: 'visible' }}>{camelot ?? '—'}</div>
           </div>
         </>
+      )}
+
+      {/* Connected socket dots — permanent on chain songs (IN faces the previous song, OUT the next). */}
+      {buildMode && sockets && Object.entries(sockets).map(([cardinal, role]) => (
+        <Socket key={cardinal} cardinal={cardinal} role={role} />
+      ))}
+
+      {/* Tail's open outgoing socket — hover-revealed on the edge nearest the cursor. Tagged
+          'wire-grab' so the drag overlay can hide it while a wire is in flight. */}
+      {grabbable && hoverOut && (
+        <Socket cardinal={hoverOut} role="out" extraClass="wire-grab" />
       )}
     </div>
   )

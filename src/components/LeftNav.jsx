@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import PlaylistPanel from './PlaylistPanel'
 import ExploreByPanel from './ExploreByPanel'
+import SetBuilderPanel from './SetBuilderPanel'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import brandmark from '../assets/brandmark.png'
 import logo from '../assets/Logo.png'
@@ -356,6 +357,8 @@ export default function LeftNav() {
       >
         {panel && panel.id === 'explore' ? (
           <ExploreByPanel />
+        ) : panel && panel.id === 'sets' ? (
+          <SetBuilderPanel />
         ) : panel ? (
           <>
             <div
