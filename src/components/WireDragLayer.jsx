@@ -1,6 +1,6 @@
 import { forwardRef, useImperativeHandle, useRef } from 'react'
 import { useReactFlow } from '@xyflow/react'
-import { getNodeScale, getTier, HEAD_CIRCLE_BUMP } from './TrackNode'
+import { getNodeScale, getTier, HEAD_CIRCLE_BUMP, SOCKET_SIZE } from './TrackNode'
 import { CARDINAL_VECTOR, facing, nearestCardinal } from '../lib/setChain'
 import { WIRE_STRONG } from './WireEdge'
 
@@ -21,6 +21,14 @@ const DASH_WHITE = 'rgba(255,255,255,0.85)'
 // socket. Inside this radius the wire locks to the socket and the target illuminates; outside it,
 // the wire follows the cursor freely.
 const SNAP_RADIUS = 48
+
+// Map auto-pan while dragging a wire (Slice 9 #5): when the cursor is within EDGE_ZONE px of a
+// viewport edge, the map pans in that direction (speed proportional to how deep into the zone), so
+// users can wire to off-screen songs. Standard node-editor behavior.
+const EDGE_ZONE = 60
+const PAN_MAX_SPEED = 16 // px per frame at the very edge
+
+const clamp01 = (v) => Math.max(-1, Math.min(1, v))
 
 // On-screen offset (px) from a node's center out to its boundary socket along `cardinal`, scaled
 // the same way the node's DOM is (counter-scale × circle-tier head bump × zoom). Width feeds the
@@ -73,14 +81,37 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
   const result = useRef({ mode: 'empty', targetId: null })
   const lastEvent = useRef(null)
   const raf = useRef(0)
+  const suppressPan = useRef(false) // true for unplug drags — map stays put, only the wire moves (r4 #3b/#5)
+
+  // The render loop is a stale closure for the whole drag, so read chainSet through a ref that's
+  // refreshed every render. This matters for unplug (Slice 9 r3 #2): when a wire is unplugged the
+  // downstream songs orphan mid-drag and must immediately become valid snap targets (re-pluggable),
+  // not stay "occupied" from the pre-unplug chainSet.
+  const chainSetRef = useRef(chainSet)
+  chainSetRef.current = chainSet
 
   const containerRect = () => containerRef.current?.getBoundingClientRect()
 
   // Flow center → container-relative px.
   const toScreen = (pos, vp) => ({ x: pos.x * vp.zoom + vp.x, y: pos.y * vp.zoom + vp.y })
 
+  // Pan the map when the cursor nears a viewport edge (Slice 9 #5). Returns nothing; mutates the
+  // viewport, and the very next render() re-derives the wire against the panned viewport so the
+  // dragged endpoint stays glued to the cursor while the canvas slides underneath.
+  const autoPan = (rect, e) => {
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    let px = 0, py = 0
+    if (x < EDGE_ZONE) px = (EDGE_ZONE - x) / EDGE_ZONE
+    else if (x > rect.width - EDGE_ZONE) px = -(EDGE_ZONE - (rect.width - x)) / EDGE_ZONE
+    if (y < EDGE_ZONE) py = (EDGE_ZONE - y) / EDGE_ZONE
+    else if (y > rect.height - EDGE_ZONE) py = -(EDGE_ZONE - (rect.height - y)) / EDGE_ZONE
+    if (px === 0 && py === 0) return
+    const vp = rf.getViewport()
+    rf.setViewport({ x: vp.x + clamp01(px) * PAN_MAX_SPEED, y: vp.y + clamp01(py) * PAN_MAX_SPEED, zoom: vp.zoom })
+  }
+
   const render = () => {
-    raf.current = 0
     const d = drag.current
     const e = lastEvent.current
     const rect = containerRect()
@@ -116,7 +147,7 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
       const ex = Math.max(Math.abs(cursor.x - c.x) - hw, 0)
       const ey = Math.max(Math.abs(cursor.y - c.y) - hh, 0)
       const edgeDist = Math.hypot(ex, ey)
-      if (chainSet.has(n.id)) {
+      if (chainSetRef.current.has(n.id)) {
         if (edgeDist <= 8) occupied = true
         continue
       }
@@ -156,20 +187,20 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
       }
     }
 
-    // Origin socket dot — the tail's outgoing socket (7px hollow) at the live source boundary.
+    // Origin socket dot — the source's OUT socket: FILLED orange at the live source boundary (r4 #2).
     const origin = originSocketRef.current
     if (origin) {
       const bump = sourceNode.data?.isHead && tier === 'circle' ? HEAD_CIRCLE_BUMP : 1
-      origin.setAttribute('r', (7 / 2) * scale * vp.zoom * bump)
+      origin.setAttribute('r', (SOCKET_SIZE / 2) * scale * vp.zoom * bump)
       origin.setAttribute('cx', src.x)
       origin.setAttribute('cy', src.y)
     }
 
-    // Incoming socket on the snapped target (12px filled) — only shown while snapped.
+    // Incoming socket on the snapped target: 12px HOLLOW — only shown while snapped (r4 #2).
     const sock = targetSocketRef.current
     if (sock) {
       if (snapped) {
-        sock.setAttribute('r', (12 / 2) * scale * vp.zoom)
+        sock.setAttribute('r', (SOCKET_SIZE / 2) * scale * vp.zoom)
         sock.setAttribute('cx', snapSocket.x)
         sock.setAttribute('cy', snapSocket.y)
         sock.style.display = 'block'
@@ -190,10 +221,18 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
     }
   }
 
-  const onMove = (e) => {
-    lastEvent.current = e
-    if (!raf.current) raf.current = requestAnimationFrame(render)
+  // A single rAF loop runs for the whole drag: it auto-pans the map when the cursor nears an edge
+  // and redraws the wire every frame. Running continuously (not just on pointermove) is what lets
+  // the map keep panning while the cursor is held stationary at the edge (Slice 9 #5).
+  const loop = () => {
+    raf.current = requestAnimationFrame(loop)
+    const rect = containerRect()
+    const e = lastEvent.current
+    if (rect && e && !suppressPan.current) autoPan(rect, e)
+    render()
   }
+
+  const onMove = (e) => { lastEvent.current = e }
 
   const finish = () => {
     window.removeEventListener('pointermove', onMove)
@@ -201,6 +240,7 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
     if (raf.current) { cancelAnimationFrame(raf.current); raf.current = 0 }
     drag.current = null
     lastEvent.current = null
+    suppressPan.current = false
     containerRef.current?.classList.remove('wiring') // restore the tail's static socket dot
     // Hide overlay.
     if (pathRef.current) pathRef.current.style.display = 'none'
@@ -210,16 +250,20 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
   }
 
   const onUp = () => {
-    const { mode, targetId, inCardinal } = result.current
-    if (mode === 'snapped' && targetId) onConnect(targetId, inCardinal) // latch at the snapped edge
+    const { mode, targetId } = result.current
+    // Latch on a valid snap. The socket pair is optimized geometrically on release (Slice 9 #1) —
+    // the snapped preview edge is intentionally discarded, so we don't forward it.
+    if (mode === 'snapped' && targetId) onConnect(targetId)
     finish()
   }
 
   useImperativeHandle(ref, () => ({
-    start(sourceId, cardinal, event) {
-      // Keep the pane from panning / the node from registering a click.
+    start(sourceId, cardinal, event, opts = {}) {
+      // Keep the pane from panning / the node from registering a click. This preventDefault on the
+      // pointerDOWN is what stops ReactFlow's 1:1 pane-pan from hijacking the gesture (r4 #3b).
       event.stopPropagation()
       event.preventDefault()
+      suppressPan.current = !!opts.suppressPan
       drag.current = { sourceId, cardinal }
       result.current = { mode: 'empty', targetId: null }
       lastEvent.current = event
@@ -232,17 +276,17 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
       if (originSocketRef.current) originSocketRef.current.style.display = 'block'
       window.addEventListener('pointermove', onMove)
       window.addEventListener('pointerup', onUp)
-      render()
+      if (!raf.current) raf.current = requestAnimationFrame(loop) // start the pan+draw loop
     },
   }))
 
   return (
     <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 6, overflow: 'visible' }}>
       <path ref={pathRef} style={{ display: 'none' }} fill="none" stroke={DASH_WHITE} strokeWidth={2} strokeDasharray="6 6" strokeLinecap="round" />
-      {/* Outgoing socket: 7px hollow (near-black fill, thin orange ring). */}
-      <circle ref={originSocketRef} style={{ display: 'none' }} r={4} fill="#060606" stroke="#F27F37" strokeWidth={1} />
-      {/* Incoming socket: 12px filled orange with a black ring + soft glow. */}
-      <circle ref={targetSocketRef} style={{ display: 'none', filter: 'drop-shadow(0 0 5px rgba(242,127,55,0.8))' }} r={6} fill="#F27F37" stroke="#000000" strokeWidth={2} />
+      {/* Origin = the OUT (source) socket: FILLED orange, black ring + soft glow (Slice 9 r4 #2). */}
+      <circle ref={originSocketRef} style={{ display: 'none', filter: 'drop-shadow(0 0 5px rgba(242,127,55,0.8))' }} r={SOCKET_SIZE / 2} fill="#F27F37" stroke="#000000" strokeWidth={2} />
+      {/* Target = the IN socket on the snapped song: HOLLOW near-black, thin orange ring. */}
+      <circle ref={targetSocketRef} style={{ display: 'none' }} r={SOCKET_SIZE / 2} fill="#060606" stroke="#F27F37" strokeWidth={1} />
       <g ref={errorRef} style={{ display: 'none' }}>
         <circle r={9} fill="#0c0c0c" stroke="#FF2B2B" strokeWidth={1.5} />
         <path d="M -3.5 -3.5 L 3.5 3.5 M 3.5 -3.5 L -3.5 3.5" stroke="#FF2B2B" strokeWidth={1.6} strokeLinecap="round" />

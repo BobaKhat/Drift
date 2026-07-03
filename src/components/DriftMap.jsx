@@ -14,7 +14,7 @@ import WireEdge from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
-import { computeChainGraph } from '../lib/setChain'
+import { computeBuildGraph } from '../lib/setChain'
 import CompassPreview from './CompassPreview'
 
 // Flow-space canvas dimensions. A large canvas gives songs room to separate as you
@@ -799,7 +799,7 @@ const FIT_MAX_ZOOM = 1.6
 function DriftMapInner({ tracks }) {
   const {
     activePreset, customXFeature, customYFeature, setActivePanel,
-    buildMode, chain, inCardOverrides, addHead, connectSong, registerMapControls,
+    buildMode, chain, orphanGroups, addHead, connectSong, unlinkAfter, registerMapControls,
   } = usePlaylistStore()
   const presetConfig = useMemo(
     () => resolvePreset(activePreset, customXFeature, customYFeature),
@@ -816,35 +816,78 @@ function DriftMapInner({ tracks }) {
   const highlightTimer = useRef(null)
   const dragRef = useRef(null) // WireDragLayer imperative handle
 
-  // Chain graph: derive the wires + per-node socket assignments from the ordered chain and the
-  // songs' canvas positions (taken from initialNodes so this never depends on the mutable `nodes`
-  // state, avoiding a re-inject loop). Positions only shift on a preset/track rebuild.
-  const chainGraph = useMemo(() => {
+  // Build graph: derive the wires + per-node socket assignments from the ordered chain, the orphan
+  // groups, and the songs' canvas positions (taken from initialNodes so this never depends on the
+  // mutable `nodes` state, avoiding a re-inject loop). Positions only shift on a preset/track
+  // rebuild. Socket pairs are optimized geometrically (Slice 9 #1) — no stored snap edges.
+  const buildGraph = useMemo(() => {
     const posById = {}
     for (const n of initialNodes) posById[n.id] = n.position
-    return computeChainGraph(chain, posById, inCardOverrides)
-  }, [chain, initialNodes, inCardOverrides])
+    return computeBuildGraph(chain, orphanGroups, posById)
+  }, [chain, orphanGroups, initialNodes])
 
-  const edges = useMemo(() => (buildMode ? chainGraph.edges : []), [buildMode, chainGraph])
+  // Which orphan group is hovered (whole segment brightens, Decision Log #36/#45). null = none.
+  const [hoverGroup, setHoverGroup] = useState(null)
+
+  // Unplug a wire by grabbing either of its socket dots (Slice 9 r3 #2/#5, r4 #3). EITHER end works:
+  // role 'out' grabs the wire leaving this song (upstream = this song, downstream from i+1 detaches);
+  // role 'in' grabs the wire arriving (upstream = its predecessor, this song + downstream detaches).
+  //
+  // The gesture mirrors the tail's new-wire drag exactly — the one interaction we know behaves. We
+  // detach immediately (downstream orphans, and instantly becomes a valid snap target so a release
+  // right back on it restores) and hand THIS pointerDOWN event to WireDragLayer.start, whose
+  // stopPropagation + preventDefault is what stops ReactFlow's 1:1 pane-pan from stealing the drag
+  // (r4 #3b) and whose loop then glues a dashed wire to the cursor. `suppressPan` keeps the map
+  // still for the whole unplug so only the wire moves (r4 #3b/#5). Release on empty leaves it cut;
+  // release on a valid song reconnects via onConnect=connectSong (absorbing whole groups, #6).
+  const unplugSocket = useCallback((nodeId, role, event) => {
+    const i = chain.indexOf(nodeId)
+    if (i < 0) return
+    const upstreamIndex = role === 'out' ? i : i - 1
+    if (upstreamIndex < 0) return
+    const upstreamId = chain[upstreamIndex]
+    unlinkAfter(upstreamIndex)
+    dragRef.current?.start(upstreamId, 'E', event, { suppressPan: true })
+  }, [chain, unlinkAfter])
+
+  // Orphan wires carry a live `bright` flag; chain wires are purely presentational now.
+  const edges = useMemo(() => {
+    if (!buildMode) return []
+    return buildGraph.edges.map((e) =>
+      e.data?.orphan ? { ...e, data: { ...e.data, bright: e.data.groupId === hoverGroup } } : e
+    )
+  }, [buildMode, buildGraph, hoverGroup])
   const chainSet = useMemo(() => new Set(chain), [chain])
 
-  // Inject build-mode presentation into node data: socket dots for chain songs, the head halo,
-  // the tail's grabbable outgoing socket, and dimming for everything not in the set. Runs only on
-  // a build-state change (user actions / preset rebuild), so nodes stay static between crossings.
+  // Inject build-mode presentation into node data: socket dots for chain + orphan songs, the head
+  // halo, the tail's grabbable outgoing socket, orphan treatment (dashed coral + dim, brighter when
+  // its group is hovered), and 0.4 dimming for everything not in the set (Slice 9 #6). Runs only on
+  // a build-state change (user actions / preset rebuild / hover), so nodes stay static otherwise.
   useEffect(() => {
     setNodes((prev) => prev.map((n) => {
       const inChain = chainSet.has(n.id)
-      const sockets = buildMode ? chainGraph.socketsByNode[n.id] : undefined
-      const isHead = buildMode && n.id === chainGraph.headId
-      const dimmed = buildMode && !inChain
-      const isTail = buildMode && n.id === chainGraph.tailId
+      const groupId = buildMode ? (buildGraph.groupByNode[n.id] ?? null) : null
+      const isOrphan = groupId != null
+      const sockets = buildMode ? buildGraph.socketsByNode[n.id] : undefined
+      const isHead = buildMode && n.id === buildGraph.headId
+      const dimmed = buildMode && !inChain && !isOrphan
+      const isTail = buildMode && n.id === buildGraph.tailId
+      const orphanBright = isOrphan && groupId === hoverGroup
+      // Stacking order (Slice 9 r2 #3): in build mode, chain songs sit above non-chain ones so
+      // their sockets are always grabbable when songs overlap — and the tail (whose open outgoing
+      // socket you drag from) sits highest of all. Orphans just above the dimmed field.
+      const zIndex = !buildMode ? 0 : isTail ? 40 : inChain ? 30 : isOrphan ? 10 : 0
       const d = n.data
-      if (d.sockets === sockets && d.isHead === isHead && d.dimmed === dimmed && d.isTail === isTail) {
+      if (
+        d.sockets === sockets && d.isHead === isHead && d.dimmed === dimmed && d.isTail === isTail &&
+        d.isOrphan === isOrphan && d.orphanBright === orphanBright && d.orphanGroupId === groupId &&
+        n.zIndex === zIndex
+      ) {
         return n // nothing changed for this node — keep the same reference (no re-render)
       }
-      return { ...n, data: { ...d, sockets, isHead, dimmed, isTail } }
+      return { ...n, zIndex, data: { ...d, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId: groupId } }
     }))
-  }, [buildMode, chainGraph, chainSet, setNodes])
+  }, [buildMode, buildGraph, chainSet, hoverGroup, setNodes])
   // Tier is global (depends only on zoom) — held once here and broadcast via context so nodes
   // re-render only on a threshold crossing, not on every zoom frame.
   const [tier, setTier] = useState('circle')
@@ -972,7 +1015,7 @@ function DriftMapInner({ tracks }) {
   const startWireDrag = useCallback((sourceId, cardinal, event) => {
     dragRef.current?.start(sourceId, cardinal, event)
   }, [])
-  const buildCtx = useMemo(() => ({ buildMode, startWireDrag }), [buildMode, startWireDrag])
+  const buildCtx = useMemo(() => ({ buildMode, startWireDrag, setHoverGroup, unplugSocket }), [buildMode, startWireDrag, unplugSocket])
 
   return (
     <div

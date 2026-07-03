@@ -1,6 +1,7 @@
 import { memo, useRef, useState, useCallback, useEffect, useContext, createContext, Fragment } from 'react'
 import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { nearestCardinal } from '../lib/setChain'
+import { ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
 
 // Tune these thresholds — spec says we'll adjust after seeing it
 export const ZOOM_PILL = 0.55   // circle → pill (earlier so pills appear sooner)
@@ -76,7 +77,7 @@ function t(...props) {
 }
 
 const ART_TRANSITION = t('width', 'height', 'border-radius')
-const ROOT_TRANSITION = t('width', 'height', 'border-radius', 'background', 'border-color', 'border-width', 'padding', 'gap')
+const ROOT_TRANSITION = t('width', 'height', 'border-radius', 'background', 'border-color', 'border-width', 'padding', 'gap', 'opacity', 'box-shadow')
 
 const nameStyle = {
   fontFamily: FONT, fontSize: 11, letterSpacing: '0.02em',
@@ -101,30 +102,55 @@ const SOCKET_PLACEMENT = {
   W: { left: 0, top: '50%', transform: 'translate(-50%, -50%)' },
 }
 
-// A socket dot on a chain song (visual only — the node surface handles pointer input). Per the
-// Figma socket SVGs: OUT = 7px hollow (near-black fill, thin orange ring); IN = 12px filled orange
-// with a black ring. `extraClass` tags the tail's hover-revealed outgoing socket so it can be
-// hidden while a wire is being dragged.
+// A socket dot on a chain song. Both roles render at the SAME 12px size and are told apart only by
+// FILL, like a power outlet (Slice 9 r4 #2): OUT (the source, where a wire is dragged FROM) = FILLED
+// orange with a black ring — it's "pushing energy out"; IN (the target, where a wire ARRIVES) =
+// HOLLOW, near-black fill + 1px orange ring — "empty, waiting to be filled". When `onGrab` is passed
+// the socket is a draggable "plug" with a larger invisible hit area. `extraClass` tags the tail's
+// hover-revealed outgoing socket.
 const SOCKET_NEAR_BLACK = '#060606'
-function Socket({ cardinal, role, extraClass }) {
+export const SOCKET_SIZE = 12
+// Grab target around a draggable socket. Kept small enough that on a 32px circle-tier node the two
+// boundary sockets don't swallow the node's center — the center must stay free so the tail can
+// still start a NEW wire by pressing its body (Slice 9 r3 #2 conflict fix).
+const SOCKET_HIT = 15
+function Socket({ cardinal, role, extraClass, onGrab }) {
   const isOut = role === 'out'
-  const size = isOut ? 7 : 12
+  const dot = (
+    <div
+      className={onGrab ? undefined : extraClass}
+      style={{
+        width: SOCKET_SIZE, height: SOCKET_SIZE, borderRadius: '50%',
+        // OUT (source, drag-from) = FILLED orange; IN (target) = HOLLOW near-black (Slice 9 r4 #2).
+        background: isOut ? ACCENT1 : SOCKET_NEAR_BLACK,
+        border: isOut ? '2px solid #000000' : `1px solid ${ACCENT1}`,
+        boxShadow: isOut ? `0 0 6px rgba(242,127,55,0.7)` : 'none',
+        pointerEvents: 'none',
+      }}
+    />
+  )
+  if (!onGrab) {
+    return (
+      <div className={extraClass} style={{ position: 'absolute', width: SOCKET_SIZE, height: SOCKET_SIZE, pointerEvents: 'none', zIndex: 5, ...SOCKET_PLACEMENT[cardinal] }}>
+        {dot}
+      </div>
+    )
+  }
+  // Draggable plug: transparent hit box centered on the boundary point, dot centered inside.
   return (
     <div
       className={extraClass}
+      onPointerDown={onGrab}
+      title="Drag to unplug"
       style={{
-        position: 'absolute',
-        width: size,
-        height: size,
-        borderRadius: '50%',
-        background: isOut ? SOCKET_NEAR_BLACK : ACCENT1,
-        border: isOut ? `1px solid ${ACCENT1}` : '2px solid #000000',
-        boxShadow: isOut ? 'none' : `0 0 6px rgba(242,127,55,0.7)`,
-        pointerEvents: 'none',
-        zIndex: 4,
+        position: 'absolute', width: SOCKET_HIT, height: SOCKET_HIT,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: 'grab', pointerEvents: 'auto', zIndex: 6, touchAction: 'none',
         ...SOCKET_PLACEMENT[cardinal],
       }}
-    />
+    >
+      {dot}
+    </div>
   )
 }
 
@@ -140,9 +166,9 @@ function AnchorIcon() {
 }
 
 function TrackNode({ id, data }) {
-  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail } = data
+  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId } = data
   const tier = useContext(ZoomTierContext)
-  const { buildMode, startWireDrag } = useContext(BuildContext)
+  const { buildMode, startWireDrag, setHoverGroup, unplugSocket } = useContext(BuildContext)
   const isCircle = tier === 'circle'
   const isPill = tier === 'pill'
   const isCard = tier === 'card'
@@ -173,6 +199,11 @@ function TrackNode({ id, data }) {
     if (c) startWireDrag?.(id, c, e)
   }, [cardinalFromEvent, startWireDrag, id])
 
+  // Orphan hover: brighten the whole disconnected group (Decision Log #36/#45) by reporting this
+  // node's group id up to the map, which re-tints every node + wire sharing it.
+  const onOrphanEnter = useCallback(() => setHoverGroup?.(orphanGroupId), [setHoverGroup, orphanGroupId])
+  const onOrphanLeave = useCallback(() => setHoverGroup?.(null), [setHoverGroup])
+
   // Re-measure ReactFlow's record of this node when the tier (and thus its size/handles) changes.
   // Guarded by prevTier so a culling-driven mount at the current tier doesn't fire it.
   const updateNodeInternals = useUpdateNodeInternals()
@@ -202,6 +233,14 @@ function TrackNode({ id, data }) {
     ? `0 0 0 1px ${ACCENT1}, 0 0 16px rgba(242,127,55,0.45)`
     : null
 
+  // Orphan treatment (Decision Log #36, Slice 9 r2 #4). At REST: quiet — a muted dark-gray dashed
+  // border, NO glow, dim (~45%). On group HOVER: warm coral border + glow lights up the whole group.
+  // (The socket dots stay orange regardless — see Socket.) Overrides the head/normal border below.
+  const orphanColor = orphanBright ? ORPHAN_CORAL : ORPHAN_INACTIVE
+  const orphanGlow = isOrphan && orphanBright
+    ? `0 0 0 1px ${ORPHAN_CORAL}, 0 0 18px rgba(255,122,92,0.5)`
+    : null
+
   // Counter-scale is driven by the shared --node-scale var; the head gets a small circle-tier size
   // bump layered on top of it.
   const scaleExpr = isHead && isCircle
@@ -214,6 +253,8 @@ function TrackNode({ id, data }) {
       onPointerMove={grabbable ? onTailPointerMove : undefined}
       onPointerLeave={grabbable ? onTailPointerLeave : undefined}
       onPointerDown={grabbable ? onTailPointerDown : undefined}
+      onMouseEnter={isOrphan ? onOrphanEnter : undefined}
+      onMouseLeave={isOrphan ? onOrphanLeave : undefined}
       style={{
         position: 'relative',
         display: 'flex', flexDirection: 'row', alignItems: 'center',
@@ -223,17 +264,20 @@ function TrackNode({ id, data }) {
         minHeight: isCard ? 62 : undefined,
         borderRadius: isCircle ? CIRCLE_SIZE / 2 : isPill ? 25 : 8,
         background: isCircle ? 'transparent' : 'rgba(18,18,18,0.90)',
-        borderWidth: isCircle ? 0 : 1, borderStyle: 'solid',
-        borderColor: headBorderColor,
+        // Orphans always carry a dashed coral border (even in the circle tier); everyone else keeps
+        // the solid head/normal border, none in the circle tier.
+        borderWidth: isOrphan ? 1 : (isCircle ? 0 : 1),
+        borderStyle: isOrphan ? 'dashed' : 'solid',
+        borderColor: isOrphan ? orphanColor : headBorderColor,
         boxShadow: highlighted
           ? '0 0 0 2.5px #F27F37, 0 0 18px rgba(242,127,55,0.45)'
-          : headGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
+          : orphanGlow || headGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
         gap: isCircle ? 0 : 10,
         padding: isCircle ? 0 : '10px 15px',
         cursor: grabbable ? 'grab' : 'default', userSelect: 'none',
-        // Non-chain songs dim while build mode is active, so what's in the set reads clearly
-        // against what isn't (Decision Log — Slice 8 spec: ~70%).
-        opacity: dimmed ? 0.7 : 1,
+        // Build-mode dimming (Slice 9 #6): non-set songs drop to 0.4 so the set reads clearly.
+        // Orphans get their own band — ~45% at rest, lifting to ~0.95 when their group is hovered.
+        opacity: isOrphan ? (orphanBright ? 0.95 : 0.45) : (dimmed ? 0.4 : 1),
         // Counter the pane's zoom. The factor lives in the --node-scale CSS var, written by the map
         // once per throttled frame, so zooming rescales every node via CSS with no React re-render.
         // Out of the transition (tracks zoom instantly, no rubber-banding); the 400ms morph below
@@ -301,9 +345,15 @@ function TrackNode({ id, data }) {
         </>
       )}
 
-      {/* Connected socket dots — permanent on chain songs (IN faces the previous song, OUT the next). */}
+      {/* Connected socket dots — permanent on chain songs (IN faces the previous song, OUT the next).
+          Each is a draggable "plug": grabbing it unplugs that wire (Slice 9 r3 #2/#5). */}
       {buildMode && sockets && Object.entries(sockets).map(([cardinal, role]) => (
-        <Socket key={cardinal} cardinal={cardinal} role={role} />
+        <Socket
+          key={cardinal}
+          cardinal={cardinal}
+          role={role}
+          onGrab={unplugSocket ? (e) => { e.stopPropagation(); unplugSocket(id, role, e) } : undefined}
+        />
       ))}
 
       {/* Tail's open outgoing socket — hover-revealed on the edge nearest the cursor. Tagged

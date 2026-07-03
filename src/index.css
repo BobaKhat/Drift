@@ -64,5 +64,9 @@ html, body, #root {
    moving origin dot at the live boundary instead, so the socket appears to follow the cursor. */
 .drift-canvas.wiring .wire-grab { opacity: 0; }
 
+/* While ANY wire is in flight (new connection or unplug), force the grabbing hand everywhere on the
+   canvas so the cursor reads as "holding the cable" the whole drag (Slice 9 final #2). */
+.drift-canvas.wiring, .drift-canvas.wiring * { cursor: grabbing !important; }
+
 /* Chain wires shouldn't intercept pointer events (drag hit-testing is done manually). */
 .react-flow__edge { pointer-events: none; }

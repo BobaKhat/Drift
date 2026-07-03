@@ -27,13 +27,23 @@ export function facing(a, b) {
   return dy >= 0 ? 'S' : 'N'
 }
 
-// Pick an outgoing cardinal that faces `target` but doesn't collide with the already-taken
-// incoming cardinal (Decision Log #34: in/out never share an edge). If the natural facing edge
-// is the incoming one, fall back to its opposite so the wire runs cleanly through the node.
+// Pick the outgoing cardinal for a source node: the edge most aligned with the direction to the
+// target (Decision Log #34: in/out never share an edge, so `takenIn` is excluded). We score every
+// cardinal by its dot product with the node→target vector and take the best remaining one — so when
+// the natural facing edge is already the incoming socket, we fall back to the *next-closest* edge
+// (usually a side), never the OPPOSITE edge, which would fire the wire away from the target and loop
+// it back around (Slice 9 fix #3). Score = component of (target−node) along each unit cardinal.
 function resolveOut(node, target, takenIn) {
-  const want = facing(node, target)
-  if (want !== takenIn) return want
-  return OPPOSITE[takenIn]
+  const dx = target.x - node.x
+  const dy = target.y - node.y
+  const score = { N: -dy, S: dy, E: dx, W: -dx } // dot product with each unit cardinal (N = -y)
+  let best = null
+  let bestScore = -Infinity
+  for (const c of CARDINALS) {
+    if (c === takenIn) continue
+    if (score[c] > bestScore) { bestScore = score[c]; best = c }
+  }
+  return best
 }
 
 // Derive the render + persistence model for a chain.
@@ -46,10 +56,11 @@ function resolveOut(node, target, takenIn) {
 //                    the node at the cursor-nearest edge, not shown permanently (Slice 8 socket spec).
 //   headId, tailId — chain ends
 //
-// `inCardOverrides` ({ [trackId]: cardinal }) pins a target's incoming socket to the edge the user
-// snapped to while dragging, so the latched wire lands exactly where the preview showed it. Missing
-// entries fall back to the geometric edge facing the source (Decision Log #34).
-export function computeChainGraph(chain, posById, inCardOverrides = {}) {
+// Every socket pair is optimized geometrically: the outgoing edge faces the target and the incoming
+// edge faces the source, based purely on relative node positions (Decision Log #34, Slice 9 #1). The
+// wire-drag snap preview may show a different edge mid-drag, but the latched wire always resolves to
+// this "sockets face each other" layout so U-shaped arcs never persist.
+export function computeChainGraph(chain, posById) {
   const edges = []
   // Track each node's in/out cardinal during the walk, then flatten to a cardinal→role map for
   // rendering. Keeping them separate keeps the collision check (in vs out edge) simple.
@@ -68,7 +79,7 @@ export function computeChainGraph(chain, posById, inCardOverrides = {}) {
 
     // a's incoming (if any) was assigned on the previous iteration, so it's safe to read here.
     const outA = resolveOut(a, b, ra.in)
-    const inB = inCardOverrides[bId] || facing(b, a)
+    const inB = facing(b, a)
 
     ra.out = outA
     rb.in = inB
@@ -99,6 +110,33 @@ export function computeChainGraph(chain, posById, inCardOverrides = {}) {
   for (const id of chain) socketsByNode[id] ||= {}
 
   return { edges, socketsByNode, headId, tailId }
+}
+
+// Derive the full build-mode graph: the connected chain plus every orphan group (Decision Log
+// #35, #45). Orphan groups keep their internal wires (the cut is non-destructive) but are tagged
+// so the map can draw them dashed/coral and dim them. Each group is `{ id, tracks: [ids] }`.
+// Returns everything computeChainGraph does for the main chain, plus:
+//   orphanIds    — Set of every track id living in an orphan group
+//   groupByNode  — { [trackId]: groupId } for the orphan nodes (used for group-hover brightening)
+// Orphan edges carry `data: { orphan: true, groupId }` and a group-scoped id so they never collide
+// with the main chain's `wire-a-b` ids.
+export function computeBuildGraph(chain, orphanGroups = [], posById) {
+  const main = computeChainGraph(chain, posById)
+  const edges = [...main.edges]
+  const socketsByNode = { ...main.socketsByNode }
+  const groupByNode = {}
+  const orphanIds = new Set()
+
+  for (const grp of orphanGroups) {
+    const g = computeChainGraph(grp.tracks, posById)
+    for (const e of g.edges) {
+      edges.push({ ...e, id: `orphan-${grp.id}-${e.id}`, type: 'wire', data: { orphan: true, groupId: grp.id } })
+    }
+    for (const [id, m] of Object.entries(g.socketsByNode)) socketsByNode[id] = m
+    for (const id of grp.tracks) { groupByNode[id] = grp.id; orphanIds.add(id) }
+  }
+
+  return { edges, socketsByNode, headId: main.headId, tailId: main.tailId, orphanIds, groupByNode }
 }
 
 // The cardinal nearest a cursor offset (dx, dy from node center), used to place the tail's

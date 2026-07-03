@@ -1,5 +1,6 @@
 import { getBezierPath, useStore, useInternalNode, Position } from '@xyflow/react'
 import { getNodeScale, getTier, HEAD_CIRCLE_BUMP } from './TrackNode'
+import { ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
 
 // Latched chain wire. A smooth bezier that exits the source socket and enters the target socket
 // along their cardinal directions — matching the sweeping S-curves in the Figma wire components.
@@ -31,7 +32,7 @@ function boundaryOffset(position, node, scale, isHead, tier) {
   }
 }
 
-export default function WireEdge({ source, target, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition }) {
+export default function WireEdge({ source, target, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, data }) {
   // Subscribe to zoom so the boundary offset tracks the live counter-scale (few chain edges, so the
   // per-frame recompute during zoom is cheap).
   const zoom = useStore((s) => s.transform[2])
@@ -49,6 +50,22 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
     curvature: 0.35,
   })
 
+  // Orphan wires (Decision Log #35, #36, Slice 9 r2 #4): dashed and retained between disconnected
+  // songs. At REST they're muted dark gray; on group hover (`data.bright`) they light up coral.
+  // Non-interactive — orphans are re-wired on the map, not cut from it.
+  if (data?.orphan) {
+    return (
+      <path
+        d={path} fill="none" stroke={data.bright ? ORPHAN_CORAL : ORPHAN_INACTIVE} strokeWidth={2}
+        strokeDasharray="6 6" strokeLinecap="round"
+        strokeOpacity={data.bright ? 0.95 : 0.85}
+        style={{ transition: 'stroke 180ms ease, stroke-opacity 180ms ease' }}
+      />
+    )
+  }
+
+  // Connected chain wire. Cutting/rewiring is now done by grabbing the socket dots directly
+  // (Slice 9 r3 #2), so the wire itself is purely presentational.
   return (
     <>
       {/* Soft glow underlay */}

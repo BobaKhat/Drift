@@ -286,10 +286,34 @@ function RailButton({ label, Icon, isActive, onClick, media }) {
   )
 }
 
+// Collapsed Set Builder — a thin bottom tab (Slice 9 final #5). Clicking anywhere re-expands the
+// panel, giving the user the whole map while staying in build mode.
+function SetBuilderMiniBar({ onExpand }) {
+  return (
+    <button
+      onClick={onExpand}
+      title="Expand Set Builder"
+      style={{
+        width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        background: 'none', border: 'none', padding: '0 6px', cursor: 'pointer',
+      }}
+    >
+      <span style={{ fontFamily: FONT, fontSize: 16, fontWeight: 600, color: '#fff' }}>Set Builder</span>
+      <span style={{ width: 30, height: 30, borderRadius: '50%', background: CARD, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: WELL_SHADOW }}>
+        {/* chevron up = expand */}
+        <svg width="12" height="8" viewBox="0 0 12 8" fill="none" style={{ transform: 'rotate(180deg)' }}>
+          <path d="M1 1.5L6 6L11 1.5" stroke={ACCENT} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+    </button>
+  )
+}
+
 export default function LeftNav() {
-  const { activePanel, togglePanel } = usePlaylistStore()
+  const { activePanel, togglePanel, setBuilderMinimized, toggleSetBuilderMinimized } = usePlaylistStore()
 
   const panel = NAV_ITEMS.find((p) => p.id === activePanel)
+  const minimized = activePanel === 'sets' && setBuilderMinimized
 
   return (
     <>
@@ -333,14 +357,16 @@ export default function LeftNav() {
         <RailButton label="Profile" media={PROFILE_MEDIA} onClick={() => {}} />
       </div>
 
-      {/* Slide-out panel — floating card overlaying the map's left edge */}
+      {/* Slide-out panel — floating card overlaying the map's left edge. When the Set Builder is
+          minimized (#5) it shrinks to a thin bottom tab so the map is fully visible. */}
       <div
         aria-hidden={activePanel === null}
         style={{
           position: 'fixed',
           left: PANEL_LEFT,
-          top: RAIL_INSET,
+          top: minimized ? 'auto' : RAIL_INSET,
           bottom: RAIL_INSET,
+          height: minimized ? 60 : undefined,
           width: PANEL_W,
           background: PANEL_BG,
           border: `1px solid ${BORDER}`,
@@ -352,10 +378,12 @@ export default function LeftNav() {
           pointerEvents: activePanel ? 'auto' : 'none',
           display: 'flex',
           flexDirection: 'column',
-          padding: '28px 22px',
+          padding: minimized ? '0 16px' : '28px 22px',
         }}
       >
-        {panel && panel.id === 'explore' ? (
+        {minimized ? (
+          <SetBuilderMiniBar onExpand={toggleSetBuilderMinimized} />
+        ) : panel && panel.id === 'explore' ? (
           <ExploreByPanel />
         ) : panel && panel.id === 'sets' ? (
           <SetBuilderPanel />

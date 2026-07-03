@@ -16,6 +16,11 @@ import { saveSet } from '../lib/sets'
 
 const PlaylistContext = createContext(null)
 
+// Monotonic id for orphan groups — stable across re-renders so React keys and map hover-grouping
+// don't shift when a group is added or dissolved.
+let _groupSeq = 0
+const nextGroupId = () => `g${++_groupSeq}`
+
 export function PlaylistProvider({ children }) {
   const [playlists, setPlaylists] = useState([])
   const [activePlaylistId, setActivePlaylistId] = useState(null)
@@ -29,9 +34,15 @@ export function PlaylistProvider({ children }) {
   // Active axis preset. 'custom' uses customXFeature/customYFeature.
   const [activePanel, setActivePanel] = useState(null)
 
+  // Set Builder panel minimize (Slice 9 final #5): collapse the panel to a thin bottom tab for full
+  // map visibility while staying in build mode. Reset whenever the active panel changes so switching
+  // panels always lands on the expanded view.
+  const [setBuilderMinimized, setSetBuilderMinimized] = useState(false)
+  const toggleSetBuilderMinimized = useCallback(() => setSetBuilderMinimized((m) => !m), [])
+
   // Compass quadrant the map viewport centre is currently in.
   const [activeQuadrant, setActiveQuadrant] = useState(null) // 'TR'|'TL'|'BR'|'BL'|null
-  const togglePanel = (id) => setActivePanel((prev) => (prev === id ? null : id))
+  const togglePanel = (id) => { setSetBuilderMinimized(false); setActivePanel((prev) => (prev === id ? null : id)) }
 
   const [activePreset, setActivePresetKey] = useState('vibe')
   const [customXFeature, setCustomXFeature] = useState('mood')
@@ -50,11 +61,20 @@ export function PlaylistProvider({ children }) {
   // ordered list of track ids (index 0 = head). It's non-destructive across panel toggles —
   // only Save or a playlist switch clears it.
   const buildMode = activePanel === 'sets'
-  const [chain, setChain] = useState([]) // track ids, position 1..n
-  // The incoming-socket edge chosen (by the snap) for each connected target, so the latched wire
-  // lands where the drag preview showed it rather than snapping to a recomputed edge.
-  const [inCardOverrides, setInCardOverrides] = useState({})
+  const [chain, setChain] = useState([]) // track ids, position 1..n (index 0 = head)
+  // Disconnected/orphan groups (Decision Log #35, #45). Each is `{ id, tracks: [ids] }`, an ordered
+  // sub-chain that keeps its internal wires after a cut. Multiple groups coexist. Non-destructive:
+  // songs only leave a group by being re-wired into the chain (connectSong) or dissolved.
+  const [orphanGroups, setOrphanGroups] = useState([])
   const [savingSet, setSavingSet] = useState(false)
+
+  // Read the freshest chain/orphanGroups synchronously from user-triggered actions (unlink/reorder/
+  // connect) that also update the other slice — avoids nesting one setState inside another's updater
+  // and gives connectSong the current groups when a wire released from an old drag closure fires.
+  const chainRef = useRef(chain)
+  useEffect(() => { chainRef.current = chain }, [chain])
+  const orphanGroupsRef = useRef(orphanGroups)
+  useEffect(() => { orphanGroupsRef.current = orphanGroups }, [orphanGroups])
 
   // Clicking a song with an empty chain seats it as the head (Decision Log #38, #42). Once a
   // head exists, further songs join only by wiring (connectSong).
@@ -64,31 +84,92 @@ export function PlaylistProvider({ children }) {
   }, [])
 
   // Latch a wire from the current tail to `targetId` (Decision Log #33 — sequential, one-to-one).
-  // `inCardinal` is the target edge the wire snapped to. No-op if already in the chain.
-  const connectSong = useCallback((targetId, inCardinal) => {
+  // The socket pair is optimized geometrically at render time (Slice 9 #1), so no snap edge is
+  // stored. If `targetId` belongs to an orphan group, the WHOLE group rejoins the chain in its
+  // retained order (Slice 9 r3 #6) — its internal wires were kept precisely so reconnecting any
+  // member absorbs the segment [group...] appended after the current tail, and the group is dropped.
+  const connectSong = useCallback((targetId) => {
     if (!targetId) return
-    setChain((prev) => (prev.includes(targetId) ? prev : [...prev, targetId]))
-    if (inCardinal) setInCardOverrides((prev) => ({ ...prev, [targetId]: inCardinal }))
+    const grp = orphanGroupsRef.current.find((g) => g.tracks.includes(targetId))
+    if (grp) {
+      setChain((prev) => [...prev, ...grp.tracks.filter((t) => !prev.includes(t))])
+      setOrphanGroups((groups) => groups.filter((g) => g.id !== grp.id))
+    } else {
+      setChain((prev) => (prev.includes(targetId) ? prev : [...prev, targetId]))
+    }
   }, [])
 
-  const clearChain = useCallback(() => { setChain([]); setInCardOverrides({}) }, [])
+  // Sever the wire AFTER the song at `index` (Decision Log #35, Slice 9 #2). Downstream songs
+  // orphan as one group, keeping their wires to each other. The tail row is a no-op (nothing
+  // downstream). Unlinking the head is special: song #2 re-anchors as the new head and the former
+  // head becomes a solo orphan.
+  const unlinkAfter = useCallback((index) => {
+    const prev = chainRef.current
+    if (index < 0 || index >= prev.length || index === prev.length - 1) return
+    if (index === 0) {
+      const former = prev[0]
+      setChain(prev.slice(1))
+      setOrphanGroups((g) => [...g, { id: nextGroupId(), tracks: [former] }])
+      return
+    }
+    const downstream = prev.slice(index + 1)
+    setChain(prev.slice(0, index + 1))
+    setOrphanGroups((g) => [...g, { id: nextGroupId(), tracks: downstream }])
+  }, [])
 
-  // Persist the set to Supabase, then clear the chain (Decision Log #57). Gated at ≥2 songs
-  // (Decision Log #39) — the panel disables the button, this is the backstop.
+  // Re-sequence the connected chain by drag-to-reorder (Decision Log #47). Wires re-cascade
+  // automatically since the map derives them from chain order. Whatever lands at index 0 is head.
+  const reorderChain = useCallback((from, to) => {
+    setChain((prev) => {
+      if (from === to || from < 0 || to < 0 || from >= prev.length || to >= prev.length) return prev
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(to, 0, moved)
+      return next
+    })
+  }, [])
+
+  // Dissolve an orphan group — removes every song in it from the set entirely (Slice 9 #3).
+  const dissolveGroup = useCallback((groupId) => {
+    setOrphanGroups((groups) => groups.filter((g) => g.id !== groupId))
+  }, [])
+
+  const clearChain = useCallback(() => { setChain([]); setOrphanGroups([]) }, [])
+
+  // Explicitly start a fresh set — clears the chain + orphans and drops the "saved" flag (Slice 9
+  // r3 #3). Distinct from clearChain so the panel can also reset its own button state.
+  const savedRef = useRef(false)
+  const newSet = useCallback(() => { savedRef.current = false; setChain([]); setOrphanGroups([]) }, [])
+
+  // Persist the set to Supabase (Decision Log #57), gated at ≥2 songs (Decision Log #39). Unlike
+  // earlier slices this DOES NOT clear the chain (Slice 9 r3 #3): the saved set stays visible on the
+  // map + panel so the user can review and copy it. It's cleared only by starting a new set (newSet)
+  // or exiting → re-entering build mode. Returns true on success, false on failure.
   const saveCurrentSet = useCallback(async (name) => {
-    if (chain.length < 2 || !activePlaylistId) return
+    if (chain.length < 2 || !activePlaylistId) return false
     setSavingSet(true)
     try {
       const tracksById = Object.fromEntries(activeTracks.map((t) => [t.id, t]))
-      await saveSet({ playlistId: activePlaylistId, name, chain, tracksById })
-      setChain([])
-      setInCardOverrides({})
+      await saveSet({ playlistId: activePlaylistId, name, chain, orphanGroups, tracksById })
+      savedRef.current = true // mark for the clear-on-re-entry effect; chain stays on screen
+      return true
     } catch (err) {
       console.error('[drift] saveSet failed:', err)
+      return false
     } finally {
       setSavingSet(false)
     }
-  }, [chain, activePlaylistId, activeTracks])
+  }, [chain, orphanGroups, activePlaylistId, activeTracks])
+
+  // Re-entering build mode after a save starts a clean slate (Slice 9 r3 #3). We clear on the
+  // transition INTO 'sets' when the previous set was saved, so leaving to peek elsewhere and coming
+  // back gives a fresh set — but a save you're still viewing stays put.
+  const prevBuildRef = useRef(buildMode)
+  useEffect(() => {
+    const entered = buildMode && !prevBuildRef.current
+    prevBuildRef.current = buildMode
+    if (entered && savedRef.current) { savedRef.current = false; setChain([]); setOrphanGroups([]) }
+  }, [buildMode])
 
   // The map registers imperative controls (pan/highlight a track) here so the panel search —
   // which lives outside the map's ReactFlowProvider — can drive it (Decision Log #56).
@@ -97,7 +178,7 @@ export function PlaylistProvider({ children }) {
   const focusTrack = useCallback((trackId) => { mapControlsRef.current?.focusTrack?.(trackId) }, [])
 
   // A chain references ids from the active playlist — switching playlists invalidates it.
-  useEffect(() => { setChain([]); setInCardOverrides({}) }, [activePlaylistId])
+  useEffect(() => { setChain([]); setOrphanGroups([]) }, [activePlaylistId])
 
   // When "Import more" targets the current playlist, this holds its id (null = create new).
   const importTargetRef = useRef(null)
@@ -250,6 +331,8 @@ export function PlaylistProvider({ children }) {
     activePanel,
     setActivePanel,
     togglePanel,
+    setBuilderMinimized,
+    toggleSetBuilderMinimized,
     activeQuadrant,
     setActiveQuadrant,
     activePreset,
@@ -259,10 +342,14 @@ export function PlaylistProvider({ children }) {
     setCustomPreset,
     buildMode,
     chain,
-    inCardOverrides,
+    orphanGroups,
     addHead,
     connectSong,
+    unlinkAfter,
+    reorderChain,
+    dissolveGroup,
     clearChain,
+    newSet,
     saveCurrentSet,
     savingSet,
     registerMapControls,

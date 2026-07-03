@@ -18,6 +18,14 @@ export const C = {
   red: '#E5564B',
 }
 
+// Orphan / disconnected treatment on the MAP (Decision Log #35, #36). At rest orphans are muted and
+// quiet — a dark-gray dashed border + dark-gray wires (ORPHAN_INACTIVE) so they recede. On group
+// hover they light up in warm coral (ORPHAN_CORAL), distinct from the head's orange and the
+// green/amber/red compatibility wires. (The panel's Disconnected section uses accent-2 blue, per
+// Figma — that's separate from this map treatment.)
+export const ORPHAN_CORAL = '#FF7A5C'
+export const ORPHAN_INACTIVE = '#363636'
+
 // Tinted fill behind the orange-outlined primary buttons (from Figma).
 export const ACCENT1_FILL = 'rgba(20,20,22,0.2)'
 
