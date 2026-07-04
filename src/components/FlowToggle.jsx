@@ -1,26 +1,24 @@
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { SetCreationIcon } from './LeftNav'
-import { C, FONT, INSET, ACCENT1_FILL } from './import/tokens'
+import { C, FONT, INSET } from './import/tokens'
+import knobOn from '../assets/flow-on.png'
+import knobOff from '../assets/flow-off.png'
 
-// The Flow toggle (Decision Log #48–52, Figma OFF 913-2 / ON 748-2563). Functional as of Slice 10: it
-// flips the map between the build view (Flow OFF) and the present view (Flow ON — only the chain lit,
-// uniform dark wires with a traveling strobe). It appears in the toolbar area once the chain has a
-// head, and slides a knob inside a recessed track between the two states.
+// The Flow toggle (Decision Log #48–52). Functional as of Slice 10: it flips the map between the
+// build view (Flow OFF) and the present view (Flow ON — only the chain lit, uniform dark wires with a
+// traveling strobe). It appears in the toolbar area once the chain has a head, and slides a knob
+// inside a recessed track between the two states.
 //
-// The knob is a true CSS circle (equal width/height, border-radius 50%) so it can never render as an
-// oval. It slides RIGHT (Off) → LEFT (Flow); labels stay gray, and the state color lives in the knob:
-//   OFF: dark knob, gray glyph, sits recessed in the track.
-//   ON : translucent dark fill + a 1.5px orange accent ring + orange glyph + orange glow (Figma
-//        748-2563 "selected" treatment).
+// The knob is a pre-rendered PNG (assets/flow-on.png / flow-off.png) — ON = dark circle with an
+// orange ring + orange glyph + glow; OFF = dark circle with a gray glyph. It's drawn in a fixed
+// SQUARE box with object-fit: contain (and max-width: none to defeat the base img reset), so it can
+// never render as an oval. Slides RIGHT (Off) → LEFT (Flow); labels stay gray.
 
 const W = 140
 const H = 70
-const KNOB = 52
-const GLYPH = 26
-const TRACK_INSET = 8
-const KNOB_TOP = (H - KNOB) / 2 // 9 — vertically centered
-const KNOB_LEFT_ON = TRACK_INSET + 1                 // 9  — left, near the track's left edge
-const KNOB_LEFT_OFF = W - TRACK_INSET - 1 - KNOB     // 79 — right, near the track's right edge
+const KNOB = 60 // square image box (the circle + its baked glow)
+const KNOB_TOP = (H - KNOB) / 2 // 5 — vertically centered
+const KNOB_LEFT_ON = 5              // left
+const KNOB_LEFT_OFF = W - KNOB - 5  // 75 — right
 
 export default function FlowToggle() {
   const { buildMode, chain, flowMode, toggleFlowMode } = usePlaylistStore()
@@ -44,7 +42,7 @@ export default function FlowToggle() {
     >
       {/* Recessed track/well the knob rides in. */}
       <div style={{
-        position: 'absolute', inset: TRACK_INSET, borderRadius: 100,
+        position: 'absolute', inset: 8, borderRadius: 100,
         background: C.card, boxShadow: INSET,
       }} />
 
@@ -57,23 +55,18 @@ export default function FlowToggle() {
         {on ? 'Flow' : 'Off'}
       </span>
 
-      {/* Knob — a perfect CSS circle sliding right (Off) ↔ left (Flow). ON carries the orange ring +
-          glow; both keep a 1.5px border (transparent when off) via border-box so the size never jumps. */}
-      <div style={{
-        position: 'absolute', top: KNOB_TOP, left: on ? KNOB_LEFT_ON : KNOB_LEFT_OFF,
-        width: KNOB, height: KNOB, borderRadius: '50%', boxSizing: 'border-box',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: on ? ACCENT1_FILL : C.card,
-        border: `1.5px solid ${on ? C.accent1 : 'transparent'}`,
-        boxShadow: on
-          ? `0 0 12px 1px rgba(242,127,55,0.55), 4px 4px 5px 0px rgba(0,0,0,0.45)`
-          : `2px 2px 5px 0px rgba(0,0,0,0.6), inset 0 1px 1px rgba(255,255,255,0.04)`,
-        transition: 'left 260ms cubic-bezier(0.4,0,0.2,1), background 200ms ease, border-color 200ms ease, box-shadow 200ms ease',
-      }}>
-        <span style={{ width: GLYPH, height: GLYPH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <SetCreationIcon color={on ? C.accent1 : C.iconPrimary} />
-        </span>
-      </div>
+      {/* Knob PNG — sliding right (Off) ↔ left (Flow). Square box + contain keeps it a true circle. */}
+      <img
+        src={on ? knobOn : knobOff}
+        alt=""
+        draggable={false}
+        style={{
+          position: 'absolute', top: KNOB_TOP, left: on ? KNOB_LEFT_ON : KNOB_LEFT_OFF,
+          width: KNOB, height: KNOB, maxWidth: 'none', objectFit: 'contain',
+          display: 'block', pointerEvents: 'none',
+          transition: 'left 260ms cubic-bezier(0.4,0,0.2,1)',
+        }}
+      />
     </div>
   )
 }
