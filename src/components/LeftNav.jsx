@@ -105,14 +105,17 @@ function PlaylistsIcon({ active }) {
 }
 
 // Linked-nodes glyph. Default grey; active turns orange with an inner shadow. Exported so the Flow
-// toggle knob can reuse the exact Set Builder rail icon.
-export function SetCreationIcon({ active }) {
+// toggle knob can reuse the exact Set Builder rail icon. Pass `color` to render a plain fill (no
+// active filter) — the Flow toggle uses this for the dark glyph on its orange ON knob.
+export function SetCreationIcon({ active, color }) {
   const d =
     'M19.3932 6.30001H18.2145C17.6462 6.30001 17.1011 6.52125 16.6992 6.91508C16.2973 7.30891 16.0715 7.84305 16.0715 8.4V12.6C16.0715 13.7139 15.6199 14.7822 14.8162 15.5698C14.0124 16.3575 12.9222 16.8 11.7855 16.8H10.6068C10.3413 18.0747 9.60219 19.2075 8.53283 19.9785C7.46346 20.7496 6.14001 21.1042 4.81905 20.9734C3.4981 20.8426 2.27374 20.2359 1.38336 19.2708C0.492979 18.3057 0 17.051 0 15.75C0 14.449 0.492979 13.1943 1.38336 12.2292C2.27374 11.2641 3.4981 10.6574 4.81905 10.5266C6.14001 10.3958 7.46346 10.7504 8.53283 11.5214C9.60219 12.2925 10.3413 13.4253 10.6068 14.7H11.7855C12.3538 14.7 12.8989 14.4787 13.3008 14.0849C13.7027 13.6911 13.9285 13.157 13.9285 12.6V8.4C13.9285 7.28609 14.3801 6.21781 15.1838 5.43016C15.9876 4.64251 17.0778 4.20001 18.2145 4.20001H19.3932C19.6587 2.92526 20.3978 1.79255 21.4672 1.02145C22.5365 0.250362 23.86 -0.104168 25.1809 0.026597C26.5019 0.157362 27.7263 0.764107 28.6166 1.7292C29.507 2.69429 30 3.94898 30 5.25001C30 6.55104 29.507 7.80572 28.6166 8.77081C27.7263 9.73591 26.5019 10.3427 25.1809 10.4734C23.86 10.6042 22.5365 10.2497 21.4672 9.47856C20.3978 8.70747 19.6587 7.57475 19.3932 6.30001Z'
 
   return (
     <svg width="100%" height="100%" viewBox="0 0 30 21" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {active ? (
+      {color ? (
+        <path d={d} fill={color} />
+      ) : active ? (
         <>
           <g filter="url(#filter0_i_799_4817)">
             <path d={d} fill="#F27F37" />

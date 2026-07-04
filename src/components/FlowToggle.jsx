@@ -2,51 +2,68 @@ import { usePlaylistStore } from '../store/usePlaylistStore'
 import { SetCreationIcon } from './LeftNav'
 import { C, FONT, INSET } from './import/tokens'
 
-// The Flow toggle (Decision Log #48–52, Figma OFF 748-2568 / ON 748-2563). VISUAL ONLY this slice:
-// it renders the OFF state, is disabled, and shows a "Coming soon" tooltip — Flow mode itself is
-// Slice 10. It's shown for the whole of set-builder mode (from the moment the panel opens), so it's
-// always available in the toolbar area alongside the map.
-//
-// Pill with a round knob (the linked-nodes glyph, shared with the Set Builder rail icon) + a label.
-// OFF: knob left, gray glyph, "Off" in Text/Secondary. (ON would slide the knob right, turn it
-// orange, and read "Flow" — built in Slice 10.)
+// The Flow toggle (Decision Log #48–52, Figma OFF 748-2568 / ON 748-2563). Functional as of Slice 10:
+// it flips the map between the build view (Flow OFF) and the present view (Flow ON — only the chain
+// lit, uniform dark wires with a traveling strobe). It appears in the toolbar area once the chain has
+// a head, and slides a round knob (the linked-nodes glyph, shared with the Set Builder rail icon)
+// between the two states.
+//   OFF: recessed gray knob on the LEFT, "Off" in Text/Secondary on the right.
+//   ON : orange knob on the RIGHT with an accent ring, "Flow" in accent on the left.
 
+const W = 140
+const H = 70
 const KNOB = 60
-const GLYPH = 26 // linked-nodes glyph box inside the knob
+const GLYPH = 26
+const PAD = 5
+const KNOB_ON_LEFT = W - KNOB - PAD // 75
 
 export default function FlowToggle() {
-  const { buildMode } = usePlaylistStore()
+  const { buildMode, chain, flowMode, toggleFlowMode } = usePlaylistStore()
 
-  // Visible for the whole of build mode (set-builder panel open).
-  if (!buildMode) return null
+  // Only in build mode, once a head exists (Decision Log edge case: no Flow without a chain head).
+  if (!buildMode || chain.length < 1) return null
 
+  const on = flowMode
   return (
     <div
-      title="Coming soon"
-      aria-disabled="true"
+      onClick={toggleFlowMode}
+      role="switch"
+      aria-checked={on}
+      title={on ? 'Flow on' : 'Flow off'}
       style={{
-        display: 'flex', alignItems: 'center', gap: 15,
-        width: 140, boxSizing: 'border-box',
-        padding: '5px 20px 5px 5px', borderRadius: 100,
-        background: C.card,
+        position: 'relative', width: W, height: H, flexShrink: 0,
+        borderRadius: 100, background: C.card,
         boxShadow: '4px 4px 2.5px 0px rgba(0,0,0,1), inset 1px 1.5px 3px 0px #373737',
-        cursor: 'default', userSelect: 'none', flexShrink: 0,
-        // No container opacity — that made the whole pill see-through (songs showed behind it). The
-        // OFF/inert state is already conveyed by the gray glyph + "Off" label.
+        cursor: 'pointer', userSelect: 'none',
       }}
     >
-      {/* Knob — recessed dark circle with the Set Builder rail glyph, gray for the OFF/inactive
-          state (it turns orange when active, matching the rail icon — wired up in Slice 10). */}
+      {/* Label — swaps side + text with the state. */}
+      <span style={{
+        position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+        ...(on ? { left: 22 } : { right: 22 }),
+        fontFamily: FONT, fontSize: 14, fontWeight: 600,
+        color: on ? C.accent1 : C.textSecondary,
+        transition: 'color 220ms ease',
+      }}>
+        {on ? 'Flow' : 'Off'}
+      </span>
+
+      {/* Knob — slides left↔right; recessed gray (OFF) vs orange with accent ring (ON). */}
       <div style={{
-        width: KNOB, height: KNOB, borderRadius: '50%', flexShrink: 0,
-        background: C.card, boxShadow: INSET,
+        position: 'absolute', top: PAD, left: on ? KNOB_ON_LEFT : PAD,
+        width: KNOB, height: KNOB, borderRadius: '50%',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: on ? C.accent1 : C.card,
+        boxShadow: on
+          ? `0 0 0 2px rgba(242,127,55,0.7), 0 0 18px 3px rgba(242,127,55,0.5), 4px 4px 5px 0px rgba(0,0,0,0.5)`
+          : INSET,
+        transition: 'left 260ms cubic-bezier(0.4,0,0.2,1), background 220ms ease, box-shadow 220ms ease',
       }}>
         <span style={{ width: GLYPH, height: GLYPH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <SetCreationIcon active={false} />
+          {/* Gray glyph when OFF; dark glyph on the orange knob when ON. */}
+          <SetCreationIcon color={on ? '#141416' : C.iconPrimary} />
         </span>
       </div>
-      <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: C.textSecondary }}>Off</span>
     </div>
   )
 }

@@ -48,6 +48,10 @@ const ACCENT1 = '#F27F37' // set-builder head accent + sockets (Decision Log col
 // boundary offset matches the visually-bumped socket position exactly.
 export const HEAD_CIRCLE_BUMP = 1.14
 
+// Flow ON dim level for everything outside the connected chain (Slice 10) — near-invisible but not
+// gone, so the map keeps faint spatial context.
+const FLOW_DIM = 0.09
+
 // Tier (circle/pill/card) depends only on zoom, so it is identical for every node. The map computes
 // it once and broadcasts it through this context, so a node re-renders only when the tier actually
 // changes (a threshold crossing) — never on every zoom frame.
@@ -169,7 +173,7 @@ function AnchorIcon() {
 function TrackNode({ id, data }) {
   const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId } = data
   const tier = useContext(ZoomTierContext)
-  const { buildMode, startWireDrag, setHoverGroup, unplugSocket } = useContext(BuildContext)
+  const { buildMode, flowMode, startWireDrag, setHoverGroup, unplugSocket } = useContext(BuildContext)
   const isCircle = tier === 'circle'
   const isPill = tier === 'pill'
   const isCard = tier === 'card'
@@ -278,7 +282,11 @@ function TrackNode({ id, data }) {
         cursor: grabbable ? 'grab' : 'default', userSelect: 'none',
         // Build-mode dimming (Slice 9 #6): non-set songs drop to 0.4 so the set reads clearly.
         // Orphans get their own band — ~45% at rest, lifting to ~0.95 when their group is hovered.
-        opacity: isOrphan ? (orphanBright ? 0.95 : 0.45) : (dimmed ? 0.4 : 1),
+        // Flow ON (Slice 10): only the connected chain stays lit; everything else — non-set AND
+        // orphans — recedes to near-invisible (~9%), keeping faint spatial context.
+        opacity: flowMode
+          ? (!isOrphan && !dimmed ? 1 : FLOW_DIM)
+          : (isOrphan ? (orphanBright ? 0.95 : 0.45) : (dimmed ? 0.4 : 1)),
         // Counter the pane's zoom. The factor lives in the --node-scale CSS var, written by the map
         // once per throttled frame, so zooming rescales every node via CSS with no React re-render.
         // Out of the transition (tracks zoom instantly, no rubber-banding); the 400ms morph below

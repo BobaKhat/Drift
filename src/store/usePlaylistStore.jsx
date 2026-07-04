@@ -68,6 +68,14 @@ export function PlaylistProvider({ children }) {
   const [orphanGroups, setOrphanGroups] = useState([])
   const [savingSet, setSavingSet] = useState(false)
 
+  // Flow mode (Slice 10): a presentation toggle over the built set. OFF = build view (all songs,
+  // non-chain dimmed, compatibility-colored wires). ON = present view (only the chain lit, everything
+  // else near-invisible, uniform dark wires with a traveling strobe). Only meaningful with a chain, so
+  // it resets whenever we leave build mode or the chain loses its head.
+  const [flowMode, setFlowMode] = useState(false)
+  const toggleFlowMode = useCallback(() => setFlowMode((f) => !f), [])
+  useEffect(() => { if (!buildMode || chain.length === 0) setFlowMode(false) }, [buildMode, chain.length])
+
   // Read the freshest chain/orphanGroups synchronously from user-triggered actions (unlink/reorder/
   // connect) that also update the other slice — avoids nesting one setState inside another's updater
   // and gives connectSong the current groups when a wire released from an old drag closure fires.
@@ -341,6 +349,8 @@ export function PlaylistProvider({ children }) {
     setActivePreset,
     setCustomPreset,
     buildMode,
+    flowMode,
+    toggleFlowMode,
     chain,
     orphanGroups,
     addHead,

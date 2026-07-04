@@ -10,7 +10,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, BuildContext, getTier, getNodeScale } from './TrackNode'
-import WireEdge from './WireEdge'
+import WireEdge, { FLOW_STROBE_NAME, flowStrobeActivePct } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
@@ -808,7 +808,7 @@ const FIT_MAX_ZOOM = 1.6
 function DriftMapInner({ tracks }) {
   const {
     activePreset, customXFeature, customYFeature, setActivePanel,
-    buildMode, chain, orphanGroups, addHead, connectSong, unlinkAfter, registerMapControls,
+    buildMode, flowMode, chain, orphanGroups, addHead, connectSong, unlinkAfter, registerMapControls,
   } = usePlaylistStore()
   const presetConfig = useMemo(
     () => resolvePreset(activePreset, customXFeature, customYFeature),
@@ -878,12 +878,15 @@ function DriftMapInner({ tracks }) {
   // amber/red), recomputed whenever the chain, positions, or track data change (Decision Log #30).
   const edges = useMemo(() => {
     if (!buildMode) return []
+    const flowCount = Math.max(1, chain.length - 1) // chain-wire count, for the strobe stagger
+    let wi = 0
     return buildGraph.edges.map((e) => {
       if (e.data?.orphan) return { ...e, data: { ...e.data, bright: e.data.groupId === hoverGroup } }
       const { tier } = scoreCompatibility(tracksById[e.source], tracksById[e.target])
-      return { ...e, data: { ...e.data, tier } }
+      // flowIndex = this wire's position in the head→tail chain, driving its strobe delay.
+      return { ...e, data: { ...e.data, tier, flowIndex: wi++, flowCount } }
     })
-  }, [buildMode, buildGraph, hoverGroup, tracksById])
+  }, [buildMode, buildGraph, hoverGroup, tracksById, chain.length])
   const chainSet = useMemo(() => new Set(chain), [chain])
 
   // Inject build-mode presentation into node data: socket dots for chain + orphan songs, the head
@@ -1045,7 +1048,7 @@ function DriftMapInner({ tracks }) {
   const startWireDrag = useCallback((sourceId, cardinal, event) => {
     dragRef.current?.start(sourceId, cardinal, event)
   }, [])
-  const buildCtx = useMemo(() => ({ buildMode, startWireDrag, setHoverGroup, unplugSocket, onWireClick }), [buildMode, startWireDrag, unplugSocket, onWireClick])
+  const buildCtx = useMemo(() => ({ buildMode, flowMode, startWireDrag, setHoverGroup, unplugSocket, onWireClick }), [buildMode, flowMode, startWireDrag, unplugSocket, onWireClick])
 
   return (
     <div
@@ -1106,6 +1109,12 @@ function DriftMapInner({ tracks }) {
       {/* Wire-drag overlay — only mounted in build mode; draws the dashed drag wire + feedback. */}
       {buildMode && (
         <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} />
+      )}
+      {/* Strobe keyframes — the comet travels (offset 0.16 → −1.05) over one wire's slice of the
+          cycle, then holds off-path for the pause. Its travel-window % scales with chain length so
+          the whole chain sweeps in FLOW_SWEEP_S regardless of size (Decision Log #51). */}
+      {buildMode && flowMode && chain.length >= 2 && (
+        <style>{`@keyframes ${FLOW_STROBE_NAME}{0%{stroke-dashoffset:0.16}${flowStrobeActivePct(chain.length - 1).toFixed(3)}%{stroke-dashoffset:-1.05}100%{stroke-dashoffset:-1.05}}`}</style>
       )}
       <AxisLayer preset={presetConfig} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
