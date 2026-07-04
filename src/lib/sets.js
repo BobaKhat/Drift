@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { keyRelationship } from './camelot'
+import { scoreCompatibility } from './compatibility'
 
 // Set persistence. "Save & Complete" writes the whole set in three tables (Decision Log #57, #89):
 //   sets             — the set itself, tied to its parent playlist
@@ -8,20 +8,20 @@ import { keyRelationship } from './camelot'
 //   set_connections  — one row per wire, for the chain AND each orphan group's retained wires
 //
 // The cut is non-destructive (Decision Log #35): orphans survive the save so the set can be
-// reopened with its disconnected groups intact. Slice 8 stores real bpm_delta / key_relationship
-// but a placeholder compatibility_tier of 'strong' — real scoring arrives in Slice 11.
+// reopened with its disconnected groups intact. Each connection stores its REAL compatibility now
+// (Slice 11 / Decision Log #27–29): the same scoreCompatibility() the wires and card use.
 
-// One set_connections row for consecutive songs a→b.
+// One set_connections row for consecutive songs a→b, carrying the computed compatibility. Key
+// relationship is stored as one of same/adjacent/parallel/distant, or null when a key is unknown.
 function connRow(setId, aId, bId, tracksById) {
-  const a = tracksById[aId]
-  const b = tracksById[bId]
+  const { tier, bpmDelta, keyRelationship } = scoreCompatibility(tracksById[aId], tracksById[bId])
   return {
     set_id: setId,
     source_track_id: aId,
     target_track_id: bId,
-    bpm_delta: a?.bpm != null && b?.bpm != null ? Math.abs(b.bpm - a.bpm) : null,
-    key_relationship: keyRelationship(a?.camelot, b?.camelot),
-    compatibility_tier: 'strong', // placeholder — Slice 11
+    bpm_delta: bpmDelta,
+    key_relationship: keyRelationship === 'unknown' ? null : keyRelationship,
+    compatibility_tier: tier,
   }
 }
 

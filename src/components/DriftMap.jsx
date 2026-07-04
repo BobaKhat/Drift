@@ -15,7 +15,10 @@ import WireDragLayer from './WireDragLayer'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
 import { computeBuildGraph } from '../lib/setChain'
+import { scoreCompatibility } from '../lib/compatibility'
 import CompassPreview from './CompassPreview'
+import CompatibilityCard from './CompatibilityCard'
+import FlowToggle from './FlowToggle'
 
 // Flow-space canvas dimensions. A large canvas gives songs room to separate as you
 // zoom in (Google Maps model, Decision Log #17) — the primary energy×mood mapping only
@@ -698,6 +701,10 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
       position: 'absolute', right: 19, top: 19, zIndex: 4,
       display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10,
     }}>
+      {/* Top row: Flow toggle (build mode only, sits LEFT of the toolbar — Decision Log #48–50,
+          Figma 748-1804) + the toolbar pill, right-anchored so the pill never shifts. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+      <FlowToggle />
       {/* Toolbar pill */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 16,
@@ -757,6 +764,7 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
           boxShadow: 'inset 1px 1.5px 3px 0px #373737',
           pointerEvents: 'none',
         }} />
+      </div>
       </div>
 
       {/* Compass card — slides in below toolbar when open */}
@@ -829,6 +837,21 @@ function DriftMapInner({ tracks }) {
   // Which orphan group is hovered (whole segment brightens, Decision Log #36/#45). null = none.
   const [hoverGroup, setHoverGroup] = useState(null)
 
+  // Raw track records keyed by id — feeds per-wire compatibility scoring (colors + card).
+  const tracksById = useMemo(() => Object.fromEntries(tracks.map((t) => [t.id, t])), [tracks])
+
+  // The wire whose compatibility card is open (Decision Log #31): { source, target } | null. Set on
+  // wire click, cleared on any pane click / chain edit / mode change so a stale card never lingers.
+  const [selectedWire, setSelectedWire] = useState(null)
+  const onWireClick = useCallback((source, target) => setSelectedWire({ source, target }), [])
+  useEffect(() => { setSelectedWire(null) }, [chain, orphanGroups, buildMode])
+  const selectedTracks = useMemo(() => {
+    if (!buildMode || !selectedWire) return null
+    const s = tracksById[selectedWire.source]
+    const t = tracksById[selectedWire.target]
+    return s && t ? { s, t } : null
+  }, [buildMode, selectedWire, tracksById])
+
   // Unplug a wire by grabbing either of its socket dots (Slice 9 r3 #2/#5, r4 #3). EITHER end works:
   // role 'out' grabs the wire leaving this song (upstream = this song, downstream from i+1 detaches);
   // role 'in' grabs the wire arriving (upstream = its predecessor, this song + downstream detaches).
@@ -850,13 +873,16 @@ function DriftMapInner({ tracks }) {
     dragRef.current?.start(upstreamId, 'E', event, { suppressPan: true })
   }, [chain, unlinkAfter])
 
-  // Orphan wires carry a live `bright` flag; chain wires are purely presentational now.
+  // Orphan wires carry a live `bright` flag; chain wires carry their compatibility `tier` (green/
+  // amber/red), recomputed whenever the chain, positions, or track data change (Decision Log #30).
   const edges = useMemo(() => {
     if (!buildMode) return []
-    return buildGraph.edges.map((e) =>
-      e.data?.orphan ? { ...e, data: { ...e.data, bright: e.data.groupId === hoverGroup } } : e
-    )
-  }, [buildMode, buildGraph, hoverGroup])
+    return buildGraph.edges.map((e) => {
+      if (e.data?.orphan) return { ...e, data: { ...e.data, bright: e.data.groupId === hoverGroup } }
+      const { tier } = scoreCompatibility(tracksById[e.source], tracksById[e.target])
+      return { ...e, data: { ...e.data, tier } }
+    })
+  }, [buildMode, buildGraph, hoverGroup, tracksById])
   const chainSet = useMemo(() => new Set(chain), [chain])
 
   // Inject build-mode presentation into node data: socket dots for chain + orphan songs, the head
@@ -1002,12 +1028,15 @@ function DriftMapInner({ tracks }) {
   // In build mode, clicking a song with an empty chain seats it as the head (Decision Log #38, #42).
   // Once a head exists, songs join only by wiring, so further clicks are ignored.
   const handleNodeClick = useCallback((_e, node) => {
+    setSelectedWire(null) // clicking a song dismisses the compatibility card
     if (buildMode && chain.length === 0) addHead(node.id)
   }, [buildMode, chain.length, addHead])
 
   // The set-builder panel isn't closeable while building (Decision Log #53), so a pane click only
-  // dismisses panels outside build mode.
+  // dismisses panels outside build mode. It always dismisses an open compatibility card (Decision
+  // Log #31 — "disappears on click-elsewhere").
   const handlePaneClick = useCallback(() => {
+    setSelectedWire(null)
     if (!buildMode) setActivePanel(null)
   }, [buildMode, setActivePanel])
 
@@ -1015,7 +1044,7 @@ function DriftMapInner({ tracks }) {
   const startWireDrag = useCallback((sourceId, cardinal, event) => {
     dragRef.current?.start(sourceId, cardinal, event)
   }, [])
-  const buildCtx = useMemo(() => ({ buildMode, startWireDrag, setHoverGroup, unplugSocket }), [buildMode, startWireDrag, unplugSocket])
+  const buildCtx = useMemo(() => ({ buildMode, startWireDrag, setHoverGroup, unplugSocket, onWireClick }), [buildMode, startWireDrag, unplugSocket, onWireClick])
 
   return (
     <div
@@ -1080,6 +1109,10 @@ function DriftMapInner({ tracks }) {
       <AxisLayer preset={presetConfig} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
       <ToolBar rf={rf} presetName={presetConfig.label} activePreset={activePreset} />
+      {/* Compatibility card — fixed bottom-right, shown while a wire is selected (Decision Log #31). */}
+      {selectedTracks && (
+        <CompatibilityCard sourceTrack={selectedTracks.s} targetTrack={selectedTracks.t} />
+      )}
     </div>
   )
 }

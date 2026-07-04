@@ -2,12 +2,13 @@ import { forwardRef, useImperativeHandle, useRef } from 'react'
 import { useReactFlow } from '@xyflow/react'
 import { getNodeScale, getTier, HEAD_CIRCLE_BUMP, SOCKET_SIZE } from './TrackNode'
 import { CARDINAL_VECTOR, facing, nearestCardinal } from '../lib/setChain'
-import { WIRE_STRONG } from './WireEdge'
+import { scoreCompatibility, WIRE_COLORS } from '../lib/compatibility'
 
-// The wire-drag interaction (Decision Log #40, #41). The user grabs the tail's outgoing socket and
-// drags: a dashed white wire trails the cursor, flashes the compatibility color (green in Slice 8)
-// over a valid target, and shows an error ✕ at the wire-end over an occupied one (a song already in
-// the chain). Release on a valid target latches the connection; release on empty space cancels.
+// The wire-drag interaction (Decision Log #40, #41, #52). The user grabs the tail's outgoing socket
+// and drags: a dashed white wire trails the cursor, flashes the REAL compatibility color (green/
+// amber/red — computed on the fly against whatever target is under the cursor, Decision Log #40) over
+// a valid target, and shows an error ✕ at the wire-end over an occupied one (a song already in the
+// chain). Release on a valid target latches the connection; release on empty space cancels.
 //
 // It's driven imperatively — pointer moves update the overlay's SVG nodes directly (coalesced to
 // animation frames) so a fast drag never triggers React re-renders. The parent starts a drag via
@@ -171,14 +172,18 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
     const srcOff = socketOffset(outCard, sourceNode, scale, vp.zoom, sourceNode.data?.isHead, tier)
     const src = { x: srcCenter.x + srcOff.x, y: srcCenter.y + srcOff.y }
 
-    // Wire: locked to the socket + solid green when snapped, else dashed white to the cursor.
+    // Wire: locked to the socket when snapped, flashing the REAL compatibility color of the
+    // source→target transition (Decision Log #40) so the user sees the verdict before releasing;
+    // else dashed white to the cursor.
     const path = pathRef.current
     if (path) {
       if (snapped) {
+        const { tier } = scoreCompatibility(sourceNode.data, snapNode.data)
+        const color = WIRE_COLORS[tier]
         path.setAttribute('d', bezierBoth(src.x, src.y, outCard, snapSocket.x, snapSocket.y, snapInCard))
-        path.setAttribute('stroke', WIRE_STRONG)
+        path.setAttribute('stroke', color)
         path.setAttribute('stroke-dasharray', 'none')
-        path.style.filter = `drop-shadow(0 0 5px ${WIRE_STRONG})`
+        path.style.filter = `drop-shadow(0 0 5px ${color})`
       } else {
         path.setAttribute('d', bezierPath(src.x, src.y, outCard, cursor.x, cursor.y))
         path.setAttribute('stroke', DASH_WHITE)

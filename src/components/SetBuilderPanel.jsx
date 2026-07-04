@@ -73,6 +73,8 @@ function TrackMeta({ track }) {
       <span style={{ fontFamily: FONT, fontSize: 13, fontWeight: 500, color: '#fff', whiteSpace: 'nowrap' }}>
         {track?.bpm != null ? `${Math.round(track.bpm)} Bpm` : '—'}
       </span>
+      {/* Camelot keys are colored in the set-builder panel rows (the gray rule applies to map
+          cards only); '—' when unknown falls back to Text/Secondary. */}
       <span style={{ fontFamily: FONT, fontSize: 12, fontWeight: 500, color: camelotColor(track?.camelot) }}>
         {track?.camelot ?? '—'}
       </span>

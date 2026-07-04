@@ -1,6 +1,8 @@
+import { useContext } from 'react'
 import { getBezierPath, useStore, useInternalNode, Position } from '@xyflow/react'
-import { getNodeScale, getTier, HEAD_CIRCLE_BUMP } from './TrackNode'
+import { getNodeScale, getTier, HEAD_CIRCLE_BUMP, BuildContext } from './TrackNode'
 import { ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
+import { WIRE_COLORS } from '../lib/compatibility'
 
 // Latched chain wire. A smooth bezier that exits the source socket and enters the target socket
 // along their cardinal directions — matching the sweeping S-curves in the Figma wire components.
@@ -11,9 +13,11 @@ import { ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
 // cardinal, by the node's half-size × its live counter-scale (× the head size-bump). This lands the
 // wire exactly on the orange socket dot instead of running through the card/pill body.
 //
-// Slice 8 renders every wire in the "strong" compatibility color (green #1EFFB8) as a placeholder:
-// real per-wire compatibility scoring (and the amber/red/dark-flow variants) arrives in Slice 11.
-export const WIRE_STRONG = '#1EFFB8'
+// Each wire is colored by the compatibility tier of its source→target transition (Decision Log #30):
+// green strong / amber mild / red weak. The tier is computed once per chain change in DriftMap and
+// handed down through edge `data.tier`; the glow underlay matches it. Green is kept as the default
+// only for the rare edge that mounts before its tier is attached.
+export const WIRE_STRONG = WIRE_COLORS.strong
 
 // Half-size of the node along the socket's axis (width for E/W, height for N/S), scaled the same
 // way the node's DOM is: counter-scale × the circle-tier head bump. Returned in flow units, which
@@ -36,6 +40,7 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
   // Subscribe to zoom so the boundary offset tracks the live counter-scale (few chain edges, so the
   // per-frame recompute during zoom is cheap).
   const zoom = useStore((s) => s.transform[2])
+  const { onWireClick } = useContext(BuildContext)
   const scale = getNodeScale(zoom)
   const tier = getTier(zoom)
   const sNode = useInternalNode(source)
@@ -64,13 +69,22 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
     )
   }
 
-  // Connected chain wire. Cutting/rewiring is now done by grabbing the socket dots directly
-  // (Slice 9 r3 #2), so the wire itself is purely presentational.
+  // Connected chain wire. Cutting/rewiring is done by grabbing the socket dots directly (Slice 9 r3
+  // #2); the wire's own body is a click target that opens the compatibility card (Decision Log #31).
+  // Color = the compatibility tier of this transition (green/amber/red), with a matching glow.
+  const color = WIRE_COLORS[data?.tier] ?? WIRE_STRONG
   return (
     <>
-      {/* Soft glow underlay */}
-      <path d={path} fill="none" stroke={WIRE_STRONG} strokeWidth={5} strokeOpacity={0.18} strokeLinecap="round" />
-      <path d={path} fill="none" stroke={WIRE_STRONG} strokeWidth={2} strokeLinecap="round" />
+      {/* Soft glow underlay — matches the wire's compatibility color. */}
+      <path d={path} fill="none" stroke={color} strokeWidth={5} strokeOpacity={0.18} strokeLinecap="round" />
+      <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" />
+      {/* Transparent wide hit path: opens the compatibility card. Its own pointerEvents override the
+          edge group's, so it stays clickable even though the map isn't elementsSelectable. */}
+      <path
+        d={path} fill="none" stroke="transparent" strokeWidth={20} strokeLinecap="round"
+        style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+        onClick={(e) => { e.stopPropagation(); onWireClick?.(source, target) }}
+      />
     </>
   )
 }
