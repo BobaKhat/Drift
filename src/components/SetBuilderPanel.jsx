@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { C, FONT, INSET, EXTRUSION } from './import/tokens'
+import { C, FONT, INSET, EXTRUSION, ACCENT1_FILL } from './import/tokens'
 import { camelotColor } from '../lib/camelot'
 import { formatSetMeta } from '../lib/setChain'
 
@@ -563,26 +563,29 @@ export default function SetBuilderPanel() {
           </button>
         </div>
       ) : (
-        // Exact Figma frame 748:1774 (Slice 9 final #3): #141416 fill, 100px radius, extrusion
-        // (4/4/5 black drop + inset 1/1.5/3 #373737), 15/30 padding, DM Sans Medium 16px. Text is
-        // Figma's #848484 when not yet actionable; it brightens to white once the set is savable.
+        // Two visual states (Slice 11 polish #5). DISABLED = the Figma gray treatment (frame 748:1774):
+        // #141416 fill, extrusion (4/4/5 black drop + inset 1/1.5/3 #373737), #848484 text. ACTIVE (set
+        // savable, or mid-save) = the app's orange primary-button treatment: accent border + tinted
+        // fill + white text. A transparent border on the disabled state keeps the two the same size.
+        (() => { const accented = canSave || phase === 'saving' || phase === 'saved'; return (
         <button
           onClick={handleSave}
           disabled={!canSave}
           style={{
-            marginTop: 16, flexShrink: 0, borderRadius: 100,
+            marginTop: 16, flexShrink: 0, borderRadius: 100, boxSizing: 'border-box',
             padding: '15px 15px 15px 30px',
-            background: C.card,
-            border: 'none',
-            boxShadow: EXTRUSION,
-            color: (canSave || phase === 'saving' || phase === 'saved') ? '#fff' : C.textSecondary,
+            background: accented ? ACCENT1_FILL : C.card,
+            border: `1px solid ${accented ? ACCENT : 'transparent'}`,
+            boxShadow: accented ? '4px 4px 5px 0px rgba(0,0,0,0.5)' : EXTRUSION,
+            color: accented ? '#fff' : C.textSecondary,
             fontFamily: FONT, fontSize: 16, fontWeight: 500, textAlign: 'center',
             cursor: canSave ? 'pointer' : 'default',
-            transition: 'color 160ms ease',
+            transition: 'color 160ms ease, background 160ms ease, border-color 160ms ease',
           }}
         >
           {phase === 'saving' ? 'Saving…' : phase === 'saved' ? 'Saved!' : 'Save and Complete'}
         </button>
+        ) })()
       )}
     </div>
   )

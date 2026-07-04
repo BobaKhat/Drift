@@ -705,9 +705,10 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
           Figma 748-1804) + the toolbar pill, right-anchored so the pill never shifts. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
       <FlowToggle />
-      {/* Toolbar pill */}
+      {/* Toolbar pill — height matched to the Flow toggle (70px) so they sit as an even pair. */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 16,
+        height: 70, boxSizing: 'border-box',
         padding: '8px 22px', background: CARD, borderRadius: 100, boxShadow: barShadow,
         position: 'relative',
       }}>

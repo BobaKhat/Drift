@@ -11,7 +11,14 @@ import { C, FONT, RADIUS } from './import/tokens'
 // (BPM · Key · Relation) split by faint vertical dividers. The key labels are the one place Camelot
 // hue colors are used outside the Deck View (Decision Log #32 exception); everything else is gray.
 
-const VERDICT_LABEL = { strong: 'Strong Match', mild: 'Mild Match', weak: 'Weak Match' }
+// The card's title is a descriptor of the transition, not a pass/fail verdict — it informs rather
+// than judges (a weak match is a "Distinct Key Change," not a failure). The color dot alone carries
+// the tier (green / amber / softened coral).
+const VERDICT_TITLE = {
+  strong: 'Smooth Harmonic Blend',
+  mild: 'Noticeable Key Shift',
+  weak: 'Distinct Key Change',
+}
 const RELATION_LABEL = { same: 'Same', adjacent: 'Adjacent', parallel: 'Parallel', distant: 'Distant', unknown: 'Key unknown' }
 
 // Faint vertical divider between columns (Figma Line 30) — a 39px hairline, brightest at its middle.
@@ -54,11 +61,11 @@ export default function CompatibilityCard({ sourceTrack, targetTrack }) {
         fontFamily: FONT,
       }}
     >
-      {/* Verdict — color dot + tier label, both in the compatibility color. */}
+      {/* Descriptor title — color dot carries the tier, the words inform (no "Strong/Mild/Weak Match"). */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
         <span style={{ fontFamily: FONT, fontSize: 16, fontWeight: 600, color, whiteSpace: 'nowrap' }}>
-          {VERDICT_LABEL[tier]}
+          {VERDICT_TITLE[tier]}
         </span>
       </div>
 

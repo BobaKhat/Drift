@@ -20,8 +20,10 @@ const DASH_WHITE = 'rgba(255,255,255,0.85)'
 
 // Cursor-to-socket distance (screen px) at which the wire tip snaps onto a valid target's incoming
 // socket. Inside this radius the wire locks to the socket and the target illuminates; outside it,
-// the wire follows the cursor freely.
-const SNAP_RADIUS = 48
+// the wire follows the cursor freely. This is also what governs UNPLUG feel: when you grab a socket
+// the just-detached song sits right under the cursor, so a smaller radius lets the wire pull free
+// with a shorter drag — a light "cable unplug" instead of having to yank it far (Slice 11 polish #4).
+const SNAP_RADIUS = 28
 
 // Map auto-pan while dragging a wire (Slice 9 #5): when the cursor is within EDGE_ZONE px of a
 // viewport edge, the map pans in that direction (speed proportional to how deep into the zone), so

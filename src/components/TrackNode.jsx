@@ -1,6 +1,7 @@
 import { memo, useRef, useState, useCallback, useEffect, useContext, createContext, Fragment } from 'react'
 import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { nearestCardinal } from '../lib/setChain'
+import { camelotColor } from '../lib/camelot'
 import { ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
 
 // Tune these thresholds — spec says we'll adjust after seeing it
@@ -80,7 +81,7 @@ const ART_TRANSITION = t('width', 'height', 'border-radius')
 const ROOT_TRANSITION = t('width', 'height', 'border-radius', 'background', 'border-color', 'border-width', 'padding', 'gap', 'opacity', 'box-shadow')
 
 const nameStyle = {
-  fontFamily: FONT, fontSize: 11, letterSpacing: '0.02em',
+  fontFamily: FONT, fontSize: 11, fontWeight: 600, letterSpacing: '0.02em',
   color: 'rgba(255,255,255,0.9)', lineHeight: 1.3,
   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
 }
@@ -340,7 +341,8 @@ function TrackNode({ id, data }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0, position: 'relative', zIndex: 1 }}>
             <div style={{ ...nameStyle, overflow: 'visible' }}>{bpm != null ? `${Math.round(bpm)} BPM` : '—'}</div>
-            <div style={{ ...subStyle, overflow: 'visible' }}>{camelot ?? '—'}</div>
+            {/* Camelot key colored via the Camelot hue system (matches the panel rows). */}
+            <div style={{ ...subStyle, overflow: 'visible', color: camelot ? camelotColor(camelot) : subStyle.color }}>{camelot ?? '—'}</div>
           </div>
         </>
       )}

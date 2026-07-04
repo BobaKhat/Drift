@@ -26,8 +26,10 @@ export const CAMELOT_WHEEL = (() => {
   return wheel
 })()
 
-// Wire compatibility colors (Decision Log #30, exact Figma "Wire Colors" styles).
-export const WIRE_COLORS = { strong: '#1EFFB8', mild: '#F7CB29', weak: '#FF2B2B' }
+// Wire compatibility colors (Decision Log #30). Strong/mild are the exact Figma "Wire Colors"
+// styles; weak is a softened, desaturated coral (not the Figma red #FF2B2B) so a weak match reads as
+// information — "a distinct key change" — rather than an error.
+export const WIRE_COLORS = { strong: '#1EFFB8', mild: '#F7CB29', weak: '#C4665A' }
 
 // BPM tier from a (signed or unsigned) delta — thresholds on |delta| (Decision Log #28).
 export function bpmTier(delta) {
