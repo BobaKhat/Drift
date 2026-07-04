@@ -536,6 +536,7 @@ function SearchResult({ track, onSelect, isLast }) {
 function SearchBar({ tracks, rf, onHighlight }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
+  const [focused, setFocused] = useState(false)
   const wrapperRef = useRef(null)
   const inputRef = useRef(null)
 
@@ -588,7 +589,8 @@ function SearchBar({ tracks, rf, onHighlight }) {
           ref={inputRef}
           value={query}
           onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
-          onFocus={() => { if (query.length >= 2) setOpen(true) }}
+          onFocus={() => { setFocused(true); if (query.length >= 2) setOpen(true) }}
+          onBlur={() => setFocused(false)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') { setOpen(false); setQuery(''); inputRef.current?.blur() }
           }}
@@ -610,18 +612,19 @@ function SearchBar({ tracks, rf, onHighlight }) {
             width: 42,
             height: 42,
             borderRadius: '50%',
-            border: `1.5px solid ${ACCENT1}`,
-            // Active-control treatment (matches the Flow toggle ON knob): tinted fill + orange glow.
-            background: 'rgba(20,20,22,0.2)',
-            boxShadow: '0 0 12px 1px rgba(242,127,55,0.5)',
+            // Active-state design system (source of truth: Flow toggle ON knob). Default = gray icon,
+            // no ring. Focused = orange icon fill + orange ring + dark tinted background.
+            border: `1.5px solid ${focused ? ACCENT1 : 'transparent'}`,
+            background: focused ? 'rgba(20,20,22,0.2)' : 'transparent',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
             cursor: 'pointer',
+            transition: 'border-color 160ms ease, background 160ms ease',
           }}
         >
-          <MagnifierIcon color={ACCENT1} />
+          <MagnifierIcon color={focused ? ACCENT1 : '#808080'} />
         </div>
       </div>
 

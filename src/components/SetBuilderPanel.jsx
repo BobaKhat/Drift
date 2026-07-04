@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { C, FONT, INSET, EXTRUSION, ACCENT1_FILL, ACTIVE_GLOW } from './import/tokens'
+import { C, FONT, INSET, EXTRUSION, ACCENT1_FILL } from './import/tokens'
 import { camelotColor } from '../lib/camelot'
 import { formatSetMeta } from '../lib/setChain'
 
@@ -238,6 +238,7 @@ export default function SetBuilderPanel() {
   } = usePlaylistStore()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
+  const [searchFocused, setSearchFocused] = useState(false)
   const [copied, setCopied] = useState(false)
   // The Disconnected section is ALWAYS present but starts COLLAPSED (r4 #4) — it never auto-expands
   // to steal panel space; the user clicks its header to reveal the orphan groups.
@@ -434,13 +435,15 @@ export default function SetBuilderPanel() {
           <input
             value={query}
             onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
-            onFocus={() => { if (query.length >= 2) setOpen(true) }}
+            onFocus={() => { setSearchFocused(true); if (query.length >= 2) setOpen(true) }}
+            onBlur={() => setSearchFocused(false)}
             onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); setQuery('') } }}
             placeholder="Find a Song on your Map"
             style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontFamily: FONT, fontSize: 14, fontWeight: 500, color: query ? '#fff' : C.textSecondary }}
           />
-          <div style={{ width: 38, height: 38, borderRadius: '50%', border: `1.5px solid ${ACCENT}`, background: ACCENT1_FILL, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `${ACTIVE_GLOW}, 4px 4px 5px 0px rgba(0,0,0,0.5)` }}>
-            <MagnifierIcon color={ACCENT} />
+          {/* Active-state design system: default gray icon/no ring; focused = orange fill + ring + dark bg. */}
+          <div style={{ width: 38, height: 38, borderRadius: '50%', border: `1.5px solid ${searchFocused ? ACCENT : 'transparent'}`, background: searchFocused ? ACCENT1_FILL : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'border-color 160ms ease, background 160ms ease' }}>
+            <MagnifierIcon color={searchFocused ? ACCENT : '#808080'} />
           </div>
         </div>
         {showDropdown && (
@@ -576,7 +579,7 @@ export default function SetBuilderPanel() {
             padding: '15px 15px 15px 30px',
             background: accented ? ACCENT1_FILL : C.card,
             border: `1.5px solid ${accented ? ACCENT : 'transparent'}`,
-            boxShadow: accented ? `${ACTIVE_GLOW}, 4px 4px 5px 0px rgba(0,0,0,0.5)` : EXTRUSION,
+            boxShadow: accented ? '4px 4px 5px 0px rgba(0,0,0,0.5)' : EXTRUSION,
             color: accented ? '#fff' : C.textSecondary,
             fontFamily: FONT, fontSize: 16, fontWeight: 500, textAlign: 'center',
             cursor: canSave ? 'pointer' : 'default',

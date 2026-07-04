@@ -3,7 +3,7 @@ import PlaylistPanel from './PlaylistPanel'
 import ExploreByPanel from './ExploreByPanel'
 import SetBuilderPanel from './SetBuilderPanel'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { ACTIVE_GLOW, ACCENT1_FILL } from './import/tokens'
+import { ACCENT1_FILL } from './import/tokens'
 import brandmark from '../assets/brandmark.png'
 import logo from '../assets/Logo.png'
 
@@ -268,10 +268,11 @@ function RailButton({ label, Icon, isActive, onClick, media }) {
   style.background = CARD
   style.boxShadow = WELL_SHADOW
   if (isActive) {
-    // Match the Flow toggle ON knob: accent ring + tinted fill + orange glow.
+    // Active-state design system (source of truth: Flow toggle ON knob) — orange glyph fill (below)
+    // + orange ring + dark tinted background.
     style.background = ACCENT1_FILL
     style.border = `1.5px solid ${ACCENT}`
-    style.boxShadow = `${ACTIVE_GLOW}, 4px 4px 5px 0px rgba(0,0,0,0.4)`
+    style.boxShadow = '4px 4px 5px 0px rgba(0,0,0,0.5)'
     style.color = '#FFFFFF'
   } else if (hover && onClick) {
     style.color = '#CFCFCF'

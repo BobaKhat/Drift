@@ -46,7 +46,9 @@ export default function ExploreByPanel() {
                   padding: '15px 15px 15px 30px',
                   height: 58,
                   borderRadius: 1000,
-                  border: active ? `1px solid ${ACCENT1}` : 'none',
+                  // Active-state design system (source of truth: Flow toggle ON knob) — orange ring +
+                  // dark tinted background + orange label/indicator fill.
+                  border: active ? `1.5px solid ${ACCENT1}` : 'none',
                   background: active ? 'rgba(20,20,22,0.2)' : CARD,
                   backdropFilter: active ? 'blur(4px)' : undefined,
                   filter: active ? undefined : 'drop-shadow(4px 4px 2.5px black)',
@@ -76,11 +78,15 @@ export default function ExploreByPanel() {
                 {active ? (
                   <div style={{
                     width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
-                    border: `1px solid ${ACCENT1}`,
+                    border: `1.5px solid ${ACCENT1}`,
                     background: 'rgba(20,20,22,0.2)',
                     boxShadow: '4px 4px 5px 0px black',
                     position: 'relative',
-                  }} />
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    {/* Orange fill dot — completes the active treatment (ring + fill). */}
+                    <div style={{ width: 12, height: 12, borderRadius: '50%', background: ACCENT1 }} />
+                  </div>
                 ) : (
                   <div style={{ width: 30, height: 30, flexShrink: 0, position: 'relative' }}>
                     <img
