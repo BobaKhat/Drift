@@ -10,7 +10,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, BuildContext, getTier, getNodeScale } from './TrackNode'
-import WireEdge, { FLOW_STROBE_NAME, flowStrobeActivePct, FLOW_OFF_START, FLOW_OFF_END } from './WireEdge'
+import WireEdge, { FLOW_STROBE_NAME, flowStrobeActivePct, STROBE_GRADIENT_ID, STROBE_GRADIENT_STOPS } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
@@ -1116,12 +1116,29 @@ function DriftMapInner({ tracks }) {
       {buildMode && (
         <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} />
       )}
-      {/* Strobe keyframes — the comet travels (offset 0.16 → −1.05) over one wire's slice of the
-          cycle, then holds off-path for the pause. Its travel-window % scales with chain length so
-          the whole chain sweeps in FLOW_SWEEP_S regardless of size (Decision Log #51). */}
-      {buildMode && flowMode && chain.length >= 2 && (
-        <style>{`@keyframes ${FLOW_STROBE_NAME}{0%{stroke-dashoffset:${FLOW_OFF_START}}${flowStrobeActivePct(chain.length - 1).toFixed(3)}%{stroke-dashoffset:${FLOW_OFF_END}}100%{stroke-dashoffset:${FLOW_OFF_END}}}`}</style>
-      )}
+      {/* Strobe: the radial-gradient pulse rides each wire's path (offset-distance 0→100%) over that
+          wire's slice of the cycle, fading in at the source and out at the target, then staying hidden
+          for the rest of the cycle (opacity 0). The travel-window % scales with chain length so the
+          whole chain sweeps in FLOW_SWEEP_S regardless of size (Decision Log #51). The shared gradient
+          (Figma strobeGradient) lives in a hidden defs so every wire references one id. */}
+      {buildMode && flowMode && chain.length >= 2 && (() => {
+        const A = flowStrobeActivePct(chain.length - 1)
+        const fin = (A * 0.18).toFixed(3), fout = (A * 0.82).toFixed(3), a = A.toFixed(3)
+        return (
+          <>
+            <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
+              <defs>
+                <radialGradient id={STROBE_GRADIENT_ID}>
+                  {STROBE_GRADIENT_STOPS.map((s) => (
+                    <stop key={s.offset} offset={s.offset} stopColor={s.color} />
+                  ))}
+                </radialGradient>
+              </defs>
+            </svg>
+            <style>{`@keyframes ${FLOW_STROBE_NAME}{0%{offset-distance:0%;opacity:0}${fin}%{opacity:1}${fout}%{opacity:1}${a}%{offset-distance:100%;opacity:0}100%{offset-distance:100%;opacity:0}}`}</style>
+          </>
+        )
+      })()}
       <AxisLayer preset={presetConfig} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
       <ToolBar rf={rf} presetName={presetConfig.label} activePreset={activePreset} />

@@ -17,9 +17,9 @@ const W = 140
 const H = 70
 const KNOB = 60 // square image box (the circle + its baked glow)
 // The PNG bakes a bottom-right drop shadow, which biases its opaque box downward and leaves the
-// visible disc riding ~5px high when the box is geometrically centered. Nudge the box down by that
-// much so the DISC (not the transparent box) is what's vertically centered in the pill.
-const KNOB_TOP = 10
+// visible disc slightly off-center when the box is geometrically centered. Nudge the box down a touch
+// so the DISC (not the transparent box) is what's vertically centered in the pill.
+const KNOB_TOP = 8
 const KNOB_LEFT_ON = 5              // left
 const KNOB_LEFT_OFF = W - KNOB - 5  // 75 — right
 
