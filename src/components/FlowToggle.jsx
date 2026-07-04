@@ -15,13 +15,19 @@ import knobOff from '../assets/flow-off.png'
 
 const W = 140
 const H = 70
-const KNOB = 60 // square image box (the circle + its baked glow)
-// The PNG bakes a bottom-right drop shadow, which biases its opaque box downward and leaves the
-// visible disc slightly off-center when the box is geometrically centered. Nudge the box down a touch
-// so the DISC (not the transparent box) is what's vertically centered in the pill.
-const KNOB_TOP = 8
-const KNOB_LEFT_ON = 5              // left
-const KNOB_LEFT_OFF = W - KNOB - 5  // 75 — right
+const EDGE = 8 // gap between the visible disc and the pill edge it rests against
+
+// The knob PNG (124px canvas) bakes a bottom-right drop shadow, so the solid disc isn't centered in
+// its own image — it measures at px [2,107] (center 54.5, Ø105), with the padding all bottom-right.
+// We render the image in a KNOB-sized box but position it by where the DISC lands, not the box, so the
+// visible disc is what's vertically centered and sits exactly EDGE px from the left/right pill edge.
+const KNOB = 60                     // rendered image-box size (contain-fit)
+const SCALE = KNOB / 124            // PNG canvas is 124px
+const DISC_INSET = 2 * SCALE        // disc's solid edge starts ~2px into the PNG (≈0.97)
+const DISC = 105 * SCALE            // rendered disc diameter (≈50.8)
+const KNOB_TOP = H / 2 - (DISC_INSET + DISC / 2)   // disc vertically centered (equal top/bottom gap)
+const KNOB_LEFT_ON = EDGE - DISC_INSET             // disc EDGE px from the left
+const KNOB_LEFT_OFF = W - EDGE - DISC_INSET - DISC  // disc EDGE px from the right
 
 export default function FlowToggle() {
   const { buildMode, chain, flowMode, toggleFlowMode } = usePlaylistStore()
