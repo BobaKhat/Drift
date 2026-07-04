@@ -1,21 +1,22 @@
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { C, FONT, INSET } from './import/tokens'
-import knobOn from '../assets/flow-knob-on.svg'
-import knobOff from '../assets/flow-knob-off.svg'
+import { SetCreationIcon } from './LeftNav'
+import { C, FONT, INSET, ACCENT1_FILL } from './import/tokens'
 
-// The Flow toggle (Decision Log #48–52, Figma OFF 913-2 / ON 913-9). Functional as of Slice 10: it
+// The Flow toggle (Decision Log #48–52, Figma OFF 913-2 / ON 748-2563). Functional as of Slice 10: it
 // flips the map between the build view (Flow OFF) and the present view (Flow ON — only the chain lit,
 // uniform dark wires with a traveling strobe). It appears in the toolbar area once the chain has a
 // head, and slides a knob inside a recessed track between the two states.
 //
-// Per the Figma frames the knob slides RIGHT (Off) → LEFT (Flow); both labels are gray, and the knob
-// itself carries the state color: OFF = dark knob + gray glyph, ON = dark knob + orange ring + orange
-// glyph. Knobs are the exact frame SVGs (viewBox 62 = a 52px knob + baked drop shadow), placed −1/−1
-// and drawn at 62px so the shadow spills past the 52px slot exactly as `inset[-1.92% -17.31%]` does.
+// The knob is a true CSS circle (equal width/height, border-radius 50%) so it can never render as an
+// oval. It slides RIGHT (Off) → LEFT (Flow); labels stay gray, and the state color lives in the knob:
+//   OFF: dark knob, gray glyph, sits recessed in the track.
+//   ON : translucent dark fill + a 1.5px orange accent ring + orange glyph + orange glow (Figma
+//        748-2563 "selected" treatment).
 
 const W = 140
 const H = 70
 const KNOB = 52
+const GLYPH = 26
 const TRACK_INSET = 8
 const KNOB_TOP = (H - KNOB) / 2 // 9 — vertically centered
 const KNOB_LEFT_ON = TRACK_INSET + 1                 // 9  — left, near the track's left edge
@@ -56,15 +57,22 @@ export default function FlowToggle() {
         {on ? 'Flow' : 'Off'}
       </span>
 
-      {/* Knob — the Figma asset, sliding right (Off) ↔ left (Flow). Slot is 52px; the asset draws at
-          62px offset −1/−1 so its baked drop shadow spills past the slot exactly as in the frame. */}
+      {/* Knob — a perfect CSS circle sliding right (Off) ↔ left (Flow). ON carries the orange ring +
+          glow; both keep a 1.5px border (transparent when off) via border-box so the size never jumps. */}
       <div style={{
         position: 'absolute', top: KNOB_TOP, left: on ? KNOB_LEFT_ON : KNOB_LEFT_OFF,
-        width: KNOB, height: KNOB, overflow: 'visible',
-        transition: 'left 260ms cubic-bezier(0.4,0,0.2,1)',
+        width: KNOB, height: KNOB, borderRadius: '50%', boxSizing: 'border-box',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: on ? ACCENT1_FILL : C.card,
+        border: `1.5px solid ${on ? C.accent1 : 'transparent'}`,
+        boxShadow: on
+          ? `0 0 12px 1px rgba(242,127,55,0.55), 4px 4px 5px 0px rgba(0,0,0,0.45)`
+          : `2px 2px 5px 0px rgba(0,0,0,0.6), inset 0 1px 1px rgba(255,255,255,0.04)`,
+        transition: 'left 260ms cubic-bezier(0.4,0,0.2,1), background 200ms ease, border-color 200ms ease, box-shadow 200ms ease',
       }}>
-        <img src={on ? knobOn : knobOff} alt="" draggable={false}
-          style={{ position: 'absolute', top: -1, left: -1, width: 62, height: 62, display: 'block', pointerEvents: 'none' }} />
+        <span style={{ width: GLYPH, height: GLYPH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <SetCreationIcon color={on ? C.accent1 : C.iconPrimary} />
+        </span>
       </div>
     </div>
   )

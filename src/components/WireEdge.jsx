@@ -28,7 +28,7 @@ export const WIRE_STRONG = WIRE_COLORS.strong
 export const DARK_WIRE = '#2A2A2A'
 export const FLOW_STROBE_COLOR = '#F27F37'
 export const FLOW_SWEEP_S = 2.5   // total head→tail sweep time, regardless of chain length
-export const FLOW_PAUSE_S = 10    // quiet gap between sweeps
+export const FLOW_PAUSE_S = 4     // quiet gap between sweeps
 export const FLOW_CYCLE_S = FLOW_SWEEP_S + FLOW_PAUSE_S
 export const FLOW_STROBE_NAME = 'driftFlowStrobe'
 // Percentage of the full cycle during which a single wire's comet is mid-travel — the keyframe's
