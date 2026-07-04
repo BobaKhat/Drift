@@ -1,23 +1,25 @@
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { C, FONT } from './import/tokens'
+import { C, FONT, INSET } from './import/tokens'
 import knobOn from '../assets/flow-knob-on.svg'
 import knobOff from '../assets/flow-knob-off.svg'
 
-// The Flow toggle (Decision Log #48–52, Figma OFF 748-2568 / ON 748-2563). Functional as of Slice 10:
-// it flips the map between the build view (Flow OFF) and the present view (Flow ON — only the chain
-// lit, uniform dark wires with a traveling strobe). It appears in the toolbar area once the chain has
-// a head, and slides the knob between the two states.
+// The Flow toggle (Decision Log #48–52, Figma OFF 913-2 / ON 913-9). Functional as of Slice 10: it
+// flips the map between the build view (Flow OFF) and the present view (Flow ON — only the chain lit,
+// uniform dark wires with a traveling strobe). It appears in the toolbar area once the chain has a
+// head, and slides a knob inside a recessed track between the two states.
 //
-// The knobs are the exact Figma frame assets: OFF = recessed dark circle + gray glyph; ON = dark
-// circle with an orange ring + orange glyph + raised drop shadow. The ON asset's viewBox is 70 (a
-// 60px knob + 10px shadow overflow), so it's placed 1px up/left and drawn at 70px with the shadow
-// spilling past the slot (overflow visible), matching the frame's `inset[-1.67% -15% -15%]` offset.
+// Per the Figma frames the knob slides RIGHT (Off) → LEFT (Flow); both labels are gray, and the knob
+// itself carries the state color: OFF = dark knob + gray glyph, ON = dark knob + orange ring + orange
+// glyph. Knobs are the exact frame SVGs (viewBox 62 = a 52px knob + baked drop shadow), placed −1/−1
+// and drawn at 62px so the shadow spills past the 52px slot exactly as `inset[-1.92% -17.31%]` does.
 
 const W = 140
 const H = 70
-const KNOB = 60
-const PAD = 5
-const KNOB_ON_LEFT = W - KNOB - PAD // 75
+const KNOB = 52
+const TRACK_INSET = 8
+const KNOB_TOP = (H - KNOB) / 2 // 9 — vertically centered
+const KNOB_LEFT_ON = TRACK_INSET + 1                 // 9  — left, near the track's left edge
+const KNOB_LEFT_OFF = W - TRACK_INSET - 1 - KNOB     // 79 — right, near the track's right edge
 
 export default function FlowToggle() {
   const { buildMode, chain, flowMode, toggleFlowMode } = usePlaylistStore()
@@ -33,37 +35,36 @@ export default function FlowToggle() {
       aria-checked={on}
       title={on ? 'Flow on' : 'Flow off'}
       style={{
-        position: 'relative', width: W, height: H, flexShrink: 0,
+        position: 'relative', width: W, height: H, flexShrink: 0, overflow: 'hidden',
         borderRadius: 100, background: C.card,
-        boxShadow: '4px 4px 2.5px 0px rgba(0,0,0,1), inset 1px 1.5px 3px 0px #373737',
+        boxShadow: '4px 4px 5px 0px #000000, inset 1px 1.5px 3px 0px #373737',
         cursor: 'pointer', userSelect: 'none',
       }}
     >
-      {/* Label — swaps side + text with the state (Figma: "Off" gray right / "Flow" accent left). */}
+      {/* Recessed track/well the knob rides in. */}
+      <div style={{
+        position: 'absolute', inset: TRACK_INSET, borderRadius: 100,
+        background: C.card, boxShadow: INSET,
+      }} />
+
+      {/* Label — gray in both states, opposite the knob ("Off" left / "Flow" right). */}
       <span style={{
         position: 'absolute', top: '50%', transform: 'translateY(-50%)',
-        ...(on ? { left: 22 } : { right: 22 }),
-        fontFamily: FONT, fontSize: 14, fontWeight: 600,
-        color: on ? C.accent1 : C.textSecondary,
-        transition: 'color 220ms ease',
+        ...(on ? { right: 26 } : { left: 26 }),
+        fontFamily: FONT, fontSize: 14, fontWeight: 600, color: C.textSecondary,
       }}>
         {on ? 'Flow' : 'Off'}
       </span>
 
-      {/* Knob — the Figma asset, sliding left↔right. Slot is 60px; the ON asset draws at 70px offset
-          −1/−1 so its drop shadow spills past the slot exactly as in the frame. */}
+      {/* Knob — the Figma asset, sliding right (Off) ↔ left (Flow). Slot is 52px; the asset draws at
+          62px offset −1/−1 so its baked drop shadow spills past the slot exactly as in the frame. */}
       <div style={{
-        position: 'absolute', top: PAD, left: on ? KNOB_ON_LEFT : PAD,
+        position: 'absolute', top: KNOB_TOP, left: on ? KNOB_LEFT_ON : KNOB_LEFT_OFF,
         width: KNOB, height: KNOB, overflow: 'visible',
         transition: 'left 260ms cubic-bezier(0.4,0,0.2,1)',
       }}>
-        {on ? (
-          <img src={knobOn} alt="" draggable={false}
-            style={{ position: 'absolute', top: -1, left: -1, width: 70, height: 70, display: 'block', pointerEvents: 'none' }} />
-        ) : (
-          <img src={knobOff} alt="" draggable={false}
-            style={{ position: 'absolute', inset: 0, width: KNOB, height: KNOB, display: 'block', pointerEvents: 'none' }} />
-        )}
+        <img src={on ? knobOn : knobOff} alt="" draggable={false}
+          style={{ position: 'absolute', top: -1, left: -1, width: 62, height: 62, display: 'block', pointerEvents: 'none' }} />
       </div>
     </div>
   )
