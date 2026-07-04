@@ -31,6 +31,14 @@ export const FLOW_SWEEP_S = 2.5   // total head→tail sweep time, regardless of
 export const FLOW_PAUSE_S = 4     // quiet gap between sweeps
 export const FLOW_CYCLE_S = FLOW_SWEEP_S + FLOW_PAUSE_S
 export const FLOW_STROBE_NAME = 'driftFlowStrobe'
+// The comet is a single short dash with a HUGE gap (one pulse per wire, never a repeat) that a soft
+// blur feathers into a light-through-cable glow. It travels from fully off the start (dash + its blur
+// entirely before pathLength 0) to fully off the end (entirely past pathLength 1), then parks off the
+// end during the pause — so no orange is ever left on the wire between pulses. The extra 0.25/0.15
+// margins past each end keep the blurred halo clear of [0,1] at rest.
+export const FLOW_DASH = '0.1 10'
+export const FLOW_OFF_START = 0.25   // dash parked just off the start (leading blur clears pathLength 0)
+export const FLOW_OFF_END = -1.15    // dash parked just off the end (trailing blur clears pathLength 1)
 // Percentage of the full cycle during which a single wire's comet is mid-travel — the keyframe's
 // travel window. Equals one wire's slice (sweep / n) as a fraction of the whole cycle.
 export const flowStrobeActivePct = (n) => (100 * (FLOW_SWEEP_S / Math.max(1, n))) / FLOW_CYCLE_S
@@ -91,17 +99,25 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
   // upstream wires so the pulse sweeps head→tail (Decision Log #51). The wire stays clickable.
   if (flowMode) {
     const delay = (data?.flowIndex ?? 0) * (FLOW_SWEEP_S / Math.max(1, data?.flowCount ?? 1))
+    // Both comet layers share the exact same dash + keyframe so they travel locked together; the wide,
+    // heavily blurred halo feathers the leading/trailing edges while the narrow, lightly blurred core
+    // stays the hot center — a light pulse gliding through the cable, not a hard bar.
+    const comet = {
+      animation: `${FLOW_STROBE_NAME} ${FLOW_CYCLE_S}s linear infinite`,
+      animationDelay: `${delay}s`,
+    }
     return (
       <>
         <path d={path} fill="none" stroke={DARK_WIRE} strokeWidth={2.5} strokeLinecap="round" />
         <path
-          d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={3} strokeLinecap="round"
-          pathLength={1} strokeDasharray="0.14 1"
-          style={{
-            filter: `drop-shadow(0 0 5px ${FLOW_STROBE_COLOR}) drop-shadow(0 0 2px ${FLOW_STROBE_COLOR})`,
-            animation: `${FLOW_STROBE_NAME} ${FLOW_CYCLE_S}s linear infinite`,
-            animationDelay: `${delay}s`,
-          }}
+          d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={7} strokeLinecap="round"
+          strokeOpacity={0.5} pathLength={1} strokeDasharray={FLOW_DASH}
+          style={{ ...comet, filter: 'blur(5px)' }}
+        />
+        <path
+          d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={3.5} strokeLinecap="round"
+          pathLength={1} strokeDasharray={FLOW_DASH}
+          style={{ ...comet, filter: 'blur(2px)' }}
         />
         <path
           d={path} fill="none" stroke="transparent" strokeWidth={20} strokeLinecap="round"

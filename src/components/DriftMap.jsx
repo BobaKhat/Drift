@@ -10,7 +10,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, BuildContext, getTier, getNodeScale } from './TrackNode'
-import WireEdge, { FLOW_STROBE_NAME, flowStrobeActivePct } from './WireEdge'
+import WireEdge, { FLOW_STROBE_NAME, flowStrobeActivePct, FLOW_OFF_START, FLOW_OFF_END } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
@@ -1120,7 +1120,7 @@ function DriftMapInner({ tracks }) {
           cycle, then holds off-path for the pause. Its travel-window % scales with chain length so
           the whole chain sweeps in FLOW_SWEEP_S regardless of size (Decision Log #51). */}
       {buildMode && flowMode && chain.length >= 2 && (
-        <style>{`@keyframes ${FLOW_STROBE_NAME}{0%{stroke-dashoffset:0.16}${flowStrobeActivePct(chain.length - 1).toFixed(3)}%{stroke-dashoffset:-1.05}100%{stroke-dashoffset:-1.05}}`}</style>
+        <style>{`@keyframes ${FLOW_STROBE_NAME}{0%{stroke-dashoffset:${FLOW_OFF_START}}${flowStrobeActivePct(chain.length - 1).toFixed(3)}%{stroke-dashoffset:${FLOW_OFF_END}}100%{stroke-dashoffset:${FLOW_OFF_END}}}`}</style>
       )}
       <AxisLayer preset={presetConfig} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />

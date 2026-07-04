@@ -50,7 +50,7 @@ export const HEAD_CIRCLE_BUMP = 1.14
 
 // Flow ON dim level for everything outside the connected chain (Slice 10) — near-invisible but not
 // gone, so the map keeps faint spatial context.
-const FLOW_DIM = 0.09
+const FLOW_DIM = 0.08 // Flow ON: non-chain songs (dimmed + orphans) drop to ~8% — a near-invisible ghost
 
 // Tier (circle/pill/card) depends only on zoom, so it is identical for every node. The map computes
 // it once and broadcasts it through this context, so a node re-renders only when the tier actually

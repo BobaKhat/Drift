@@ -16,7 +16,10 @@ import knobOff from '../assets/flow-off.png'
 const W = 140
 const H = 70
 const KNOB = 60 // square image box (the circle + its baked glow)
-const KNOB_TOP = (H - KNOB) / 2 // 5 — vertically centered
+// The PNG bakes a bottom-right drop shadow, which biases its opaque box downward and leaves the
+// visible disc riding ~5px high when the box is geometrically centered. Nudge the box down by that
+// much so the DISC (not the transparent box) is what's vertically centered in the pill.
+const KNOB_TOP = 10
 const KNOB_LEFT_ON = 5              // left
 const KNOB_LEFT_OFF = W - KNOB - 5  // 75 — right
 
