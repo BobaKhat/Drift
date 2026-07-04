@@ -1,19 +1,21 @@
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { SetCreationIcon } from './LeftNav'
-import { C, FONT, INSET } from './import/tokens'
+import { C, FONT } from './import/tokens'
+import knobOn from '../assets/flow-knob-on.svg'
+import knobOff from '../assets/flow-knob-off.svg'
 
 // The Flow toggle (Decision Log #48–52, Figma OFF 748-2568 / ON 748-2563). Functional as of Slice 10:
 // it flips the map between the build view (Flow OFF) and the present view (Flow ON — only the chain
 // lit, uniform dark wires with a traveling strobe). It appears in the toolbar area once the chain has
-// a head, and slides a round knob (the linked-nodes glyph, shared with the Set Builder rail icon)
-// between the two states.
-//   OFF: recessed gray knob on the LEFT, "Off" in Text/Secondary on the right.
-//   ON : orange knob on the RIGHT with an accent ring, "Flow" in accent on the left.
+// a head, and slides the knob between the two states.
+//
+// The knobs are the exact Figma frame assets: OFF = recessed dark circle + gray glyph; ON = dark
+// circle with an orange ring + orange glyph + raised drop shadow. The ON asset's viewBox is 70 (a
+// 60px knob + 10px shadow overflow), so it's placed 1px up/left and drawn at 70px with the shadow
+// spilling past the slot (overflow visible), matching the frame's `inset[-1.67% -15% -15%]` offset.
 
 const W = 140
 const H = 70
 const KNOB = 60
-const GLYPH = 26
 const PAD = 5
 const KNOB_ON_LEFT = W - KNOB - PAD // 75
 
@@ -37,7 +39,7 @@ export default function FlowToggle() {
         cursor: 'pointer', userSelect: 'none',
       }}
     >
-      {/* Label — swaps side + text with the state. */}
+      {/* Label — swaps side + text with the state (Figma: "Off" gray right / "Flow" accent left). */}
       <span style={{
         position: 'absolute', top: '50%', transform: 'translateY(-50%)',
         ...(on ? { left: 22 } : { right: 22 }),
@@ -48,21 +50,20 @@ export default function FlowToggle() {
         {on ? 'Flow' : 'Off'}
       </span>
 
-      {/* Knob — slides left↔right; recessed gray (OFF) vs orange with accent ring (ON). */}
+      {/* Knob — the Figma asset, sliding left↔right. Slot is 60px; the ON asset draws at 70px offset
+          −1/−1 so its drop shadow spills past the slot exactly as in the frame. */}
       <div style={{
         position: 'absolute', top: PAD, left: on ? KNOB_ON_LEFT : PAD,
-        width: KNOB, height: KNOB, borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: on ? C.accent1 : C.card,
-        boxShadow: on
-          ? `0 0 0 2px rgba(242,127,55,0.7), 0 0 18px 3px rgba(242,127,55,0.5), 4px 4px 5px 0px rgba(0,0,0,0.5)`
-          : INSET,
-        transition: 'left 260ms cubic-bezier(0.4,0,0.2,1), background 220ms ease, box-shadow 220ms ease',
+        width: KNOB, height: KNOB, overflow: 'visible',
+        transition: 'left 260ms cubic-bezier(0.4,0,0.2,1)',
       }}>
-        <span style={{ width: GLYPH, height: GLYPH, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {/* Gray glyph when OFF; dark glyph on the orange knob when ON. */}
-          <SetCreationIcon color={on ? '#141416' : C.iconPrimary} />
-        </span>
+        {on ? (
+          <img src={knobOn} alt="" draggable={false}
+            style={{ position: 'absolute', top: -1, left: -1, width: 70, height: 70, display: 'block', pointerEvents: 'none' }} />
+        ) : (
+          <img src={knobOff} alt="" draggable={false}
+            style={{ position: 'absolute', inset: 0, width: KNOB, height: KNOB, display: 'block', pointerEvents: 'none' }} />
+        )}
       </div>
     </div>
   )
