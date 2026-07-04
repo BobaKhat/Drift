@@ -3,6 +3,7 @@ import PlaylistPanel from './PlaylistPanel'
 import ExploreByPanel from './ExploreByPanel'
 import SetBuilderPanel from './SetBuilderPanel'
 import { usePlaylistStore } from '../store/usePlaylistStore'
+import { ACTIVE_GLOW, ACCENT1_FILL } from './import/tokens'
 import brandmark from '../assets/brandmark.png'
 import logo from '../assets/Logo.png'
 
@@ -44,7 +45,7 @@ const PROFILE_MEDIA = imageButton(logo, 204, 178, 90) // bottom — profile
 
 // Crate/record-box glyph. Default is grey; active turns Spotify-green with an inner shadow.
 function PlaylistsIcon({ active }) {
-  const bodyFill = active ? '#1ED760' : '#808080'
+  const bodyFill = active ? ACCENT : '#808080' // active = accent orange (unified with Flow toggle)
   const body = (
     <>
       <path
@@ -163,7 +164,7 @@ function ExploreIcon({ active }) {
       {active ? (
         <>
           <g filter="url(#filter0_i_748_2340)">
-            <path d={d} fill="#4B6AE5" />
+            <path d={d} fill="#F27F37" />
           </g>
           <defs>
             <filter
@@ -267,9 +268,10 @@ function RailButton({ label, Icon, isActive, onClick, media }) {
   style.background = CARD
   style.boxShadow = WELL_SHADOW
   if (isActive) {
-    style.background = 'rgba(20,20,22,0.2)'
-    style.border = `1px solid ${ACCENT}`
-    style.boxShadow = '4px 4px 5px 0px rgba(0,0,0,0.5)'
+    // Match the Flow toggle ON knob: accent ring + tinted fill + orange glow.
+    style.background = ACCENT1_FILL
+    style.border = `1.5px solid ${ACCENT}`
+    style.boxShadow = `${ACTIVE_GLOW}, 4px 4px 5px 0px rgba(0,0,0,0.4)`
     style.color = '#FFFFFF'
   } else if (hover && onClick) {
     style.color = '#CFCFCF'

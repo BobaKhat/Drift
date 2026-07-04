@@ -29,6 +29,11 @@ export const ORPHAN_INACTIVE = '#363636'
 // Tinted fill behind the orange-outlined primary buttons (from Figma).
 export const ACCENT1_FILL = 'rgba(20,20,22,0.2)'
 
+// Shared "active / selected" treatment — the orange bloom from the Flow toggle ON knob. Layered onto
+// a button's drop shadow so every active/selected control across the app reads the same: accent ring
+// + tinted fill (ACCENT1_FILL) + this glow + accent-colored icon/label.
+export const ACTIVE_GLOW = '0 0 12px 1px rgba(242,127,55,0.5)'
+
 export const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 
 // Effect styles (Figma): raised modules vs recessed wells.

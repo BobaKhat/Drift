@@ -1,6 +1,6 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { C, FONT, INSET, EXTRUSION, ACCENT1_FILL } from './import/tokens'
+import { C, FONT, INSET, EXTRUSION, ACCENT1_FILL, ACTIVE_GLOW } from './import/tokens'
 import { camelotColor } from '../lib/camelot'
 import { formatSetMeta } from '../lib/setChain'
 
@@ -439,7 +439,7 @@ export default function SetBuilderPanel() {
             placeholder="Find a Song on your Map"
             style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontFamily: FONT, fontSize: 14, fontWeight: 500, color: query ? '#fff' : C.textSecondary }}
           />
-          <div style={{ width: 38, height: 38, borderRadius: '50%', border: `1px solid ${ACCENT}`, background: 'rgba(20,20,22,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '4px 4px 5px 0px rgba(0,0,0,0.5)' }}>
+          <div style={{ width: 38, height: 38, borderRadius: '50%', border: `1.5px solid ${ACCENT}`, background: ACCENT1_FILL, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: `${ACTIVE_GLOW}, 4px 4px 5px 0px rgba(0,0,0,0.5)` }}>
             <MagnifierIcon color={ACCENT} />
           </div>
         </div>
@@ -575,8 +575,8 @@ export default function SetBuilderPanel() {
             marginTop: 16, flexShrink: 0, borderRadius: 100, boxSizing: 'border-box',
             padding: '15px 15px 15px 30px',
             background: accented ? ACCENT1_FILL : C.card,
-            border: `1px solid ${accented ? ACCENT : 'transparent'}`,
-            boxShadow: accented ? '4px 4px 5px 0px rgba(0,0,0,0.5)' : EXTRUSION,
+            border: `1.5px solid ${accented ? ACCENT : 'transparent'}`,
+            boxShadow: accented ? `${ACTIVE_GLOW}, 4px 4px 5px 0px rgba(0,0,0,0.5)` : EXTRUSION,
             color: accented ? '#fff' : C.textSecondary,
             fontFamily: FONT, fontSize: 16, fontWeight: 500, textAlign: 'center',
             cursor: canSave ? 'pointer' : 'default',

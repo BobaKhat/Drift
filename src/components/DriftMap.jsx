@@ -611,6 +611,9 @@ function SearchBar({ tracks, rf, onHighlight }) {
             height: 42,
             borderRadius: '50%',
             border: `1.5px solid ${ACCENT1}`,
+            // Active-control treatment (matches the Flow toggle ON knob): tinted fill + orange glow.
+            background: 'rgba(20,20,22,0.2)',
+            boxShadow: '0 0 12px 1px rgba(242,127,55,0.5)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
