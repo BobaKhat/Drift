@@ -29,6 +29,12 @@ const KNOB_TOP = H / 2 - (DISC_INSET + DISC / 2)   // disc vertically centered (
 const KNOB_LEFT_ON = EDGE - DISC_INSET             // disc EDGE px from the left
 const KNOB_LEFT_OFF = W - EDGE - DISC_INSET - DISC  // disc EDGE px from the right
 
+// Each label is centered in the empty half — between the knob's disc and the opposite pill edge.
+// OFF: knob on the right, so "Off" centers between the left edge (0) and the disc's left side.
+// ON:  knob on the left,  so "Flow" centers between the disc's right side and the right edge (W).
+const LABEL_OFF_X = (W - EDGE - DISC) / 2   // midpoint of [0, disc-left]
+const LABEL_FLOW_X = (EDGE + DISC + W) / 2  // midpoint of [disc-right, W]
+
 export default function FlowToggle() {
   const { buildMode, chain, flowMode, toggleFlowMode } = usePlaylistStore()
 
@@ -57,8 +63,8 @@ export default function FlowToggle() {
 
       {/* Labels — both mounted and cross-faded so "Off"/"Flow" dissolve into each other rather than
           snapping. Each stays pinned opposite the knob's resting side. */}
-      <span style={{ ...LABEL_BASE, left: 26, opacity: on ? 0 : 1, transition: FADE }}>Off</span>
-      <span style={{ ...LABEL_BASE, right: 26, color: C.accent1, opacity: on ? 1 : 0, transition: FADE }}>Flow</span>
+      <span style={{ ...LABEL_BASE, left: LABEL_OFF_X, opacity: on ? 0 : 1, transition: FADE }}>Off</span>
+      <span style={{ ...LABEL_BASE, left: LABEL_FLOW_X, color: C.accent1, opacity: on ? 1 : 0, transition: FADE }}>Flow</span>
 
       {/* Knob — one box that SLIDES right (Off) ↔ left (Flow) with a springy ease-out, holding both
           PNGs stacked so the OFF (gray) and ON (orange ring + orange glyph) knobs cross-fade during the
@@ -77,9 +83,9 @@ export default function FlowToggle() {
 
 const FADE = 'opacity 240ms ease'
 const LABEL_BASE = {
-  position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+  position: 'absolute', top: '50%', transform: 'translate(-50%, -50%)',
   fontFamily: FONT, fontSize: 14, fontWeight: 600, color: C.textSecondary,
-  pointerEvents: 'none',
+  whiteSpace: 'nowrap', pointerEvents: 'none',
 }
 const KNOB_IMG = {
   position: 'absolute', inset: 0, width: KNOB, height: KNOB,
