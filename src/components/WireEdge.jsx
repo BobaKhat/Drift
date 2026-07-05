@@ -27,8 +27,8 @@ export const WIRE_STRONG = WIRE_COLORS.strong
 // FLOW_CYCLE_S period so they stay in lockstep across loops.
 export const DARK_WIRE = '#2A2A2A'
 export const FLOW_STROBE_COLOR = '#F27F37'
-export const FLOW_SWEEP_S = 4.5   // total head→tail sweep time — slow, calm wave (regardless of length)
-export const FLOW_PAUSE_S = 2.5   // quiet gap between sweeps
+export const FLOW_SWEEP_S = 3     // total head→tail sweep time (regardless of chain length)
+export const FLOW_PAUSE_S = 1     // quiet gap between sweeps — short, so pulses repeat often
 export const FLOW_CYCLE_S = FLOW_SWEEP_S + FLOW_PAUSE_S
 export const FLOW_STROBE_NAME = 'driftFlowStrobe'
 // The pulse is a single soft dash that glides via ONE continuous CSS animation on stroke-dashoffset
