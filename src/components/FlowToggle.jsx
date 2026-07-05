@@ -58,7 +58,7 @@ export default function FlowToggle() {
       {/* Labels — both mounted and cross-faded so "Off"/"Flow" dissolve into each other rather than
           snapping. Each stays pinned opposite the knob's resting side. */}
       <span style={{ ...LABEL_BASE, left: 26, opacity: on ? 0 : 1, transition: FADE }}>Off</span>
-      <span style={{ ...LABEL_BASE, right: 26, opacity: on ? 1 : 0, transition: FADE }}>Flow</span>
+      <span style={{ ...LABEL_BASE, right: 26, color: C.accent1, opacity: on ? 1 : 0, transition: FADE }}>Flow</span>
 
       {/* Knob — one box that SLIDES right (Off) ↔ left (Flow) with a springy ease-out, holding both
           PNGs stacked so the OFF (gray) and ON (orange ring + orange glyph) knobs cross-fade during the
