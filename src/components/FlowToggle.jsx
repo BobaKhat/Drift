@@ -55,27 +55,33 @@ export default function FlowToggle() {
         background: C.card, boxShadow: INSET,
       }} />
 
-      {/* Label — gray in both states, opposite the knob ("Off" left / "Flow" right). */}
-      <span style={{
-        position: 'absolute', top: '50%', transform: 'translateY(-50%)',
-        ...(on ? { right: 26 } : { left: 26 }),
-        fontFamily: FONT, fontSize: 14, fontWeight: 600, color: C.textSecondary,
-      }}>
-        {on ? 'Flow' : 'Off'}
-      </span>
+      {/* Labels — both mounted and cross-faded so "Off"/"Flow" dissolve into each other rather than
+          snapping. Each stays pinned opposite the knob's resting side. */}
+      <span style={{ ...LABEL_BASE, left: 26, opacity: on ? 0 : 1, transition: FADE }}>Off</span>
+      <span style={{ ...LABEL_BASE, right: 26, opacity: on ? 1 : 0, transition: FADE }}>Flow</span>
 
-      {/* Knob PNG — sliding right (Off) ↔ left (Flow). Square box + contain keeps it a true circle. */}
-      <img
-        src={on ? knobOn : knobOff}
-        alt=""
-        draggable={false}
-        style={{
-          position: 'absolute', top: KNOB_TOP, left: on ? KNOB_LEFT_ON : KNOB_LEFT_OFF,
-          width: KNOB, height: KNOB, maxWidth: 'none', objectFit: 'contain',
-          display: 'block', pointerEvents: 'none',
-          transition: 'left 260ms cubic-bezier(0.4,0,0.2,1)',
-        }}
-      />
+      {/* Knob — one box that SLIDES right (Off) ↔ left (Flow) with a springy ease-out, holding both
+          PNGs stacked so the OFF (gray) and ON (orange ring + orange glyph) knobs cross-fade during the
+          slide — the ring/glyph colour transition rides the same fade. Square box + contain = true circle. */}
+      <div style={{
+        position: 'absolute', top: KNOB_TOP, left: on ? KNOB_LEFT_ON : KNOB_LEFT_OFF,
+        width: KNOB, height: KNOB, pointerEvents: 'none',
+        transition: 'left 320ms cubic-bezier(0.34,1.3,0.64,1)',
+      }}>
+        <img src={knobOff} alt="" draggable={false} style={{ ...KNOB_IMG, opacity: on ? 0 : 1, transition: FADE }} />
+        <img src={knobOn} alt="" draggable={false} style={{ ...KNOB_IMG, opacity: on ? 1 : 0, transition: FADE }} />
+      </div>
     </div>
   )
+}
+
+const FADE = 'opacity 240ms ease'
+const LABEL_BASE = {
+  position: 'absolute', top: '50%', transform: 'translateY(-50%)',
+  fontFamily: FONT, fontSize: 14, fontWeight: 600, color: C.textSecondary,
+  pointerEvents: 'none',
+}
+const KNOB_IMG = {
+  position: 'absolute', inset: 0, width: KNOB, height: KNOB,
+  maxWidth: 'none', objectFit: 'contain', display: 'block',
 }
