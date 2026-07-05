@@ -31,16 +31,16 @@ export const FLOW_SWEEP_S = 4.5   // total head→tail sweep time — slow, calm
 export const FLOW_PAUSE_S = 2.5   // quiet gap between sweeps
 export const FLOW_CYCLE_S = FLOW_SWEEP_S + FLOW_PAUSE_S
 export const FLOW_STROBE_NAME = 'driftFlowStrobe'
-// The pulse is a soft radial-gradient light (Figma strobeGradient: #F27F37 core → #363636 edge) that
-// glides along the wire via CSS offset-path, masked to the cable so it blends into the dark wire on
-// both ends. It fades in at the source and out at the target (opacity in the keyframe) and is fully
-// hidden between sweeps — so no orange is ever left on any wire at rest. animation-fill-mode:backwards
-// keeps it hidden during its stagger delay too (the wire waits its turn showing nothing).
-export const STROBE_GRADIENT_ID = 'driftStrobeGradient'
-export const STROBE_GRADIENT_STOPS = [
-  { offset: 0.403846, color: FLOW_STROBE_COLOR },
-  { offset: 0.673077, color: '#363636' },
-]
+// The pulse is a single soft dash that glides via ONE continuous CSS animation on stroke-dashoffset
+// (linear) — no offset-path, no per-frame SVG mask, no JS timers — so it stays perfectly smooth and
+// display-synced. Two blurred layers (a wide dim halo + a narrow bright core, same dash so they move
+// locked together) feather it into an orange-core → dark-edge glow that blends into the cable. The
+// dash has a huge gap (one pulse per wire, never a repeat) and parks fully off the path end during the
+// pause; animation-fill-mode:backwards keeps it off the path start during the stagger delay too — so
+// no orange is ever left on any wire at rest.
+export const FLOW_DASH = '0.2 12'
+export const FLOW_OFF_START = 0.35   // dash + blur parked off the path start
+export const FLOW_OFF_END = -1.35    // dash + blur parked off the path end (held through the pause)
 // Percentage of the full cycle during which a single wire's pulse is mid-travel — the keyframe's
 // travel window. Equals one wire's slice (sweep / n) as a fraction of the whole cycle.
 export const flowStrobeActivePct = (n) => (100 * (FLOW_SWEEP_S / Math.max(1, n))) / FLOW_CYCLE_S
@@ -96,39 +96,32 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
     )
   }
 
-  // Flow ON: a uniform dark cable with the traveling orange strobe on top. The comet is a short dash
-  // sliding along the normalized (pathLength=1) path; its animation-delay staggers it after the
-  // upstream wires so the pulse sweeps head→tail (Decision Log #51). The wire stays clickable.
+  // Flow ON: a uniform dark cable with the traveling orange strobe on top. The pulse is a dash sliding
+  // along the normalized (pathLength=1) path via one continuous linear stroke-dashoffset animation; its
+  // animation-delay staggers it after the upstream wires so it sweeps head→tail (Decision Log #51). The
+  // wire stays clickable.
   if (flowMode) {
     const delay = (data?.flowIndex ?? 0) * (FLOW_SWEEP_S / Math.max(1, data?.flowCount ?? 1))
-    // Length of this wire (bezier runs a bit longer than the straight chord) → the pulse's radius, so
-    // its bright core spans ~35% of the wire regardless of how long the wire is.
-    const sx = sourceX + so.x, sy = sourceY + so.y, tx = targetX + to.x, ty = targetY + to.y
-    const len = Math.hypot(tx - sx, ty - sy) * 1.15
-    const r = Math.max(24, len * 0.42)
-    const maskId = `driftFlowMask-${source}-${target}`
-    const pad = r + 12
-    const mx = Math.min(sx, tx) - pad, my = Math.min(sy, ty) - pad
-    const mw = Math.abs(tx - sx) + 2 * pad, mh = Math.abs(ty - sy) + 2 * pad
+    // Both blurred layers share the exact same dash + keyframe so they glide locked together: the wide
+    // dim halo feathers the leading/trailing edges, the narrow bright core is the hot centre.
+    const comet = {
+      animation: `${FLOW_STROBE_NAME} ${FLOW_CYCLE_S}s linear infinite`,
+      animationDelay: `${delay}s`,
+      animationFillMode: 'backwards',
+    }
     return (
       <>
         <path d={path} fill="none" stroke={DARK_WIRE} strokeWidth={2.5} strokeLinecap="round" />
-        {/* Confine the glow to the cable so the gradient's dark edge lands on the wire, not the map. */}
-        <mask id={maskId} maskUnits="userSpaceOnUse" x={mx} y={my} width={mw} height={mh}>
-          <path d={path} fill="none" stroke="#fff" strokeWidth={6} strokeLinecap="round" />
-        </mask>
-        <g mask={`url(#${maskId})`}>
-          <circle
-            r={r} cx={0} cy={0} fill={`url(#${STROBE_GRADIENT_ID})`}
-            style={{
-              offsetPath: `path("${path}")`,
-              offsetDistance: '0%',
-              animation: `${FLOW_STROBE_NAME} ${FLOW_CYCLE_S}s linear infinite`,
-              animationDelay: `${delay}s`,
-              animationFillMode: 'backwards',
-            }}
-          />
-        </g>
+        <path
+          d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={9} strokeLinecap="round"
+          strokeOpacity={0.4} pathLength={1} strokeDasharray={FLOW_DASH}
+          style={{ ...comet, filter: 'blur(6px)' }}
+        />
+        <path
+          d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={3.5} strokeLinecap="round"
+          pathLength={1} strokeDasharray={FLOW_DASH}
+          style={{ ...comet, filter: 'blur(2px)' }}
+        />
         <path
           d={path} fill="none" stroke="transparent" strokeWidth={20} strokeLinecap="round"
           style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
