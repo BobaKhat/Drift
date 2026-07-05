@@ -573,19 +573,16 @@ function SearchBar({ tracks, rf, onHighlight }) {
 
   return (
     <div ref={wrapperRef} style={{ position: 'absolute', left: 19, top: 19, width: 350, zIndex: 4 }}>
-      {/* Pill — gets the active-state treatment (orange ring + dark tinted fill) while focused. */}
+      {/* Pill */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '8px 10px 8px 22px',
-          boxSizing: 'border-box',
           background: CARD,
-          border: `1.5px solid ${focused ? ACCENT1 : 'transparent'}`,
           borderRadius: 100,
           boxShadow: barShadow,
-          transition: 'border-color 160ms ease',
         }}
       >
         <input
@@ -615,16 +612,17 @@ function SearchBar({ tracks, rf, onHighlight }) {
             width: 42,
             height: 42,
             borderRadius: '50%',
-            // Active-state design system (source of truth: Flow toggle ON knob). Default = gray icon,
-            // no ring. Focused = orange icon fill + orange ring + dark tinted background.
+            // Matches the Flow toggle ON knob when focused: orange ring + dark tinted fill + orange
+            // glyph + soft orange glow. Default = plain gray icon, no ring/glow.
             border: `1.5px solid ${focused ? ACCENT1 : 'transparent'}`,
             background: focused ? 'rgba(20,20,22,0.2)' : 'transparent',
+            boxShadow: focused ? '0 0 12px 1px rgba(242,127,55,0.5)' : 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
             cursor: 'pointer',
-            transition: 'border-color 160ms ease, background 160ms ease',
+            transition: 'border-color 160ms ease, background 160ms ease, box-shadow 160ms ease',
           }}
         >
           <MagnifierIcon color={focused ? ACCENT1 : '#808080'} />

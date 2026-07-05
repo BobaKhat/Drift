@@ -431,7 +431,7 @@ export default function SetBuilderPanel() {
 
       {/* Library-scoped search */}
       <div ref={searchRef} style={{ position: 'relative', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 5px 5px 22px', boxSizing: 'border-box', background: C.card, border: `1.5px solid ${searchFocused ? ACCENT : 'transparent'}`, borderRadius: 100, boxShadow: INSET, transition: 'border-color 160ms ease' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 5px 5px 22px', background: C.card, borderRadius: 100, boxShadow: INSET }}>
           <input
             value={query}
             onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
@@ -441,8 +441,8 @@ export default function SetBuilderPanel() {
             placeholder="Find a Song on your Map"
             style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontFamily: FONT, fontSize: 14, fontWeight: 500, color: query ? '#fff' : C.textSecondary }}
           />
-          {/* Active-state design system: default gray icon/no ring; focused = orange fill + ring + dark bg. */}
-          <div style={{ width: 38, height: 38, borderRadius: '50%', border: `1.5px solid ${searchFocused ? ACCENT : 'transparent'}`, background: searchFocused ? ACCENT1_FILL : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'border-color 160ms ease, background 160ms ease' }}>
+          {/* Matches the Flow toggle ON knob when focused: orange ring + dark fill + orange glyph + glow. */}
+          <div style={{ width: 38, height: 38, borderRadius: '50%', border: `1.5px solid ${searchFocused ? ACCENT : 'transparent'}`, background: searchFocused ? ACCENT1_FILL : 'transparent', boxShadow: searchFocused ? '0 0 12px 1px rgba(242,127,55,0.5)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'border-color 160ms ease, background 160ms ease, box-shadow 160ms ease' }}>
             <MagnifierIcon color={searchFocused ? ACCENT : '#808080'} />
           </div>
         </div>
