@@ -27,7 +27,7 @@ export const WIRE_STRONG = WIRE_COLORS.strong
 // FLOW_CYCLE_S period so they stay in lockstep across loops.
 export const DARK_WIRE = '#2A2A2A'
 export const FLOW_STROBE_COLOR = '#F27F37'
-export const FLOW_SWEEP_S = 3     // total head→tail sweep time (regardless of chain length)
+export const FLOW_SWEEP_S = 3.6   // total head→tail sweep time (regardless of chain length)
 export const FLOW_PAUSE_S = 1     // quiet gap between sweeps — short, so pulses repeat often
 export const FLOW_CYCLE_S = FLOW_SWEEP_S + FLOW_PAUSE_S
 export const FLOW_STROBE_NAME = 'driftFlowStrobe'
@@ -66,7 +66,7 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
   // Subscribe to zoom so the boundary offset tracks the live counter-scale (few chain edges, so the
   // per-frame recompute during zoom is cheap).
   const zoom = useStore((s) => s.transform[2])
-  const { onWireClick, flowMode } = useContext(BuildContext)
+  const { onWireClick, flowMode, flowTiming } = useContext(BuildContext)
   const scale = getNodeScale(zoom)
   const tier = getTier(zoom)
   const sNode = useInternalNode(source)
@@ -101,11 +101,16 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
   // animation-delay staggers it after the upstream wires so it sweeps head→tail (Decision Log #51). The
   // wire stays clickable.
   if (flowMode) {
-    const delay = (data?.flowIndex ?? 0) * (FLOW_SWEEP_S / Math.max(1, data?.flowCount ?? 1))
+    // Each wire gets a time slice PROPORTIONAL to its length (flowTiming, from DriftMap) so the pulse
+    // holds a constant speed across the whole chain instead of speeding up on long wires — a uniform,
+    // linear glide. Its own keyframe bakes that per-wire travel window; delay staggers it head→tail.
+    const i = data?.flowIndex ?? 0
+    const t = flowTiming?.[i]
+    const delay = t ? t.delay : i * (FLOW_SWEEP_S / Math.max(1, data?.flowCount ?? 1))
     // Both blurred layers share the exact same dash + keyframe so they glide locked together: the wide
     // dim halo feathers the leading/trailing edges, the narrow bright core is the hot centre.
     const comet = {
-      animation: `${FLOW_STROBE_NAME} ${FLOW_CYCLE_S}s linear infinite`,
+      animation: `${FLOW_STROBE_NAME}-${i} ${FLOW_CYCLE_S}s linear infinite`,
       animationDelay: `${delay}s`,
       animationFillMode: 'backwards',
     }

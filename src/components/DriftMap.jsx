@@ -10,7 +10,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, BuildContext, getTier, getNodeScale } from './TrackNode'
-import WireEdge, { FLOW_STROBE_NAME, flowStrobeActivePct, FLOW_OFF_START, FLOW_OFF_END } from './WireEdge'
+import WireEdge, { FLOW_STROBE_NAME, FLOW_OFF_START, FLOW_OFF_END, FLOW_SWEEP_S, FLOW_CYCLE_S } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
@@ -891,6 +891,27 @@ function DriftMapInner({ tracks }) {
   }, [buildMode, buildGraph, hoverGroup, tracksById, chain.length])
   const chainSet = useMemo(() => new Set(chain), [chain])
 
+  // Strobe timing per chain wire, PROPORTIONAL to each wire's on-map length, so the pulse keeps a
+  // constant speed across the whole chain (a uniform, linear glide) rather than the equal-time-per-wire
+  // scheme that sped up on long wires. delay = fraction of the chain before this wire × sweep time;
+  // activePct = this wire's share of the sweep, as a % of the full cycle. Recomputed on node moves.
+  const flowTiming = useMemo(() => {
+    if (!buildMode || !flowMode || chain.length < 2) return null
+    const posById = new Map(nodes.map((n) => [n.id, n.position]))
+    const lens = []
+    for (let i = 0; i < chain.length - 1; i++) {
+      const a = posById.get(chain[i]), b = posById.get(chain[i + 1])
+      lens.push(a && b ? Math.hypot(b.x - a.x, b.y - a.y) : 1)
+    }
+    const L = lens.reduce((s, l) => s + l, 0) || 1
+    let cum = 0
+    return lens.map((l) => {
+      const delay = (cum / L) * FLOW_SWEEP_S
+      cum += l
+      return { delay, activePct: ((l / L) * FLOW_SWEEP_S / FLOW_CYCLE_S) * 100 }
+    })
+  }, [buildMode, flowMode, chain, nodes])
+
   // Inject build-mode presentation into node data: socket dots for chain + orphan songs, the head
   // halo, the tail's grabbable outgoing socket, orphan treatment (dashed coral + dim, brighter when
   // its group is hovered), and 0.4 dimming for everything not in the set (Slice 9 #6). Runs only on
@@ -1050,7 +1071,7 @@ function DriftMapInner({ tracks }) {
   const startWireDrag = useCallback((sourceId, cardinal, event) => {
     dragRef.current?.start(sourceId, cardinal, event)
   }, [])
-  const buildCtx = useMemo(() => ({ buildMode, flowMode, startWireDrag, setHoverGroup, unplugSocket, onWireClick }), [buildMode, flowMode, startWireDrag, unplugSocket, onWireClick])
+  const buildCtx = useMemo(() => ({ buildMode, flowMode, flowTiming, startWireDrag, setHoverGroup, unplugSocket, onWireClick }), [buildMode, flowMode, flowTiming, startWireDrag, unplugSocket, onWireClick])
 
   return (
     <div
@@ -1112,12 +1133,12 @@ function DriftMapInner({ tracks }) {
       {buildMode && (
         <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} />
       )}
-      {/* Strobe keyframes — one continuous linear animation on stroke-dashoffset per wire. The dash
-          slides from off the path start (FLOW_OFF_START) to off the path end (FLOW_OFF_END) over that
-          wire's slice of the cycle, then holds off the end through the pause. The travel-window % scales
-          with chain length so the whole chain sweeps in FLOW_SWEEP_S regardless of size (Decision #51). */}
-      {buildMode && flowMode && chain.length >= 2 && (
-        <style>{`@keyframes ${FLOW_STROBE_NAME}{0%{stroke-dashoffset:${FLOW_OFF_START}}${flowStrobeActivePct(chain.length - 1).toFixed(3)}%{stroke-dashoffset:${FLOW_OFF_END}}100%{stroke-dashoffset:${FLOW_OFF_END}}}`}</style>
+      {/* Strobe keyframes — one continuous linear stroke-dashoffset animation PER wire. Each wire's
+          keyframe holds its own travel window (activePct, ∝ its length) so the dash crosses at a
+          constant speed chain-wide; it slides from off the path start (FLOW_OFF_START) to off the end
+          (FLOW_OFF_END), then holds off the end through the pause (Decision Log #51). */}
+      {buildMode && flowMode && flowTiming && (
+        <style>{flowTiming.map((w, i) => `@keyframes ${FLOW_STROBE_NAME}-${i}{0%{stroke-dashoffset:${FLOW_OFF_START}}${w.activePct.toFixed(3)}%{stroke-dashoffset:${FLOW_OFF_END}}100%{stroke-dashoffset:${FLOW_OFF_END}}}`).join('')}</style>
       )}
       <AxisLayer preset={presetConfig} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
