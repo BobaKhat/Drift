@@ -573,16 +573,19 @@ function SearchBar({ tracks, rf, onHighlight }) {
 
   return (
     <div ref={wrapperRef} style={{ position: 'absolute', left: 19, top: 19, width: 350, zIndex: 4 }}>
-      {/* Pill */}
+      {/* Pill — gets the active-state treatment (orange ring + dark tinted fill) while focused. */}
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '8px 10px 8px 22px',
+          boxSizing: 'border-box',
           background: CARD,
+          border: `1.5px solid ${focused ? ACCENT1 : 'transparent'}`,
           borderRadius: 100,
           boxShadow: barShadow,
+          transition: 'border-color 160ms ease',
         }}
       >
         <input

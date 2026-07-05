@@ -431,7 +431,7 @@ export default function SetBuilderPanel() {
 
       {/* Library-scoped search */}
       <div ref={searchRef} style={{ position: 'relative', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 5px 5px 22px', background: C.card, borderRadius: 100, boxShadow: INSET }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 5px 5px 22px', boxSizing: 'border-box', background: C.card, border: `1.5px solid ${searchFocused ? ACCENT : 'transparent'}`, borderRadius: 100, boxShadow: INSET, transition: 'border-color 160ms ease' }}>
           <input
             value={query}
             onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
