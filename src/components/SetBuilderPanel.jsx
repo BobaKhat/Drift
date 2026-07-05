@@ -238,7 +238,6 @@ export default function SetBuilderPanel() {
   } = usePlaylistStore()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
-  const [searchFocused, setSearchFocused] = useState(false)
   const [copied, setCopied] = useState(false)
   // The Disconnected section is ALWAYS present but starts COLLAPSED (r4 #4) — it never auto-expands
   // to steal panel space; the user clicks its header to reveal the orphan groups.
@@ -435,15 +434,14 @@ export default function SetBuilderPanel() {
           <input
             value={query}
             onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
-            onFocus={() => { setSearchFocused(true); if (query.length >= 2) setOpen(true) }}
-            onBlur={() => setSearchFocused(false)}
+            onFocus={() => { if (query.length >= 2) setOpen(true) }}
             onKeyDown={(e) => { if (e.key === 'Escape') { setOpen(false); setQuery('') } }}
             placeholder="Find a Song on your Map"
             style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontFamily: FONT, fontSize: 14, fontWeight: 500, color: query ? '#fff' : C.textSecondary }}
           />
-          {/* Matches the Flow toggle ON knob when focused: orange ring + dark fill + orange glyph + glow. */}
-          <div style={{ width: 38, height: 38, borderRadius: '50%', border: `1.5px solid ${searchFocused ? ACCENT : 'transparent'}`, background: searchFocused ? ACCENT1_FILL : 'transparent', boxShadow: searchFocused ? '0 0 12px 1px rgba(242,127,55,0.5)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'border-color 160ms ease, background 160ms ease, box-shadow 160ms ease' }}>
-            <MagnifierIcon color={searchFocused ? ACCENT : '#808080'} />
+          {/* Always shows the Flow toggle ON knob treatment: orange ring + dark fill + orange glyph. */}
+          <div style={{ width: 38, height: 38, borderRadius: '50%', border: `1.5px solid ${ACCENT}`, background: ACCENT1_FILL, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <MagnifierIcon color={ACCENT} />
           </div>
         </div>
         {showDropdown && (
