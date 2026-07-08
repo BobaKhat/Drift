@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { getAudioFeatures } from './soundnet'
-import { searchItunes } from './itunes'
+import { searchItunes, getAlbumArt } from './itunes'
 import { titlesMatch, titleSimilarity } from './match'
 
 // Parses "Artist – Title" or "Artist - Title" into { artist, title }
@@ -262,9 +262,13 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
     }
   }
 
+  // Album art resolution: the corroboration search's art (full-query iTunes hit) first, then a
+  // Spotify-provided cover, then a dedicated cleaned-query lookup (iTunes → Deezer fallback) for the
+  // over-stuffed queries that missed above, then any cached art. null → the music-note placeholder.
   const itunesArt = itunes?.albumArtUrl ?? null
-  const resolvedArt = itunesArt ?? spotifyArtUrl ?? cached?.album_art_url ?? null
-  console.log(`[drift] album_art_url resolution: iTunes="${itunesArt ?? 'null'}" Spotify="${spotifyArtUrl ?? 'null'}" → using="${resolvedArt ?? 'null'}"`)
+  let resolvedArt = itunesArt ?? spotifyArtUrl ?? null
+  if (!resolvedArt) resolvedArt = await getAlbumArt(artist, title)
+  resolvedArt = resolvedArt ?? cached?.album_art_url ?? null
 
   const track = {
     name: title,

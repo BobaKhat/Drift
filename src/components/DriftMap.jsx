@@ -9,7 +9,7 @@ import {
   useStoreApi,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, BuildContext, getTier, getNodeScale } from './TrackNode'
+import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, BuildContext, BloomContext, SongPreviewCard, getTier, getNodeScale } from './TrackNode'
 import WireEdge, { FLOW_STROBE_NAME, FLOW_OFF_START, FLOW_OFF_END, FLOW_SWEEP_S, FLOW_CYCLE_S } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { usePlaylistStore } from '../store/usePlaylistStore'
@@ -126,11 +126,15 @@ function toFlowPos(track, scaleX, scaleY, xFeature, yFeature) {
   }
 }
 
+// Per-node stagger for the population bloom (Slice 11.5): nodes bloom in a RANDOM order, each rank
+// getting rank × 15ms of delay, so songs pop in scattered rather than sweeping across the map.
+const BLOOM_STAGGER_MS = 15
+
 function buildNodes(tracks, presetConfig) {
   const { xFeature = 'mood', yFeature = 'energy' } = presetConfig ?? {}
   const scaleX = buildAxisScale(tracks.map((t) => getFeatureValue(t, xFeature)))
   const scaleY = buildAxisScale(tracks.map((t) => getFeatureValue(t, yFeature)))
-  return tracks.map((track, i) => {
+  const nodes = tracks.map((track, i) => {
     const pos = toFlowPos(track, scaleX, scaleY, xFeature, yFeature)
     return {
       id: track.id ?? `track-${i}`,
@@ -144,12 +148,21 @@ function buildNodes(tracks, presetConfig) {
         bpm: track.bpm ?? null,
         camelot: track.camelot ?? null,
         highlighted: false,
+        bloomDelay: 0,
       },
       draggable: false,
       selectable: false,
       connectable: false,
     }
   })
+  // Random stagger: shuffle the node order (Fisher–Yates), then delay = rank × 15ms.
+  const order = nodes.map((_, i) => i)
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[order[i], order[j]] = [order[j], order[i]]
+  }
+  order.forEach((nodeIdx, rank) => { nodes[nodeIdx].data.bloomDelay = rank * BLOOM_STAGGER_MS })
+  return nodes
 }
 
 const nodeTypes = { track: TrackNode }
@@ -817,7 +830,14 @@ function DriftMapInner({ tracks }) {
     [activePreset, customXFeature, customYFeature]
   )
 
-  const initialNodes = useMemo(() => buildNodes(tracks, presetConfig), [tracks, presetConfig])
+  // Population bloom (Slice 11.5): nodes are built from STAGED tracks, not the live prop, so a playlist
+  // switch can fade the old set out (200ms) before swapping. `bloom.gen` bumps per population to
+  // restart the stagger animation; `bloom.active` gates it to the bloom window only.
+  const [stagedTracks, setStagedTracks] = useState(tracks)
+  const [bloom, setBloom] = useState({ gen: 0, active: true })
+  const [previewNodeId, setPreviewNodeId] = useState(null) // hover-preview node (raised z-index)
+
+  const initialNodes = useMemo(() => buildNodes(stagedTracks, presetConfig), [stagedTracks, presetConfig])
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [minZoom, setMinZoom] = useState(0.01)
   const rf = useReactFlow()
@@ -826,6 +846,27 @@ function DriftMapInner({ tracks }) {
   const zoomTimer = useRef(null)
   const highlightTimer = useRef(null)
   const dragRef = useRef(null) // WireDragLayer imperative handle
+
+  // Playlist switch → the old nodes vanish instantly and the new set blooms in with the random
+  // stagger: we just stage the new tracks and bump the generation. The new nodes replace the old in
+  // one commit and start invisible (their bloom's `backwards` fill holds scale0/opacity0 until each
+  // one's delay), so the old set disappears with no fade. Initial mount is skipped (prevTracksRef
+  // starts as the initial prop) — the first paint blooms straight in via the mount animation.
+  const prevTracksRef = useRef(tracks)
+  useEffect(() => {
+    if (prevTracksRef.current === tracks) return
+    prevTracksRef.current = tracks
+    setStagedTracks(tracks)
+    setBloom((b) => ({ gen: b.gen + 1, active: true }))
+  }, [tracks])
+
+  // Close the bloom window once the last node's stagger + its 400ms animation have elapsed, so nodes
+  // that mount afterwards (culling remounts while panning) appear instantly instead of re-blooming.
+  useEffect(() => {
+    const windowMs = Math.max(0, stagedTracks.length - 1) * BLOOM_STAGGER_MS + 600 + 100
+    const t = setTimeout(() => setBloom((b) => (b.active ? { ...b, active: false } : b)), windowMs)
+    return () => clearTimeout(t)
+  }, [bloom.gen, stagedTracks.length])
 
   // Build graph: derive the wires + per-node socket assignments from the ordered chain, the orphan
   // groups, and the songs' canvas positions (taken from initialNodes so this never depends on the
@@ -928,8 +969,10 @@ function DriftMapInner({ tracks }) {
       const orphanBright = isOrphan && groupId === hoverGroup
       // Stacking order (Slice 9 r2 #3): in build mode, chain songs sit above non-chain ones so
       // their sockets are always grabbable when songs overlap — and the tail (whose open outgoing
-      // socket you drag from) sits highest of all. Orphans just above the dimmed field.
-      const zIndex = !buildMode ? 0 : isTail ? 40 : inChain ? 30 : isOrphan ? 10 : 0
+      // socket you drag from) sits highest of all. Orphans just above the dimmed field. A hover-
+      // preview node (Slice 11.5) trumps everything so its scaled-up card renders above its neighbours.
+      const baseZ = !buildMode ? 0 : isTail ? 40 : inChain ? 30 : isOrphan ? 10 : 0
+      const zIndex = n.id === previewNodeId ? 1000 : baseZ
       const d = n.data
       if (
         d.sockets === sockets && d.isHead === isHead && d.dimmed === dimmed && d.isTail === isTail &&
@@ -940,17 +983,56 @@ function DriftMapInner({ tracks }) {
       }
       return { ...n, zIndex, data: { ...d, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId: groupId } }
     }))
-  }, [buildMode, buildGraph, chainSet, hoverGroup, setNodes])
+  }, [buildMode, buildGraph, chainSet, hoverGroup, previewNodeId, setNodes])
+
+  // Compatibility glow (Slice 11.5): in build mode with an active chain and Flow OFF, EVERY non-chain,
+  // non-orphan song is scored against the chain TAIL as a candidate next song and gets a colored glow
+  // ring by tier — strong = green, mild = amber; weak or no data gets no ring and stays at the 0.4 dim
+  // floor. Missing-key songs still tier off BPM alone (scoreCompatibility handles that). No distance /
+  // radius: the whole map lights up by mixability, so a compatible song reads even far from the tail
+  // (the radius approach hid distant matches and vanished on small circle-tier nodes at zoom-out).
+  // `data.glow` carries the tier ('strong' | 'mild' | undefined); TrackNode maps it to ring + opacity.
+  // Disabled under Flow ON (non-chain hidden anyway), with no chain (no tail), or outside build mode —
+  // in all those cases glow clears to undefined. Mirrors the dimming effect's lifecycle above.
+  useEffect(() => {
+    const tailId = buildGraph.tailId
+    const tailTrack = tailId ? tracksById[tailId] : null
+    const enabled = buildMode && !flowMode && !!tailTrack
+    setNodes((prev) => prev.map((n) => {
+      let glow // undefined = no ring, stays at the 0.4 floor
+      if (enabled && !chainSet.has(n.id) && buildGraph.groupByNode[n.id] == null) {
+        const { tier } = scoreCompatibility(tailTrack, tracksById[n.id])
+        if (tier === 'strong' || tier === 'mild') glow = tier
+      }
+      return n.data.glow === glow ? n : { ...n, data: { ...n.data, glow } }
+    }))
+  }, [buildMode, flowMode, buildGraph, tracksById, chainSet, setNodes])
   // Tier is global (depends only on zoom) — held once here and broadcast via context so nodes
   // re-render only on a threshold crossing, not on every zoom frame.
   const [tier, setTier] = useState('circle')
   const tierRef = useRef('circle')
 
-  // Rebuild and re-fit whenever tracks or preset changes.
+  // Rebuild on a staged-tracks or preset change. A TRACK change re-fits (new library → the bloom +
+  // fitView run). A PRESET-only change instead SLIDES the songs to their new positions (Slice 11.5,
+  // Feature 3): add the reposition class for 500ms so React Flow's per-node translate transitions, and
+  // DON'T re-fit — keeping the viewport still is what makes the slide visible instead of a jump-cut.
+  const prevBuildRef = useRef({ tracks: stagedTracks, preset: presetConfig })
+  const repositionTimer = useRef(null)
   useEffect(() => {
-    setNodes(buildNodes(tracks, presetConfig))
-    hasFit.current = false
-  }, [tracks, presetConfig, setNodes])
+    const prev = prevBuildRef.current
+    const tracksChanged = prev.tracks !== stagedTracks
+    const presetChanged = prev.preset !== presetConfig
+    prevBuildRef.current = { tracks: stagedTracks, preset: presetConfig }
+    setNodes(buildNodes(stagedTracks, presetConfig))
+    if (tracksChanged) {
+      hasFit.current = false
+    } else if (presetChanged) {
+      const el = wrapperRef.current
+      el?.classList.add('drift-repositioning')
+      clearTimeout(repositionTimer.current)
+      repositionTimer.current = setTimeout(() => el?.classList.remove('drift-repositioning'), 520)
+    }
+  }, [stagedTracks, presetConfig, setNodes])
 
   const handleWheel = useCallback((e) => {
     // ctrlKey is true for pinch-to-zoom and ctrl+scroll — the zoom gesture
@@ -1071,7 +1153,53 @@ function DriftMapInner({ tracks }) {
   const startWireDrag = useCallback((sourceId, cardinal, event) => {
     dragRef.current?.start(sourceId, cardinal, event)
   }, [])
-  const buildCtx = useMemo(() => ({ buildMode, flowMode, flowTiming, startWireDrag, setHoverGroup, unplugSocket, onWireClick }), [buildMode, flowMode, flowTiming, startWireDrag, unplugSocket, onWireClick])
+
+  // Album-art ambient glow (Slice 11.5): each TrackNode extracts its art's dominant color on image
+  // load and reports it here, where it's cached on that node's data (data.artColor) so the halo
+  // survives re-renders and only extracts once. Idempotent — a repeat report for the same color is a
+  // no-op (returns the same node reference, so no re-render).
+  const setArtColor = useCallback((trackId, color) => {
+    setNodes((prev) => prev.map((n) => (
+      n.id === trackId && n.data.artColor !== color
+        ? { ...n, data: { ...n.data, artColor: color } }
+        : n
+    )))
+  }, [setNodes])
+
+  // Hover preview (Slice 11.5): TWO elements. The hovered circle scales up 2× in place (local to
+  // TrackNode) AND a detail card floats above it, rendered here (SongPreviewCard, absolute in the map
+  // container — not a React Flow node). `preview` holds the wrapper-relative anchor; `previewOn` drives
+  // the fade (in 150 / out 100) before unmount; `previewNodeId` raises the circle's RF z-index above
+  // its neighbours (see the build-presentation effect). showPreview returns false during a wire drag
+  // (the wrapper has the .wiring class then), vetoing the whole preview. Single id ⇒ one at a time.
+  const [preview, setPreview] = useState(null) // { data, left, top, below } | null
+  const [previewOn, setPreviewOn] = useState(false)
+  const previewHideTimer = useRef(null)
+
+  const showPreview = useCallback((id, data, rect) => {
+    const el = wrapperRef.current
+    if (!el || el.classList.contains('wiring')) return false
+    const c = el.getBoundingClientRect()
+    const centerX = rect.left + rect.width / 2 - c.left
+    // The circle grows 2× from its centre, so anchor the card off the GROWN top/bottom (± half height).
+    const grownTop = rect.top - rect.height / 2 - c.top
+    const grownBottom = rect.bottom + rect.height / 2 - c.top
+    const below = grownTop < 100 // not enough room above → drop the card below
+    clearTimeout(previewHideTimer.current)
+    setPreview({ data, left: centerX, top: below ? grownBottom : grownTop, below })
+    setPreviewNodeId(id)
+    requestAnimationFrame(() => setPreviewOn(true))
+    return true
+  }, [])
+
+  const hidePreview = useCallback((id) => {
+    setPreviewOn(false)
+    setPreviewNodeId((cur) => (cur === id ? null : cur))
+    clearTimeout(previewHideTimer.current)
+    previewHideTimer.current = setTimeout(() => setPreview(null), 120) // unmount after the 100ms fade-out
+  }, [])
+
+  const buildCtx = useMemo(() => ({ buildMode, flowMode, flowTiming, startWireDrag, setHoverGroup, unplugSocket, onWireClick, setArtColor, showPreview, hidePreview }), [buildMode, flowMode, flowTiming, startWireDrag, unplugSocket, onWireClick, setArtColor, showPreview, hidePreview])
 
   return (
     <div
@@ -1097,6 +1225,7 @@ function DriftMapInner({ tracks }) {
           this re-renders nodes rarely; between crossings they hold steady while the --node-scale
           CSS var (set on this wrapper) rescales them with no React work. */}
       <ZoomTierContext.Provider value={tier}>
+        <BloomContext.Provider value={bloom}>
         <BuildContext.Provider value={buildCtx}>
           <ReactFlow
             nodes={nodes}
@@ -1128,6 +1257,7 @@ function DriftMapInner({ tracks }) {
             proOptions={{ hideAttribution: true }}
           />
         </BuildContext.Provider>
+        </BloomContext.Provider>
       </ZoomTierContext.Provider>
       {/* Wire-drag overlay — only mounted in build mode; draws the dashed drag wire + feedback. */}
       {buildMode && (
@@ -1146,6 +1276,24 @@ function DriftMapInner({ tracks }) {
       {/* Compatibility card — fixed bottom-right, shown while a wire is selected (Decision Log #31). */}
       {selectedTracks && (
         <CompatibilityCard sourceTrack={selectedTracks.s} targetTrack={selectedTracks.t} />
+      )}
+      {/* Hover preview (Slice 11.5): the detail card floats above (or below, near the top edge) the
+          hovered circle — a separate, non-interactive layer in the map container. Fades in 150 / out 100. */}
+      {preview && (
+        <div
+          style={{
+            position: 'absolute',
+            left: preview.left,
+            top: preview.top,
+            transform: preview.below ? 'translate(-50%, 10px)' : 'translate(-50%, calc(-100% - 10px))',
+            opacity: previewOn ? 1 : 0,
+            transition: `opacity ${previewOn ? 150 : 100}ms ease`,
+            pointerEvents: 'none',
+            zIndex: 5,
+          }}
+        >
+          <SongPreviewCard data={preview.data} />
+        </div>
       )}
     </div>
   )

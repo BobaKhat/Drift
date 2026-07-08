@@ -1,8 +1,50 @@
 import { memo, useRef, useState, useCallback, useEffect, useContext, createContext, Fragment } from 'react'
 import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react'
+import ColorThief from 'colorthief'
 import { nearestCardinal } from '../lib/setChain'
 import { camelotColor } from '../lib/camelot'
 import { ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
+
+// Album-art ambient glow (Slice 11.5): one shared ColorThief extractor + a URL→color cache so each
+// unique cover is sampled only once across the whole map (and the color survives node data being
+// rebuilt on a preset change, via the cache read in TrackNode). ColorThief's median-cut quantization
+// surfaces an actual palette of distinct colors, which is far better than an average at finding the
+// accent color on dark EDM artwork. The fallback — accent orange at 30% — covers missing art, any
+// extraction failure, and genuinely monochrome covers where no swatch is vivid enough.
+const colorThief = new ColorThief()
+const artColorCache = new Map()
+const ART_FALLBACK = 'rgba(242,127,55,0.3)' // #F27F37 @ 30%
+
+// RGB → HSL (h in 0–360, s/l in 0–100). Used to score palette swatches by saturation + lightness.
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255
+  const max = Math.max(r, g, b), min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  if (max === min) return [0, 0, l * 100] // achromatic
+  const d = max - min
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  let h
+  if (max === r) h = (g - b) / d + (g < b ? 6 : 0)
+  else if (max === g) h = (b - r) / d + 2
+  else h = (r - g) / d + 4
+  return [(h / 6) * 360, s * 100, l * 100]
+}
+
+// Pick the accent color from a ColorThief palette: keep swatches with lightness in 25–75% (drops the
+// near-black background and near-white blowouts), then take the most saturated — that's the vivid
+// accent, no boosting needed. Returns { color, scored, best } for the caller (color null ⇒ no swatch
+// qualified ⇒ use the orange fallback). `scored` carries per-swatch HSL for the diagnostic logging.
+function pickAccentColor(palette) {
+  const scored = (palette || []).map(([r, g, b]) => {
+    const [h, s, l] = rgbToHsl(r, g, b)
+    return { r, g, b, h, s, l, usable: l >= 25 && l <= 75 }
+  })
+  const usable = scored.filter((c) => c.usable)
+  const best = usable.length ? usable.reduce((a, b) => (b.s > a.s ? b : a)) : null
+  return { color: best ? `rgb(${best.r}, ${best.g}, ${best.b})` : null, scored, best }
+}
+
+let artDebugCount = 0 // logs the palette + selection for the first 5 songs only
 
 // Tune these thresholds — spec says we'll adjust after seeing it
 export const ZOOM_PILL = 0.55   // circle → pill (earlier so pills appear sooner)
@@ -60,6 +102,11 @@ export const ZoomTierContext = createContext('circle')
 // Build-mode context: whether the set builder is active, plus the callback a tail node's outgoing
 // socket calls to begin a wire drag. Global (not per-node) so it lives in context, not node data.
 export const BuildContext = createContext({ buildMode: false, startWireDrag: null })
+
+// Node population bloom (Slice 11.5): `gen` bumps on each population (initial load / playlist switch)
+// so nodes flip animation-name and re-bloom; `active` is true only during the bloom window, so nodes
+// that mount later (culling remount on pan) appear instantly instead of blooming again.
+export const BloomContext = createContext({ gen: 0, active: false })
 
 export function getTier(zoom) {
   if (zoom >= ZOOM_CARD) return 'card'
@@ -159,6 +206,59 @@ function Socket({ cardinal, role, extraClass, onGrab }) {
   )
 }
 
+// Music-note placeholder glyph, shown in place of album art when a track has no cover (iTunes AND
+// Deezer both missed). #848484 on a #222224 tile — same footprint as the album art it replaces.
+function MusicNoteIcon({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{ display: 'block' }}>
+      <path d="M9 17V5l11-2v12" stroke="#848484" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="6" cy="17" r="3" fill="#848484" />
+      <circle cx="17" cy="15" r="3" fill="#848484" />
+    </svg>
+  )
+}
+
+// Floating hover-preview card (Slice 11.5): rendered by the map in an absolute layer ABOVE the hovered
+// circle — NOT a React Flow node, so it never affects layout/culling. Its chrome is IDENTICAL to a
+// card-tier TrackNode (same bg / border / album-art glow + inset shadow / dimensions / art size / text)
+// so the preview reads as the very same card the node becomes when zoomed in. Fully non-interactive.
+// The container styles below MUST stay in sync with the card-tier branch of TrackNode's root style.
+export function SongPreviewCard({ data }) {
+  const { albumArtUrl, name, artist, bpm, camelot, artColor } = data
+  const artColorResolved = artColor ?? (albumArtUrl ? artColorCache.get(albumArtUrl) : null) ?? ART_FALLBACK
+  // No crossOrigin here (this card never reads pixels — the glow color comes from the cache), so even
+  // non-CORS art displays; a genuinely dead url falls back to the placeholder instead of a broken icon.
+  const [artFailed, setArtFailed] = useState(false)
+  return (
+    <div style={{
+      width: CARD_W, minHeight: 62, boxSizing: 'border-box',
+      display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10,
+      padding: '10px 15px', borderRadius: 8,
+      background: 'rgba(18,18,18,0.90)',                       // ← identical to card-tier node
+      border: '1px solid rgba(255,255,255,0.12)',             // ← identical to card-tier node border
+      boxShadow: `0px 0px 7px 0px ${artColorResolved}, inset 0px 0px 5px 0px #373737`, // ← the node's artGlow
+      pointerEvents: 'none',
+    }}>
+      {albumArtUrl && !artFailed ? (
+        <img src={albumArtUrl} alt="" draggable={false} onError={() => setArtFailed(true)}
+          style={{ width: CARD_ART, height: CARD_ART, borderRadius: 5, objectFit: 'cover', flexShrink: 0, display: 'block' }} />
+      ) : (
+        <div style={{ width: CARD_ART, height: CARD_ART, borderRadius: 5, background: '#222224', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <MusicNoteIcon size={Math.round(CARD_ART * 0.5)} />
+        </div>
+      )}
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={nameStyle}>{name}</div>
+        <div style={subStyle}>{artist}</div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, flexShrink: 0 }}>
+        <div style={{ ...nameStyle, overflow: 'visible' }}>{bpm != null ? `${Math.round(bpm)} BPM` : '—'}</div>
+        <div style={{ ...subStyle, overflow: 'visible', color: camelot ? camelotColor(camelot) : subStyle.color }}>{camelot ?? '—'}</div>
+      </div>
+    </div>
+  )
+}
+
 // Anchor glyph shown on the head song's card (Decision Log #42, card zoom).
 function AnchorIcon() {
   return (
@@ -171,9 +271,10 @@ function AnchorIcon() {
 }
 
 function TrackNode({ id, data }) {
-  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId } = data
+  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId, glow, artColor, bloomDelay } = data
   const tier = useContext(ZoomTierContext)
-  const { buildMode, flowMode, startWireDrag, setHoverGroup, unplugSocket } = useContext(BuildContext)
+  const { buildMode, flowMode, startWireDrag, setHoverGroup, unplugSocket, setArtColor, showPreview, hidePreview } = useContext(BuildContext)
+  const { gen: bloomGen, active: bloomActive } = useContext(BloomContext)
   const isCircle = tier === 'circle'
   const isPill = tier === 'pill'
   const isCard = tier === 'card'
@@ -209,6 +310,109 @@ function TrackNode({ id, data }) {
   const onOrphanEnter = useCallback(() => setHoverGroup?.(orphanGroupId), [setHoverGroup, orphanGroupId])
   const onOrphanLeave = useCallback(() => setHoverGroup?.(null), [setHoverGroup])
 
+  // Hover preview (Slice 11.5): on CIRCLE tier only, a 200ms dwell scales THIS node up 2× in place (it
+  // stays a circle) — pills and cards already show enough and get no hover. `hovered` drives the
+  // 2× scale + z-index; `scaleTrans` carries the directional transition (200ms ease-out up / 150ms
+  // ease-in down) and is cleared after the down settles so zoom stays instant otherwise. showPreview
+  // floats the detail card + raises this node's z-index and returns false during a wire drag (vetoing
+  // the preview); hidePreview dismisses both. One-at-a-time is enforced by the map.
+  const [hovered, setHovered] = useState(false)
+  const [scaleTrans, setScaleTrans] = useState(null) // 'up' | 'down' | null
+  const hoverTimer = useRef(null)
+  const scaleTransTimer = useRef(null)
+  const previewEligible = isCircle && !!showPreview // circle tier ONLY — pills/cards already show enough
+  const onNodeEnter = useCallback((e) => {
+    if (isOrphan) onOrphanEnter()
+    if (!previewEligible) return
+    const el = e.currentTarget // capture the element; re-measure at fire time (position may have panned)
+    clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => {
+      // showPreview floats the detail card + returns false during a wire drag → preview vetoed.
+      if (el.isConnected && showPreview(id, data, el.getBoundingClientRect())) {
+        clearTimeout(scaleTransTimer.current)
+        setScaleTrans('up')
+        setHovered(true)
+      }
+    }, 200)
+  }, [isOrphan, onOrphanEnter, previewEligible, showPreview, id, data])
+  const onNodeLeave = useCallback(() => {
+    if (isOrphan) onOrphanLeave()
+    clearTimeout(hoverTimer.current) // cancel a still-pending dwell
+    if (hovered) {
+      hidePreview?.(id)
+      setScaleTrans('down')
+      clearTimeout(scaleTransTimer.current)
+      scaleTransTimer.current = setTimeout(() => setScaleTrans(null), 160)
+    }
+    setHovered(false)
+  }, [isOrphan, onOrphanLeave, hidePreview, id, hovered])
+  useEffect(() => () => { clearTimeout(hoverTimer.current); clearTimeout(scaleTransTimer.current) }, [])
+
+  // A hovered circle/pill node STAYS its own tier (a circle stays a circle) and just scales up 2×; the
+  // details live in a SEPARATE floating card the map renders. So the effective render tier == the real
+  // tier — no morph. previewActive only drives the 2× scale + z-index below.
+  const previewActive = hovered && isCircle
+  const effCard = isCard
+  const effPill = isPill
+  const effCircle = isCircle
+
+  // Album-art color extraction (Slice 11.5): on the cover's load, quantize its palette once and pick
+  // the accent color (most-saturated swatch with lightness in 25–75%), then report it up to the map to
+  // cache on node data. A URL cache short-circuits repeats (remounts from culling, other songs sharing
+  // a cover). No usable swatch (monochrome cover), a CORS-tainted read, or a decode error all fall back
+  // to accent orange. The <img> carries crossOrigin="anonymous" so the canvas read isn't tainted; a
+  // hard load failure lands in onArtError instead.
+  const onArtLoad = useCallback((e) => {
+    if (!albumArtUrl) return
+    const cached = artColorCache.get(albumArtUrl)
+    if (cached) { setArtColor?.(id, cached); return }
+    let color = ART_FALLBACK
+    try {
+      const palette = colorThief.getPalette(e.currentTarget, 5)
+      const { color: accent, scored, best } = pickAccentColor(palette)
+      if (accent) {
+        color = accent
+      } else {
+        console.log(`[artColor] fallback used: ${name} ${albumArtUrl} ${scored.length ? 'no swatch in L∈[25,75]' : 'empty-palette'}`)
+      }
+
+      // —— DIAGNOSTIC: full palette + which swatch was selected and why, for the first 5 songs ————————
+      if (artDebugCount < 5) {
+        artDebugCount++
+        console.log(`[artColor] ${name}: palette(${scored.length}) ${scored.map((c) => `rgb(${c.r},${c.g},${c.b})`).join(' ')}`)
+        scored.forEach((c) => console.log(
+          `[artColor]   rgb(${c.r},${c.g},${c.b}) H:${c.h.toFixed(0)}° S:${c.s.toFixed(0)}% L:${c.l.toFixed(0)}%` +
+          `${c.usable ? '' : ' [filtered: L out of 25–75]'}${best === c ? ' ← SELECTED (max saturation)' : ''}`
+        ))
+        console.log(`[artColor] ${name}: → ${accent ? `selected ${color}` : `fallback ${color} (no usable swatch)`}`)
+      }
+      // ————————————————————————————————————————————————————————————————————————————————————————————————
+    } catch (err) {
+      color = ART_FALLBACK
+      console.log(`[artColor] fallback used: ${name} ${albumArtUrl} exception:${err?.message ?? 'unknown'}`)
+    }
+    artColorCache.set(albumArtUrl, color)
+    setArtColor?.(id, color)
+  }, [albumArtUrl, id, name, setArtColor])
+
+  // Art load falls back gracefully so a failed image NEVER shows the browser's broken-image glyph:
+  //   'cors'  → try with crossOrigin (colorthief can read the pixels for the glow color)
+  //   'plain' → CORS was rejected (non-CORS host) → retry the SAME url without crossOrigin so the art
+  //             still DISPLAYS; the canvas read then taints → onArtLoad catches it → orange glow.
+  //   'failed'→ plain load failed too (dead / 404 url) → show the music-note placeholder instead.
+  const [artSrcMode, setArtSrcMode] = useState('cors')
+  useEffect(() => { setArtSrcMode('cors') }, [albumArtUrl]) // fresh url → start over
+  const onArtError = useCallback(() => {
+    setArtSrcMode((m) => (m === 'cors' ? 'plain' : 'failed'))
+  }, [])
+  // When the art can't be shown at all, register the orange fallback glow for this node.
+  useEffect(() => {
+    if (artSrcMode === 'failed' && albumArtUrl) {
+      if (!artColorCache.has(albumArtUrl)) artColorCache.set(albumArtUrl, ART_FALLBACK)
+      setArtColor?.(id, ART_FALLBACK)
+    }
+  }, [artSrcMode, albumArtUrl, id, setArtColor])
+
   // Re-measure ReactFlow's record of this node when the tier (and thus its size/handles) changes.
   // Guarded by prevTier so a culling-driven mount at the current tier doesn't fire it.
   const updateNodeInternals = useUpdateNodeInternals()
@@ -222,19 +426,19 @@ function TrackNode({ id, data }) {
     }
   }, [tier, id, updateNodeInternals])
 
-  const artSize = isCircle ? CIRCLE_SIZE : isPill ? PILL_ART : CARD_ART
+  const artSize = effCircle ? CIRCLE_SIZE : effPill ? PILL_ART : CARD_ART
   const artStyle = {
     width: artSize, height: artSize, flexShrink: 0,
-    borderRadius: isCard ? 5 : '50%', overflow: 'hidden',
+    borderRadius: effCard ? 5 : '50%', overflow: 'hidden',
     transition: ART_TRANSITION,
   }
 
   // Head treatment differs per tier (Decision Log #42). Circle: orange halo + slight size bump.
   // Pill: orange accent border + glow. Card: lighter border + anchor icon.
   const headBorderColor = isHead
-    ? (isCard ? 'rgba(255,255,255,0.5)' : ACCENT1)
-    : (isCircle ? 'transparent' : 'rgba(255,255,255,0.12)')
-  const headGlow = isHead && !isCircle
+    ? (effCard ? 'rgba(255,255,255,0.5)' : ACCENT1)
+    : (effCircle ? 'transparent' : 'rgba(255,255,255,0.12)')
+  const headGlow = isHead && !effCircle
     ? `0 0 0 1px ${ACCENT1}, 0 0 16px rgba(242,127,55,0.45)`
     : null
 
@@ -246,53 +450,103 @@ function TrackNode({ id, data }) {
     ? `0 0 0 1px ${ORPHAN_CORAL}, 0 0 18px rgba(255,122,92,0.5)`
     : null
 
-  // Counter-scale is driven by the shared --node-scale var; the head gets a small circle-tier size
-  // bump layered on top of it.
-  const scaleExpr = isHead && isCircle
-    ? `scale(calc(var(--node-scale, 1) * ${HEAD_CIRCLE_BUMP}))`
-    : 'scale(var(--node-scale, 1))'
+  // Compatibility glow (Slice 11.5): a soft colored halo on a non-chain (`dimmed`) song sized by how
+  // well it'd mix as the next song after the tail — green #1EFFB8 (strong) / amber #F7CB29 (mild),
+  // matching the wire compatibility colors. Blurred only (no hard `0 0 0 Npx` ring) so it reads as a
+  // glow, not a border, and — because it scales with the node's counter-scale — stays visible even on
+  // small circle-tier nodes at full zoom-out. The tier also lifts opacity (0.85 / 0.65) above the 0.4
+  // dim floor. `glow` is the tier string or undefined; only dimmed songs carry it.
+  const compatGlow = !dimmed ? null
+    : glow === 'strong' ? '0 0 8px 1px rgba(30,255,184,0.75), 0 0 22px 6px rgba(30,255,184,0.40)'
+    : glow === 'mild' ? '0 0 8px 1px rgba(247,203,41,0.70), 0 0 22px 6px rgba(247,203,41,0.35)'
+    : null
+  const dimOpacity = glow === 'strong' ? 0.85 : glow === 'mild' ? 0.65 : 0.4
+
+  // Album-art ambient glow (Slice 11.5) — the identity signal for songs COMMITTED to the set: a soft
+  // 5px halo in the cover's dominant color (fallback orange @30% until sampled, or on failure/missing
+  // art), plus the recessed inner shadow. Shows on chain songs — but NOT the head (keeps its orange
+  // treatment) and NOT orphans — in build mode, and on EVERY song outside build mode. It never lands
+  // on a non-chain song, so it and the compatibility glow (the discovery signal) never overlap.
+  const artColorResolved = artColor ?? (albumArtUrl ? artColorCache.get(albumArtUrl) : null) ?? ART_FALLBACK
+  const showArtGlow = !buildMode || (!dimmed && !isOrphan && !isHead)
+  const artGlow = showArtGlow
+    ? `0px 0px 7px 0px ${artColorResolved}, inset 0px 0px 5px 0px #373737`
+    : null
+
+  // Counter-scale is driven by the shared --node-scale var; the circle-tier head gets a small size
+  // bump, and a hover-preview node gets a 2× boost — all folded into one transform so zoom, head
+  // bump and hover compose cleanly.
+  const previewScale = previewActive ? 2 : 1
+  const headBumpFactor = isHead && effCircle ? HEAD_CIRCLE_BUMP : 1
+  const scaleExpr = `scale(calc(var(--node-scale, 1) * ${headBumpFactor} * ${previewScale}))`
+
+  // Transform transition ONLY while a hover-preview is scaling in/out (200ms ease-out up, 150ms
+  // ease-in down, then cleared) — so the counter-scale still tracks zoom instantly the rest of the time.
+  const transformTrans = scaleTrans === 'up' ? ', transform 200ms ease-out'
+    : scaleTrans === 'down' ? ', transform 150ms ease-in'
+    : ''
+
+  // Population bloom (Slice 11.5): during the bloom window, run the per-node stagger animation (the
+  // parity of `gen` picks the keyframe so a playlist switch restarts it for every node). The delay
+  // lives in a CSS var, so re-ranking on a preset reflow updates it WITHOUT re-triggering the anim
+  // (only the animation-name string changing does that). 600ms = 400 overshoot + 200 settle; the
+  // per-segment easing lives in the keyframes. Outside the window: no animation — late culling
+  // remounts on pan appear instantly instead of re-blooming.
+  const bloomAnim = bloomActive
+    ? `${bloomGen % 2 ? 'driftNodeBloomB' : 'driftNodeBloomA'} 600ms var(--bloom-delay, 0ms) backwards`
+    : undefined
 
   return (
     <div
-      title={isCircle ? `${artist} – ${name}` : undefined}
+      title={effCircle ? `${artist} – ${name}` : undefined}
       onPointerMove={grabbable ? onTailPointerMove : undefined}
       onPointerLeave={grabbable ? onTailPointerLeave : undefined}
       onPointerDown={grabbable ? onTailPointerDown : undefined}
-      onMouseEnter={isOrphan ? onOrphanEnter : undefined}
-      onMouseLeave={isOrphan ? onOrphanLeave : undefined}
+      onMouseEnter={onNodeEnter}
+      onMouseLeave={onNodeLeave}
       style={{
         position: 'relative',
+        '--bloom-delay': `${bloomDelay ?? 0}ms`,
+        animation: bloomAnim,
+        // Hover-preview node lifts above its neighbours (the map also raises the RF wrapper z-index).
+        zIndex: previewActive ? 50 : undefined,
         display: 'flex', flexDirection: 'row', alignItems: 'center',
         // dimensions — explicit height for circle/pill so text at width:0 can't inflate it
-        width: isCircle ? CIRCLE_SIZE : isPill ? PILL_W : CARD_W,
-        height: isCard ? undefined : (isCircle ? CIRCLE_SIZE : 50),
-        minHeight: isCard ? 62 : undefined,
-        borderRadius: isCircle ? CIRCLE_SIZE / 2 : isPill ? 25 : 8,
-        background: isCircle ? 'transparent' : 'rgba(18,18,18,0.90)',
+        width: effCircle ? CIRCLE_SIZE : effPill ? PILL_W : CARD_W,
+        height: effCard ? undefined : (effCircle ? CIRCLE_SIZE : 50),
+        minHeight: effCard ? 62 : undefined,
+        borderRadius: effCircle ? CIRCLE_SIZE / 2 : effPill ? 25 : 8,
+        background: effCircle ? 'transparent' : 'rgba(18,18,18,0.90)',
         // Orphans always carry a dashed coral border (even in the circle tier); everyone else keeps
         // the solid head/normal border, none in the circle tier.
-        borderWidth: isOrphan ? 1 : (isCircle ? 0 : 1),
+        borderWidth: isOrphan ? 1 : (effCircle ? 0 : 1),
         borderStyle: isOrphan ? 'dashed' : 'solid',
         borderColor: isOrphan ? orphanColor : headBorderColor,
+        // Priority (highest first): search highlight → orphan → head → album-art identity glow →
+        // compatibility discovery glow → the default ambient. artGlow and compatGlow are mutually
+        // exclusive (chain vs non-chain), so their relative order is moot.
         boxShadow: highlighted
           ? '0 0 0 2.5px #F27F37, 0 0 18px rgba(242,127,55,0.45)'
-          : orphanGlow || headGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
-        gap: isCircle ? 0 : 10,
-        padding: isCircle ? 0 : '10px 15px',
+          : orphanGlow || headGlow || artGlow || compatGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
+        gap: effCircle ? 0 : 10,
+        padding: effCircle ? 0 : '10px 15px',
         cursor: grabbable ? 'grab' : 'default', userSelect: 'none',
         // Build-mode dimming (Slice 9 #6): non-set songs drop to 0.4 so the set reads clearly.
         // Orphans get their own band — ~45% at rest, lifting to ~0.95 when their group is hovered.
         // Flow ON (Slice 10): only the connected chain stays lit; everything else — non-set AND
         // orphans — recedes to near-invisible (~9%), keeping faint spatial context.
+        // Compatibility glow (Slice 11.5, Flow OFF only): a dimmed non-chain song lifts above the 0.4
+        // floor by how well it'd mix as the next song after the tail — dimOpacity (0.85 strong / 0.65
+        // mild / 0.4 otherwise), paired with the colored ring above. Set from `glow` on node data.
         opacity: flowMode
           ? (!isOrphan && !dimmed ? 1 : FLOW_DIM)
-          : (isOrphan ? (orphanBright ? 0.95 : 0.45) : (dimmed ? 0.4 : 1)),
+          : (isOrphan ? (orphanBright ? 0.95 : 0.45) : (dimmed ? dimOpacity : 1)),
         // Counter the pane's zoom. The factor lives in the --node-scale CSS var, written by the map
         // once per throttled frame, so zooming rescales every node via CSS with no React re-render.
         // Out of the transition (tracks zoom instantly, no rubber-banding); the 400ms morph below
         // animates width/shape only.
         transform: scaleExpr,
-        transition: ROOT_TRANSITION,
+        transition: `${ROOT_TRANSITION}${transformTrans}`,
       }}
     >
       {/* Edge anchors: source + target handle per cardinal, all pinned to the node CENTER. Keeping
@@ -311,7 +565,7 @@ function TrackNode({ id, data }) {
       ))}
 
       {/* Circle-tier head halo — an orange glowing ring around the pin (Decision Log #42). */}
-      {isHead && isCircle && (
+      {isHead && effCircle && (
         <div style={{
           position: 'absolute', inset: -6, borderRadius: '50%',
           border: `2px solid ${ACCENT1}`,
@@ -320,25 +574,30 @@ function TrackNode({ id, data }) {
         }} />
       )}
 
-      {/* Album art — the constant anchor across all tiers; its size/shape morph between tiers. */}
-      {albumArtUrl ? (
+      {/* Album art — the constant anchor across all tiers; its size/shape morph between tiers. On a
+          load failure it degrades (crossOrigin → plain → placeholder) rather than showing a broken icon. */}
+      {albumArtUrl && artSrcMode !== 'failed' ? (
         <img
+          key={artSrcMode}
           src={albumArtUrl}
-          alt={`${name} – ${artist}`}
+          alt=""
           draggable={false}
+          crossOrigin={artSrcMode === 'cors' ? 'anonymous' : undefined}
+          onLoad={onArtLoad}
+          onError={onArtError}
           style={{ ...artStyle, objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }}
         />
       ) : (
-        <div style={{ ...artStyle, position: 'relative', zIndex: 1, background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>
-          ♪
+        <div style={{ ...artStyle, position: 'relative', zIndex: 1, background: '#222224', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <MusicNoteIcon size={Math.round(artSize * 0.5)} />
         </div>
       )}
 
       {/* Pill: title only — minimal DOM (background + image + title), the lighter spread-view node. */}
-      {isPill && <div style={{ ...nameStyle, flex: 1, minWidth: 0, position: 'relative', zIndex: 1 }}>{name}</div>}
+      {effPill && <div style={{ ...nameStyle, flex: 1, minWidth: 0, position: 'relative', zIndex: 1 }}>{name}</div>}
 
-      {/* Card: full detail (name/artist + BPM/Camelot). Only a handful are on-screen at this depth. */}
-      {isCard && (
+      {/* Card (or a hovered circle/pill previewing as one): full detail (name/artist + BPM/Camelot). */}
+      {effCard && (
         <>
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2, position: 'relative', zIndex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>

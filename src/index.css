@@ -70,3 +70,30 @@ html, body, #root {
 
 /* Chain wires shouldn't intercept pointer events (drag hit-testing is done manually). */
 .react-flow__edge { pointer-events: none; }
+
+/* —— Node population bloom (Slice 11.5) —————————————————————————————————————————————————
+   Each node blooms from scale(0)+opacity(0): overshoots to 1.35× the counter-scale by 400ms
+   (ease-out), then settles back to its BASE style over the last 200ms (ease-in-out) — a bounce. The
+   implicit 100% keyframe uses the element's own transform/opacity, so the counter-scale + resting
+   opacity are honored and the hand-off is seamless. `backwards` fill holds the 0% state through the
+   per-node stagger delay, so a node stays invisible until its (randomized) turn. Two identical
+   keyframes let the map flip the animation-name on a playlist switch to restart every node (a name
+   change restarts the animation; changing only the --bloom-delay var does NOT). Duration is 600ms
+   (400 up + 200 settle); the 66.67% split is 400/600. */
+@keyframes driftNodeBloomA {
+  0%     { transform: scale(0); opacity: 0; animation-timing-function: ease-out; }
+  66.67% { transform: scale(calc(var(--node-scale, 1) * 1.35)); opacity: 1; animation-timing-function: ease-in-out; }
+}
+@keyframes driftNodeBloomB {
+  0%     { transform: scale(0); opacity: 0; animation-timing-function: ease-out; }
+  66.67% { transform: scale(calc(var(--node-scale, 1) * 1.35)); opacity: 1; animation-timing-function: ease-in-out; }
+}
+
+/* Preset switch (Slice 11.5): while the map carries this class (500ms after an axis-preset change),
+   songs SLIDE to their new positions instead of teleporting. React Flow positions each node via a
+   translate() on its .react-flow__node wrapper, so transitioning that wrapper's transform animates the
+   move. It's scoped to the class (only during a reflow) so pan/zoom stay instant — those transform the
+   viewport, not the node wrappers, which only change on a reposition. */
+.drift-canvas.drift-repositioning .react-flow__node {
+  transition: transform 500ms ease-in-out;
+}

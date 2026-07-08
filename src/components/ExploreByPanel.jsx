@@ -7,8 +7,6 @@ const ACCENT1 = '#F27F37'
 const CARD    = '#141416'
 const TEXT_SEC = '#848484'
 
-const IMG_INSET_ELLIPSE = 'https://www.figma.com/api/mcp/asset/d4ff4a27-be5f-4c68-9de4-46c2bde5715e'
-
 // ——— Main panel ——————————————————————————————————————————————————————————————
 export default function ExploreByPanel() {
   const { activePreset, setActivePreset } = usePlaylistStore()
@@ -46,9 +44,9 @@ export default function ExploreByPanel() {
                   padding: '15px 15px 15px 30px',
                   height: 58,
                   borderRadius: 1000,
-                  // Active-state design system (source of truth: Flow toggle ON knob) — orange ring +
-                  // dark tinted background + orange label/indicator fill.
-                  border: active ? `1.5px solid ${ACCENT1}` : 'none',
+                  // Active-state design system (source of truth: Figma node 748-2481) — thin orange
+                  // ring + glass-tinted background + orange label; the indicator knob is an empty ring.
+                  border: active ? `0.5px solid ${ACCENT1}` : 'none',
                   background: active ? 'rgba(20,20,22,0.2)' : CARD,
                   backdropFilter: active ? 'blur(4px)' : undefined,
                   filter: active ? undefined : 'drop-shadow(4px 4px 2.5px black)',
@@ -74,27 +72,21 @@ export default function ExploreByPanel() {
                 }}>
                   {p.label}
                 </span>
-                {/* Indicator — orange ring when active, Figma inset ellipse when inactive */}
+                {/* Indicator — empty orange ring when active (Figma 748-2481); recessed circle when
+                    inactive (was a now-expired Figma asset image → drawn with an inset shadow instead). */}
                 {active ? (
                   <div style={{
                     width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
-                    border: `1.5px solid ${ACCENT1}`,
+                    border: `1px solid ${ACCENT1}`,
                     background: 'rgba(20,20,22,0.2)',
                     boxShadow: '4px 4px 5px 0px black',
-                    position: 'relative',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    {/* Orange fill dot — completes the active treatment (ring + fill). */}
-                    <div style={{ width: 12, height: 12, borderRadius: '50%', background: ACCENT1 }} />
-                  </div>
+                  }} />
                 ) : (
-                  <div style={{ width: 30, height: 30, flexShrink: 0, position: 'relative' }}>
-                    <img
-                      alt=""
-                      src={IMG_INSET_ELLIPSE}
-                      style={{ position: 'absolute', inset: 0, display: 'block', width: '100%', height: '100%' }}
-                    />
-                  </div>
+                  <div style={{
+                    width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
+                    background: CARD,
+                    boxShadow: 'inset 2px 2px 3px 0px rgba(0,0,0,0.9), inset -1px -1px 2px 0px rgba(255,255,255,0.05)',
+                  }} />
                 )}
               </button>
             )

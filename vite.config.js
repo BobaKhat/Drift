@@ -15,6 +15,12 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/api\/itunes/, ''),
         },
+        // Proxies Deezer's public search API (no auth) — album-art fallback when iTunes misses.
+        '/api/deezer': {
+          target: 'https://api.deezer.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/deezer/, ''),
+        },
         // Proxies the public Spotify track page (no auth) to dodge browser CORS.
         // We scrape Open Graph tags for artist + title — Spotify's oEmbed endpoint
         // returns only the track title, not the artist, so it can't resolve a URL alone.
