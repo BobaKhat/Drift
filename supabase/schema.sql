@@ -23,10 +23,15 @@ create table if not exists public.tracks (
   source            text          default 'soundnet',
   analyzed_at       timestamptz,
   status            text          default 'analyzed',
-  missing_features  text[]
+  missing_features  text[],
+  preview_url       text
 );
 
 alter table public.tracks disable row level security;
+
+-- `tracks` may predate this column; guarded add so older environments pick up the 30-second
+-- preview URL (iTunes/Deezer) cached for Deck View playback (Slice 13, Decision #76).
+alter table public.tracks add column if not exists preview_url text;
 
 -- Playlists: one active on the map at a time. user_id is "demo" until auth lands.
 create table if not exists public.playlists (

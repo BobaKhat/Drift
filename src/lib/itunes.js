@@ -16,6 +16,7 @@ export async function searchItunes(artist, title) {
     trackName: r.trackName ?? null,
     artistName: r.artistName ?? null,
     durationMs: r.trackTimeMillis ?? null,
+    previewUrl: r.previewUrl ?? null, // 30-second AAC preview (Slice 13 playback)
   }
 }
 
@@ -70,4 +71,36 @@ async function deezerArtForQuery(query) {
 export async function getAlbumArt(artist, title) {
   const query = buildArtQuery(artist, title)
   return (await itunesArtForQuery(query)) ?? (await deezerArtForQuery(query))
+}
+
+// —— 30-second preview URLs (Slice 13) ————————————————————————————————————————————————
+// Same cleaned-query lookup as album art, but pulling the preview stream instead: iTunes
+// `previewUrl` (AAC) first, then Deezer's `preview` (MP3). Both send Access-Control-Allow-Origin: *,
+// so they play cross-origin and feed the Web Audio analyser. Returns a URL or null (no preview).
+async function itunesPreviewForQuery(query) {
+  try {
+    const res = await fetch(`/api/itunes/search?term=${encodeURIComponent(query)}&entity=song&limit=1`)
+    if (!res.ok) return null
+    const data = await res.json()
+    return data.results?.[0]?.previewUrl ?? null
+  } catch {
+    return null
+  }
+}
+
+async function deezerPreviewForQuery(query) {
+  try {
+    const res = await fetch(`/api/deezer/search?q=${encodeURIComponent(query)}`)
+    if (!res.ok) return null
+    const data = await res.json()
+    return data.data?.[0]?.preview ?? null
+  } catch {
+    return null
+  }
+}
+
+// Preview URL for a track: clean the query, try iTunes, then fall back to Deezer.
+export async function getPreviewUrl(artist, title) {
+  const query = buildArtQuery(artist, title)
+  return (await itunesPreviewForQuery(query)) ?? (await deezerPreviewForQuery(query))
 }

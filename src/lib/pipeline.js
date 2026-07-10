@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { getAudioFeatures } from './soundnet'
-import { searchItunes, getAlbumArt } from './itunes'
+import { searchItunes, getAlbumArt, getPreviewUrl } from './itunes'
 import { titlesMatch, titleSimilarity } from './match'
 
 // Parses "Artist – Title" or "Artist - Title" into { artist, title }
@@ -270,10 +270,17 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
   if (!resolvedArt) resolvedArt = await getAlbumArt(artist, title)
   resolvedArt = resolvedArt ?? cached?.album_art_url ?? null
 
+  // 30-second preview (Slice 13): the corroboration search's previewUrl first, then a dedicated
+  // cleaned-query lookup for over-stuffed queries that missed, then any cached URL. null → no preview.
+  let resolvedPreview = itunes?.previewUrl ?? null
+  if (!resolvedPreview) resolvedPreview = await getPreviewUrl(artist, title)
+  resolvedPreview = resolvedPreview ?? cached?.preview_url ?? null
+
   const track = {
     name: title,
     artist,
     album_art_url: resolvedArt,
+    preview_url: resolvedPreview,
     ...(features ? featuresToStore : {}),
     source: 'soundnet',
     analyzed_at: new Date().toISOString(),

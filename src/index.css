@@ -97,3 +97,11 @@ html, body, #root {
 .drift-canvas.drift-repositioning .react-flow__node {
   transition: transform 500ms ease-in-out;
 }
+
+/* —— Playback disc spin (Slice 13) ————————————————————————————————————————————————————
+   The vinyl rotates continuously while a preview plays (~8s per turn, linear). Pausing sets
+   animation-play-state: paused, freezing it at its current angle; stopping removes the animation
+   (animation: none) so it snaps back to 0. */
+@keyframes driftDiscSpin {
+  to { transform: rotate(360deg); }
+}

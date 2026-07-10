@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
 import { usePlaylistStore } from '../store/usePlaylistStore'
+import { useAudio } from '../store/useAudioStore'
+import { resolvePreview } from '../lib/preview'
 import { C, FONT, INSET, PANEL_LIP } from './import/tokens'
 import { CAMELOT_WHEEL, WIRE_COLORS, scoreCompatibility } from '../lib/compatibility'
 import { camelotColor } from '../lib/camelot'
 import { artColorCache, colorThief, pickAccentColor, ART_FALLBACK } from './TrackNode'
 
 // Deck View (Slice 12, Figma node 748:2359) — a right-side bento panel that opens on a song click
-// and overlays the map, keeping the user in map context (Decision Log #6, #58–68). Static data tiles
-// only: no playback (Slice 13), no Three.js visualizer / VU meter / dot-matrix reactivity (Slice 14).
-// Those three sit as empty recessed placeholder tiles here. All data comes from the cached `tracks`
-// row in Supabase (Decision Log #87) — no new API calls.
+// and overlays the map, keeping the user in map context (Decision Log #6, #58–68). Slice 13 adds
+// 30-second preview playback (play/pause button + spinning disc, progress ring, live counter) via
+// the shared audio engine (see useAudioStore). Still TODO in Slice 14: the Three.js visualizer / VU
+// meter / dot-matrix reactivity, which sit as empty recessed placeholder tiles here. Data tiles come
+// from the cached `tracks` row in Supabase (Decision Log #87); preview URLs are resolved once and
+// cached to tracks.preview_url on first play.
 
 // Responsive width: narrower on smaller screens, wider on large monitors (gives the map more room).
 const PANEL_W = 'clamp(320px, 28vw, 420px)'
@@ -192,11 +196,45 @@ function PlayIcon({ color }) {
   )
 }
 
+function PauseIcon({ color }) {
+  return (
+    // Two rounded vertical bars — same weight as the play glyph.
+    <svg width="26" height="26" viewBox="0 0 16 16" fill="none">
+      <rect x="4" y="3" width="3" height="10" rx="1.4" fill={color} />
+      <rect x="9" y="3" width="3" height="10" rx="1.4" fill={color} />
+    </svg>
+  )
+}
+
+// Resolve (and cache/persist) the open track's preview URL when the deck opens, so the play button
+// knows whether to enable and clicking it is instant. Returns 'loading' | 'ready' | 'none'.
+function usePreviewStatus(track) {
+  const [status, setStatus] = useState(track.preview_url ? 'ready' : 'loading')
+  useEffect(() => {
+    let cancelled = false
+    if (track.preview_url) { setStatus('ready'); return }
+    setStatus('loading')
+    resolvePreview(track).then((url) => { if (!cancelled) setStatus(url ? 'ready' : 'none') })
+    return () => { cancelled = true }
+  }, [track.id, track.preview_url])
+  return status
+}
+
+// mm:ss (e.g. 15 → "0:15", 90 → "1:30").
+function fmtTime(sec) {
+  const s = Math.max(0, Math.floor(sec || 0))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
 // Track info bar (Figma 748:2362): recessed tile (radius 20, tile extrusion), a left→right album-art
 // wash (color at ~35% on the album side, fading to #141414), and a play button filled with the
 // album's color (white glyph). Falls back to the plain card + light play button when no color.
 function TrackInfoBar({ track }) {
   const rgb = useAlbumColor(track.album_art_url)
+  const { isPlaying, currentTrackId, toggle } = useAudio()
+  const previewStatus = usePreviewStatus(track)
+  const playing = isPlaying && currentTrackId === track.id
+  const disabled = previewStatus === 'none'
   const background = rgb ? `linear-gradient(90deg, rgba(${rgb}, 0.38) 0%, #141414 72%)` : '#141416'
   // Play glyph is tinted with the album colour; the button itself is a recessed dark well (design-system inset).
   const playGlyph = rgb ? `rgb(${rgb})` : ACCENT
@@ -216,14 +254,23 @@ function TrackInfoBar({ track }) {
           {track.artist ?? ''}
         </div>
       </div>
-      {/* Play button — visual only for this slice (no handler until Slice 13). Filled with the album color. */}
-      <div title="Play (coming soon)" style={{
-        width: 60, height: 60, borderRadius: '50%', flexShrink: 0, marginLeft: 12, // 12px gap + 12 = 24 (doubled)
-        background: CARD, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        boxShadow: INSET,
-      }}>
-        <PlayIcon color={playGlyph} />
-      </div>
+      {/* Play/pause button (Slice 13). Recessed dark well filled with the album-color glyph; toggles
+          this track's 30-second preview. Dimmed + disabled when the track has no available preview. */}
+      <button
+        type="button"
+        onClick={disabled ? undefined : () => toggle(track)}
+        disabled={disabled}
+        title={disabled ? 'No preview available' : playing ? 'Pause' : 'Play'}
+        aria-label={disabled ? 'No preview available' : playing ? 'Pause' : 'Play'}
+        style={{
+          width: 60, height: 60, borderRadius: '50%', flexShrink: 0, marginLeft: 12, // 12px gap + 12 = 24 (doubled)
+          background: CARD, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: INSET, border: 'none', padding: 0,
+          opacity: disabled ? 0.4 : 1, cursor: disabled ? 'default' : 'pointer',
+        }}
+      >
+        {playing ? <PauseIcon color={playGlyph} /> : <PlayIcon color={playGlyph} />}
+      </button>
     </div>
   )
 }
@@ -234,6 +281,28 @@ function TrackInfoBar({ track }) {
 function PlaybackDisc({ track }) {
   const r = 47
   const circ = 2 * Math.PI * r
+  const { isPlaying, currentTrackId, engine } = useAudio()
+  const active = currentTrackId === track.id      // this track is the one loaded in the engine
+  const playing = isPlaying && active
+
+  // currentTime is polled off the engine via rAF while playing (smoother than the 4Hz timeupdate
+  // event) to drive the ring + counter. Paused mid-preview holds the last value; stopping/switching
+  // makes this track inactive → reset to 0.
+  const [time, setTime] = useState(0)
+  useEffect(() => {
+    if (!playing) return
+    let raf
+    const tick = () => { setTime(engine.getCurrentTime()); raf = requestAnimationFrame(tick) }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [playing, engine])
+  useEffect(() => { if (!active) setTime(0) }, [active])
+
+  // Ring fills over the real preview length (≈30s), falling back to 30 before metadata loads.
+  const dur = active && engine.getDuration() > 0 ? engine.getDuration() : 30
+  const progress = Math.min(1, dur > 0 ? time / dur : 0)
+  const dashoffset = circ * (1 - progress)
+
   return (
     <div style={{
       aspectRatio: '1 / 1', alignSelf: 'stretch', flexShrink: 0, borderRadius: 20, position: 'relative',
@@ -242,14 +311,24 @@ function PlaybackDisc({ track }) {
     }}>
       {/* Ring group — 74% of the disc, square. */}
       <div style={{ position: 'relative', width: '74%', aspectRatio: '1 / 1' }}>
-        {/* Progress ring: full faint track + a 0% orange arc (static for this slice — Slice 13 animates it). */}
+        {/* Progress ring: full faint track + an orange arc that fills clockwise with playback. */}
         <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
           <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="2.6" />
           <circle cx="50" cy="50" r={r} fill="none" stroke={ACCENT} strokeWidth="2.6"
-            strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={circ} />
+            strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={dashoffset} />
         </svg>
-        {/* Album art record, clipped to a circle inside the ring. */}
-        <div style={{ position: 'absolute', inset: '7%', borderRadius: '50%', overflow: 'hidden', background: '#222224' }}>
+        {/* Album art record, clipped to a circle inside the ring. Spins while playing (~8s/turn,
+            linear); pausing freezes the angle; stopping (inactive) removes the animation → back to 0. */}
+        <div style={{
+          position: 'absolute', inset: '7%', borderRadius: '50%', overflow: 'hidden', background: '#222224',
+          // All-longhand (not the `animation` shorthand) so toggling animationPlayState per render
+          // doesn't clash with a shorthand reset. `none` name = no spin (stopped → snaps back to 0°).
+          animationName: active ? 'driftDiscSpin' : 'none',
+          animationDuration: '8s',
+          animationTimingFunction: 'linear',
+          animationIterationCount: 'infinite',
+          animationPlayState: playing ? 'running' : 'paused',
+        }}>
           {track.album_art_url
             ? <img src={track.album_art_url} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
             : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><MusicNote size={20} /></div>}
@@ -264,7 +343,7 @@ function PlaybackDisc({ track }) {
         </div>
       </div>
       <div style={{ position: 'absolute', bottom: '5%', fontFamily: FONT, fontSize: 10, fontWeight: 600, color: SUB }}>
-        0.00 / 30
+        {fmtTime(time)} / {fmtTime(dur)}
       </div>
     </div>
   )
