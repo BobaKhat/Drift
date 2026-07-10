@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import DriftMap from './components/DriftMap'
 import LeftNav from './components/LeftNav'
+import DeckPanel from './components/DeckPanel'
 import ImportFlow from './components/import/ImportFlow'
 import { PlaylistProvider, usePlaylistStore } from './store/usePlaylistStore'
 import { backfillMissingArt } from './lib/backfill'
@@ -17,6 +18,8 @@ function DriftApp() {
       {/* Map is always mounted behind everything — no empty-map state. */}
       <DriftMap tracks={activeTracks} />
       <LeftNav />
+      {/* Deck View — right-side bento panel, opens on a song click (Slice 12). */}
+      <DeckPanel />
       <ImportFlow />
     </>
   )

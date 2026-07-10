@@ -824,6 +824,7 @@ function DriftMapInner({ tracks }) {
   const {
     activePreset, customXFeature, customYFeature, setActivePanel,
     buildMode, flowMode, chain, orphanGroups, addHead, connectSong, unlinkAfter, registerMapControls,
+    toggleDeck, closeDeck,
   } = usePlaylistStore()
   const presetConfig = useMemo(
     () => resolvePreset(activePreset, customXFeature, customYFeature),
@@ -1134,20 +1135,26 @@ function DriftMapInner({ tracks }) {
 
   useEffect(() => { registerMapControls({ focusTrack: focusTrackOnMap }) }, [registerMapControls, focusTrackOnMap])
 
-  // In build mode, clicking a song with an empty chain seats it as the head (Decision Log #38, #42).
-  // Once a head exists, songs join only by wiring, so further clicks are ignored.
+  // Clicking a song. In build mode it drives the set builder — an empty chain seats the clicked song
+  // as the head (Decision Log #38, #42), and once a head exists songs join only by wiring, so further
+  // clicks are ignored. Outside build mode it opens that song's Deck View (Decision Log #6, #69).
   const handleNodeClick = useCallback((_e, node) => {
     setSelectedWire(null) // clicking a song dismisses the compatibility card
-    if (buildMode && chain.length === 0) addHead(node.id)
-  }, [buildMode, chain.length, addHead])
+    if (buildMode) {
+      if (chain.length === 0) addHead(node.id)
+    } else {
+      toggleDeck(node.id) // clicking the open song again closes the deck
+    }
+  }, [buildMode, chain.length, addHead, toggleDeck])
 
   // The set-builder panel isn't closeable while building (Decision Log #53), so a pane click only
   // dismisses panels outside build mode. It always dismisses an open compatibility card (Decision
-  // Log #31 — "disappears on click-elsewhere").
+  // Log #31 — "disappears on click-elsewhere") and the Deck View.
   const handlePaneClick = useCallback(() => {
     setSelectedWire(null)
+    closeDeck()
     if (!buildMode) setActivePanel(null)
-  }, [buildMode, setActivePanel])
+  }, [buildMode, setActivePanel, closeDeck])
 
   // Bridge a tail socket's pointerdown (in TrackNode) to the drag overlay's imperative handle.
   const startWireDrag = useCallback((sourceId, cardinal, event) => {

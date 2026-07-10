@@ -44,6 +44,18 @@ export function PlaylistProvider({ children }) {
   const [activeQuadrant, setActiveQuadrant] = useState(null) // 'TR'|'TL'|'BR'|'BL'|null
   const togglePanel = (id) => { setSetBuilderMinimized(false); setActivePanel((prev) => (prev === id ? null : id)) }
 
+  // Deck View (Slice 12): a right-side bento panel opened by clicking a song on the map (Decision
+  // Log #6, #69). Independent of the left rail panel — the two can coexist (dual-panel edge case,
+  // Decision Log #10). Holds the id of the track whose deck is open (null = closed). One at a time.
+  const [deckTrackId, setDeckTrackId] = useState(null)
+  const openDeck = useCallback((trackId) => { if (trackId) setDeckTrackId(trackId) }, [])
+  const closeDeck = useCallback(() => setDeckTrackId(null), [])
+  // Clicking the same song that's already open toggles the deck closed; a different song switches to it.
+  const toggleDeck = useCallback((trackId) => {
+    if (!trackId) return
+    setDeckTrackId((prev) => (prev === trackId ? null : trackId))
+  }, [])
+
   const [activePreset, setActivePresetKey] = useState('vibe')
   const [customXFeature, setCustomXFeature] = useState('mood')
   const [customYFeature, setCustomYFeature] = useState('energy')
@@ -185,8 +197,9 @@ export function PlaylistProvider({ children }) {
   const registerMapControls = useCallback((controls) => { mapControlsRef.current = controls }, [])
   const focusTrack = useCallback((trackId) => { mapControlsRef.current?.focusTrack?.(trackId) }, [])
 
-  // A chain references ids from the active playlist — switching playlists invalidates it.
-  useEffect(() => { setChain([]); setOrphanGroups([]) }, [activePlaylistId])
+  // A chain references ids from the active playlist — switching playlists invalidates it. The open
+  // deck likewise points at a track in the old playlist, so it closes on a swap.
+  useEffect(() => { setChain([]); setOrphanGroups([]); setDeckTrackId(null) }, [activePlaylistId])
 
   // When "Import more" targets the current playlist, this holds its id (null = create new).
   const importTargetRef = useRef(null)
@@ -364,6 +377,10 @@ export function PlaylistProvider({ children }) {
     savingSet,
     registerMapControls,
     focusTrack,
+    deckTrackId,
+    openDeck,
+    closeDeck,
+    toggleDeck,
   }
 
   return <PlaylistContext.Provider value={value}>{children}</PlaylistContext.Provider>

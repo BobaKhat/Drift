@@ -334,7 +334,7 @@ export default function LeftNav() {
           width: RAIL_W,
           background: RAIL_BG,
           border: `1px solid ${BORDER}`,
-          borderRadius: 20,
+          borderRadius: 999, // fully rounded (capsule) ends
           boxShadow: '4px 4px 5px 0px rgba(0,0,0,0.6), inset 3px 2px 5px 0px #373737',
           zIndex: 20,
           display: 'flex',

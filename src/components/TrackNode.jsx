@@ -11,9 +11,11 @@ import { ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
 // surfaces an actual palette of distinct colors, which is far better than an average at finding the
 // accent color on dark EDM artwork. The fallback — accent orange at 30% — covers missing art, any
 // extraction failure, and genuinely monochrome covers where no swatch is vivid enough.
-const colorThief = new ColorThief()
-const artColorCache = new Map()
-const ART_FALLBACK = 'rgba(242,127,55,0.3)' // #F27F37 @ 30%
+// Exported so the Deck View track-info bar can reuse the SAME extraction + per-URL cache for its
+// album-art gradient (Slice 12 #4) — the color the ambient glow already derived for this cover.
+export const colorThief = new ColorThief()
+export const artColorCache = new Map()
+export const ART_FALLBACK = 'rgba(242,127,55,0.3)' // #F27F37 @ 30%
 
 // RGB → HSL (h in 0–360, s/l in 0–100). Used to score palette swatches by saturation + lightness.
 function rgbToHsl(r, g, b) {
@@ -34,7 +36,7 @@ function rgbToHsl(r, g, b) {
 // near-black background and near-white blowouts), then take the most saturated — that's the vivid
 // accent, no boosting needed. Returns { color, scored, best } for the caller (color null ⇒ no swatch
 // qualified ⇒ use the orange fallback). `scored` carries per-swatch HSL for the diagnostic logging.
-function pickAccentColor(palette) {
+export function pickAccentColor(palette) {
   const scored = (palette || []).map(([r, g, b]) => {
     const [h, s, l] = rgbToHsl(r, g, b)
     return { r, g, b, h, s, l, usable: l >= 25 && l <= 75 }
