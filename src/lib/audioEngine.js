@@ -1,8 +1,8 @@
 // Single shared HTMLAudioElement for 30-second preview playback (Slice 13, Decision #76). One element
 // for the whole app — the library is 160+ songs, so a per-song <audio> is out of the question. On the
 // first play it also lazily builds a Web Audio graph (AudioContext → MediaElementSource → AnalyserNode
-// → destination) so Slice 14's visualizer / VU meter / BPM matrix can read frequency + amplitude data
-// without touching this pipeline. Nothing reads `analyser` yet — it's wired up as prep only.
+// → destination) so the Slice 14 visualizer / VU meter can read frequency + amplitude data without
+// touching this pipeline (DeckVisualizer + MeterTile poll `analyser` in their rAF loops).
 //
 // iTunes and Deezer previews both send `Access-Control-Allow-Origin: *`, so crossOrigin='anonymous'
 // is safe (playback isn't blocked) and keeps the analyser un-muted (a tainted stream reads as zeros).
@@ -53,6 +53,9 @@ function ensureGraph() {
     sourceNode = ctx.createMediaElementSource(el)
     analyser = ctx.createAnalyser()
     analyser.fftSize = 2048
+    // Default 0.8 smears kick transients across ~10 frames; 0.3 keeps individual drum hits sharp
+    // so the Slice 14 visualizer/VU can react per-hit (they do their own attack/release smoothing).
+    analyser.smoothingTimeConstant = 0.3
     sourceNode.connect(analyser)
     analyser.connect(ctx.destination)
   } catch {
@@ -61,7 +64,7 @@ function ensureGraph() {
 }
 
 export const audioEngine = {
-  // —— Slice 14 hooks (unused for now) ——
+  // —— Slice 14 hooks (visualizer + VU meter) ——
   get analyser() { return analyser },
   get audioContext() { return ctx },
 

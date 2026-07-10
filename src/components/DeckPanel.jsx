@@ -1,19 +1,21 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { useAudio } from '../store/useAudioStore'
+import DeckVisualizer from './DeckVisualizer'
 import { resolvePreview } from '../lib/preview'
 import { C, FONT, INSET, PANEL_LIP } from './import/tokens'
 import { CAMELOT_WHEEL, WIRE_COLORS, scoreCompatibility } from '../lib/compatibility'
 import { camelotColor } from '../lib/camelot'
-import { artColorCache, colorThief, pickAccentColor, ART_FALLBACK } from './TrackNode'
+import { useAlbumColor } from './useAlbumColor'
 
 // Deck View (Slice 12, Figma node 748:2359) — a right-side bento panel that opens on a song click
 // and overlays the map, keeping the user in map context (Decision Log #6, #58–68). Slice 13 adds
 // 30-second preview playback (play/pause button + spinning disc, progress ring, live counter) via
-// the shared audio engine (see useAudioStore). Still TODO in Slice 14: the Three.js visualizer / VU
-// meter / dot-matrix reactivity, which sit as empty recessed placeholder tiles here. Data tiles come
-// from the cached `tracks` row in Supabase (Decision Log #87); preview URLs are resolved once and
-// cached to tracks.preview_url on first play.
+// the shared audio engine (see useAudioStore). Slice 14 fills the hero tile with the raymarched
+// metaball visualizer (DeckVisualizer) and makes the VU meter reactive — both run on the analyser
+// while playing and on cached track features (BPM/energy/mood) while idle (Decision #77). Data tiles
+// come from the cached `tracks` row in Supabase (Decision Log #87); preview URLs are resolved once
+// and cached to tracks.preview_url on first play.
 
 // Responsive width: narrower on smaller screens, wider on large monitors (gives the map more room).
 const PANEL_W = 'clamp(320px, 28vw, 420px)'
@@ -104,23 +106,47 @@ function TintPill({ text, color }) {
   )
 }
 
-// —— Empty placeholder tiles (Slice 14) ——————————————————————————————————————————————
-// Three.js particle visualizer hero (Decision Log #59). Empty recessed tile for now.
-// Three.js particle visualizer lands in Slice 14. For now a recessed "screen-off" panel (Figma 748:2361):
-// #0F0F0F under a 1px border with the standard inset shadow for depth — reads as an off screen, not a void.
-function VisualizerTile() {
-  return (
-    <div style={{
-      height: '100%', minHeight: 0, borderRadius: 20,
-      background: '#0F0F0F', border: `1px solid ${C.border}`,
-      boxShadow: INSET,
-    }} />
-  )
-}
+// —— Reactive VU meter (Slice 14, Decision Log #68, Figma 748:2433) ———————————————————
+// The recessed pill well + green→red gradient from Slice 12, now animated. While a preview plays the
+// level follows the analyser's overall amplitude (fast attack / slow release, classic VU ballistics);
+// idle, it pulses at the track's BPM — a decaying kick each (60 / BPM)s beat — from cached data
+// (Decision #77). Width + brightness are mutated directly on the fill node inside a rAF loop (no
+// setState at 60fps); the loop only runs while the deck is open.
+function MeterTile({ track, open }) {
+  const { engine } = useAudio()
+  const fillRef = useRef(null)
+  const stRef = useRef({ level: 0.55, freq: null })
 
-// Reactive VU / dot-matrix BPM meter bar (Decision Log #68, Figma 748:2433). Static level for now —
-// the reactive animation lands in Slice 14; here we just match the recessed well + gradient treatment.
-function MeterTile() {
+  useEffect(() => {
+    if (!open) return
+    const st = stRef.current
+    let raf
+    const tick = () => {
+      raf = requestAnimationFrame(tick)
+      const an = engine.analyser
+      let target
+      if (engine.getSnapshot().playing && an) {
+        if (!st.freq || st.freq.length !== an.frequencyBinCount) st.freq = new Uint8Array(an.frequencyBinCount)
+        an.getByteFrequencyData(st.freq)
+        let s = 0
+        for (let i = 0; i < 80; i++) s += st.freq[i] // same bass→highs band the visualizer reads
+        target = 0.15 + (s / (80 * 255)) * 1.1
+      } else {
+        const bpm = track?.bpm > 0 ? track.bpm : 120
+        const p = ((performance.now() / 1000) * bpm) / 60 % 1
+        target = 0.52 + 0.2 * Math.pow(1 - p, 2.4)
+      }
+      st.level += (target - st.level) * (target > st.level ? 0.45 : 0.1)
+      const el = fillRef.current
+      if (el) {
+        el.style.width = `${(Math.min(0.97, Math.max(0.06, st.level)) * 100).toFixed(2)}%`
+        el.style.filter = `brightness(${(0.8 + st.level * 0.55).toFixed(3)})`
+      }
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [open, track?.bpm, engine])
+
   return (
     <div style={{
       // Slim accent strip (fixed ~40px), not a full grid row — leaves the BPM/Camelot pill the rest
@@ -134,8 +160,8 @@ function MeterTile() {
         position: 'relative', flex: 1, alignSelf: 'stretch', overflow: 'hidden',
         borderRadius: 100, background: '#000', border: `1px solid ${C.border}`, boxShadow: INSET,
       }}>
-        {/* Static gradient level (~64%): rounded base on the left, squared leading edge on the right. */}
-        <div style={{
+        {/* Animated gradient level: rounded base on the left, squared leading edge on the right. */}
+        <div ref={fillRef} style={{
           position: 'absolute', top: 3, bottom: 3, left: 3, width: '64%',
           borderRadius: '100px 4px 4px 100px',
           background: 'linear-gradient(90deg, #1ED460 0%, #FF9512 52%, red 100%)',
@@ -148,45 +174,9 @@ function MeterTile() {
 
 // —— Track info bar (Decision Log #60) ————————————————————————————————————————————————
 // Album-art gradient (Slice 12 #4): a left→right wash from the card color into the cover's dominant
-// hue at ~35% toward the play-button side. Reuses the map's cached album-art color (identical to the
-// ambient glow); on a cache miss it extracts once from a hidden CORS image, and falls back to the
-// plain card surface when no vivid color is available.
-function parseRgbTriple(v) {
-  const m = typeof v === 'string' && /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/.exec(v)
-  return m ? `${m[1]}, ${m[2]}, ${m[3]}` : null
-}
-
-function useAlbumColor(url) {
-  const [rgb, setRgb] = useState(() => (url ? parseRgbTriple(artColorCache.get(url)) : null))
-  useEffect(() => {
-    if (!url) { setRgb(null); return }
-    const cached = artColorCache.get(url)
-    const parsed = parseRgbTriple(cached)
-    if (parsed) { setRgb(parsed); return }
-    if (cached === ART_FALLBACK) { setRgb(null); return } // already extracted → nothing vivid
-    let cancelled = false
-    const img = new Image()
-    img.crossOrigin = 'anonymous'
-    img.onload = () => {
-      if (cancelled) return
-      try {
-        const { best } = pickAccentColor(colorThief.getPalette(img, 5))
-        if (best) {
-          artColorCache.set(url, `rgb(${best.r}, ${best.g}, ${best.b})`)
-          setRgb(`${best.r}, ${best.g}, ${best.b}`)
-        } else {
-          artColorCache.set(url, ART_FALLBACK)
-          setRgb(null)
-        }
-      } catch { if (!cancelled) setRgb(null) }
-    }
-    img.onerror = () => { if (!cancelled) setRgb(null) }
-    img.src = url
-    return () => { cancelled = true }
-  }, [url])
-  return rgb // 'r, g, b' or null
-}
-
+// hue at ~35% toward the play-button side. The colour comes from the shared useAlbumColor hook (same
+// extraction as the map's ambient glow and the Slice 14 visualizer); falls back to the plain card
+// surface when no vivid color is available.
 function PlayIcon({ color }) {
   return (
     // Larger glyph with rounded corners — the round stroke (same colour as the fill) softens the joins.
@@ -520,7 +510,7 @@ function MoodEnergySliders({ track }) {
 // —— Deck content ————————————————————————————————————————————————————————————————————
 // The deck closes by clicking the song again (toggle), clicking the map, or pressing Esc — there is
 // no explicit close button in the bar.
-function DeckContent({ track, nextTrack }) {
+function DeckContent({ track, nextTrack, open }) {
   return (
     // Non-scrolling grid that always fills the panel height (Decision Log #6 — deck stays in map
     // context, no internal scroll). Rows use fr/min-max so the layout breathes with the viewport: the
@@ -541,14 +531,14 @@ function DeckContent({ track, nextTrack }) {
       gridTemplateColumns: 'minmax(0, 1fr)',
       gap: GAP, padding: PAD_OUT,
     }}>
-      <VisualizerTile />
+      <DeckVisualizer track={track} open={open} />
       <TrackInfoBar track={track} />
       {/* Bento row 1: playback disc (left) beside the BPM/Camelot + meter column (right). */}
       <div style={{ display: 'flex', gap: GAP, minHeight: 0 }}>
         <PlaybackDisc track={track} />
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: GAP }}>
           <BpmCamelot track={track} />
-          <MeterTile />
+          <MeterTile track={track} open={open} />
         </div>
       </div>
       <MoodEnergySliders track={track} />
@@ -602,7 +592,7 @@ export default function DeckPanel() {
         overflow: 'hidden',
       }}
     >
-      {display && <DeckContent track={display} nextTrack={nextTrack} />}
+      {display && <DeckContent track={display} nextTrack={nextTrack} open={open} />}
     </div>
   )
 }
