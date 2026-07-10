@@ -6,6 +6,7 @@ import { C, FONT, INSET, PANEL_LIP } from './import/tokens'
 import { CAMELOT_WHEEL, WIRE_COLORS, scoreCompatibility } from '../lib/compatibility'
 import { camelotColor } from '../lib/camelot'
 import { artColorCache, colorThief, pickAccentColor, ART_FALLBACK } from './TrackNode'
+import ParticleVisualizer from './ParticleVisualizer'
 
 // Deck View (Slice 12, Figma node 748:2359) — a right-side bento panel that opens on a song click
 // and overlays the map, keeping the user in map context (Decision Log #6, #58–68). Slice 13 adds
@@ -104,43 +105,58 @@ function TintPill({ text, color }) {
   )
 }
 
-// —— Empty placeholder tiles (Slice 14) ——————————————————————————————————————————————
-// Three.js particle visualizer hero (Decision Log #59). Empty recessed tile for now.
-// Three.js particle visualizer lands in Slice 14. For now a recessed "screen-off" panel (Figma 748:2361):
-// #0F0F0F under a 1px border with the standard inset shadow for depth — reads as an off screen, not a void.
-function VisualizerTile() {
+// —— Visualizer hero (Decision Log #59, Slice 14) ————————————————————————————————————
+// Three.js particle simulation driven by cached feature data (#77): a recessed #0F0F0F "screen"
+// (Figma 748:2361) holding a full-bleed particle canvas. `active` (panel open) gates the render loop
+// so a closed deck spends no GPU. Clipped to the tile's radius so points never bleed past the border.
+function VisualizerTile({ track, active }) {
+  // Same cached album-art accent that tints the ambient glow + play button — the particle field is
+  // coloured to match the cover (mood hue is the fallback when no vivid colour exists).
+  const artRgb = useAlbumColor(track?.album_art_url)
   return (
     <div style={{
-      height: '100%', minHeight: 0, borderRadius: 20,
+      height: '100%', minHeight: 0, borderRadius: 20, position: 'relative', overflow: 'hidden',
       background: '#0F0F0F', border: `1px solid ${C.border}`,
       boxShadow: INSET,
-    }} />
+    }}>
+      {track && <ParticleVisualizer track={track} active={active} artRgb={artRgb} />}
+    </div>
   )
 }
 
-// Reactive VU / dot-matrix BPM meter bar (Decision Log #68, Figma 748:2433). Static level for now —
-// the reactive animation lands in Slice 14; here we just match the recessed well + gradient treatment.
-function MeterTile() {
+// Reactive VU meter bar (Decision Log #68, Figma 748:2433, Slice 14). Runs off the track's cached BPM
+// (no audio, per #77): the green→red gradient fill bounces like a VU needle at one beat = 60/bpm. No
+// track / no BPM → static fill at a resting 64%.
+function MeterTile({ track }) {
+  const bpm = track?.bpm > 0 ? track.bpm : null
+  const beatSec = bpm ? 60 / bpm : null
+  const animating = beatSec != null
   return (
     <div style={{
-      // Slim accent strip (fixed ~40px), not a full grid row — leaves the BPM/Camelot pill the rest
-      // of the column height so the circles fill their pill.
-      flex: '0 0 auto', height: 48, borderRadius: 20, position: 'relative',
+      // Slim accent strip (fixed ~48px) — leaves the BPM/Camelot pill the rest of the column height.
+      // Fully rounded (pill) to match the BPM/Camelot pill above it.
+      flex: '0 0 auto', height: 48, borderRadius: 1000, position: 'relative',
       background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
       display: 'flex', alignItems: 'center', padding: '8px 15px',
     }}>
-      {/* Recessed pill well */}
+      {/* Recessed VU well with the green→red gradient fill that bounces on each beat. */}
       <div style={{
         position: 'relative', flex: 1, alignSelf: 'stretch', overflow: 'hidden',
         borderRadius: 100, background: '#000', border: `1px solid ${C.border}`, boxShadow: INSET,
       }}>
-        {/* Static gradient level (~64%): rounded base on the left, squared leading edge on the right. */}
-        <div style={{
-          position: 'absolute', top: 3, bottom: 3, left: 3, width: '64%',
-          borderRadius: '100px 4px 4px 100px',
-          background: 'linear-gradient(90deg, #1ED460 0%, #FF9512 52%, red 100%)',
-          boxShadow: 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px #000000',
-        }} />
+        <div
+          className="drift-vu-fill"
+          style={{
+            position: 'absolute', top: 3, bottom: 3, left: 3, width: '64%',
+            borderRadius: '100px 4px 4px 100px',
+            background: 'linear-gradient(90deg, #1ED460 0%, #FF9512 52%, red 100%)',
+            boxShadow: 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px #000000',
+            animationName: animating ? 'driftVuPulse' : 'none',
+            animationDuration: animating ? `${beatSec}s` : undefined,
+            animationTimingFunction: 'linear',
+            animationIterationCount: 'infinite',
+          }}
+        />
       </div>
     </div>
   )
@@ -520,7 +536,7 @@ function MoodEnergySliders({ track }) {
 // —— Deck content ————————————————————————————————————————————————————————————————————
 // The deck closes by clicking the song again (toggle), clicking the map, or pressing Esc — there is
 // no explicit close button in the bar.
-function DeckContent({ track, nextTrack }) {
+function DeckContent({ track, nextTrack, active }) {
   return (
     // Non-scrolling grid that always fills the panel height (Decision Log #6 — deck stays in map
     // context, no internal scroll). Rows use fr/min-max so the layout breathes with the viewport: the
@@ -541,14 +557,14 @@ function DeckContent({ track, nextTrack }) {
       gridTemplateColumns: 'minmax(0, 1fr)',
       gap: GAP, padding: PAD_OUT,
     }}>
-      <VisualizerTile />
+      <VisualizerTile track={track} active={active} />
       <TrackInfoBar track={track} />
       {/* Bento row 1: playback disc (left) beside the BPM/Camelot + meter column (right). */}
       <div style={{ display: 'flex', gap: GAP, minHeight: 0 }}>
         <PlaybackDisc track={track} />
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: GAP }}>
           <BpmCamelot track={track} />
-          <MeterTile />
+          <MeterTile track={track} />
         </div>
       </div>
       <MoodEnergySliders track={track} />
@@ -602,7 +618,7 @@ export default function DeckPanel() {
         overflow: 'hidden',
       }}
     >
-      {display && <DeckContent track={display} nextTrack={nextTrack} />}
+      {display && <DeckContent track={display} nextTrack={nextTrack} active={open} />}
     </div>
   )
 }

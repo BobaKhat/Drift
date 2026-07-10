@@ -105,3 +105,16 @@ html, body, #root {
 @keyframes driftDiscSpin {
   to { transform: rotate(360deg); }
 }
+
+/* —— VU meter (Slice 14, Decision #68) ————————————————————————————————————————————————
+   Animates off cached BPM only (no audio, per #77): animation-duration is set inline to one beat =
+   60/bpm seconds. driftVuPulse is a VU-needle bounce — quick attack, slow decay of the fill width. */
+@keyframes driftVuPulse {
+  0%   { width: 44%; }
+  12%  { width: 90%; }
+  100% { width: 44%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drift-vu-fill { animation: none !important; }
+}
