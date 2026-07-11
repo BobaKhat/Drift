@@ -52,10 +52,12 @@ function ensureGraph() {
     ctx = new AC()
     sourceNode = ctx.createMediaElementSource(el)
     analyser = ctx.createAnalyser()
-    analyser.fftSize = 2048
-    // Default 0.8 smears kick transients across ~10 frames; 0.3 keeps individual drum hits sharp
-    // so the Slice 14 visualizer/VU can react per-hit (they do their own attack/release smoothing).
-    analyser.smoothingTimeConstant = 0.3
+    // 256 → 128 bins. The visualizer maps bin ranges 0-4 / 4-12 / 12-30 / 30-60 to its four arms;
+    // small FFT = fast, per-hit response. MeterTile adapts (it allocates off frequencyBinCount).
+    analyser.fftSize = 256
+    // Default 0.8 smears kick transients across ~10 frames; 0.15 is very snappy so the Slice 14
+    // visualizer/VU see individual drum hits, not envelopes (they do their own smoothing on top).
+    analyser.smoothingTimeConstant = 0.15
     sourceNode.connect(analyser)
     analyser.connect(ctx.destination)
   } catch {
