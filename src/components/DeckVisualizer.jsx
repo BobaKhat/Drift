@@ -149,7 +149,22 @@ function selectModeForTrack(track, complexity) {
   // the plate's whole square boundary becomes a nodal line and sand piles along the rim. Off-integer
   // modes break that, so the figure sits INSIDE the disc — which is both what the reference photos
   // look like and, conveniently, less sand parked in the cropped-off edge.
-  return { n: pick(), m: pick(), p: pick(), q: pick() }
+  //
+  // n, m and q all come from the complexity range, so the figure's busyness tracks the track. Only p
+  // is decoupled, drawn from a fixed 2.5–8.0 band: lo climbs with complexity, so anchoring p to lo
+  // would march it in lockstep with n and m and leave the two terms nearly identical exactly at the
+  // high energies where the figure is most on show.
+  //
+  // No detuning or separation logic here, deliberately. That belonged to the old axis-aligned field,
+  // where two same-orientation terms at similar frequencies collapsed into a rectangular lattice.
+  // The field is now the antisymmetric TRANSPOSED form (see `chladni`), and there p ≈ m with q ≈ n
+  // is not the degenerate case — it is the pure classic Chladni figure. Forcing the modes apart
+  // works against the formula rather than for it.
+  const n = pick()
+  const m = pick()
+  const p = 2.5 + rnd() * 5.5
+  const q = pick()
+  return { n, m, p, q }
 }
 
 const sameMode = (a, b) => !!a && !!b && a.n === b.n && a.m === b.m && a.p === b.p && a.q === b.q
@@ -185,8 +200,14 @@ uniform float uAmpA;
 uniform float uAmpB;
 
 float chladni(vec2 p, vec4 md) {
+  // The second term is TRANSPOSED — (p,q) drives y,x, not x,y — and subtracted. This is the classic
+  // antisymmetric Chladni combination, and the transpose is the entire reason the figure comes out
+  // diagonal and curved. With both terms in the same orientation (…md.z * p.x, md.w * p.y) each is a
+  // separable product of an x-wave and a y-wave, so their sum has an axis-aligned nodal set and the
+  // plate draws a rectangular lattice no matter how the four mode numbers are tuned — retuning only
+  // respaces the grid. Swapping the axes couples x and y, which is what tilts the nodal lines.
   return uAmpA * sin(PI * md.x * p.x) * sin(PI * md.y * p.y)
-       + uAmpB * sin(PI * md.z * p.x) * sin(PI * md.w * p.y);
+       - uAmpB * sin(PI * md.z * p.y) * sin(PI * md.w * p.x);
 }
 
 // Plate displacement. Both modes are always INTEGER eigenmodes; what moves is the blend between
