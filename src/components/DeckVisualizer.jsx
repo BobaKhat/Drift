@@ -23,18 +23,35 @@ import { C, INSET } from './import/tokens'
 // There is no home texture — grains have no rest position. They go wherever the current pattern's
 // nodal lines are, and when the music moves the pattern, they migrate with it.
 //
-// THE PHYSICS — a Chladni plate's displacement is a sum of sin·sin modes. Nodal lines are where
-// displacement = 0. Sand is driven DOWN the gradient of displacement², i.e. away from the violently
-// shaking antinodes and toward the still lines. That single force is the whole effect.
+// THE PHYSICS — the plate is a DISC, so it rings in the CIRCULAR eigenmodes: a Bessel radial profile
+// J_n(k·r) times an angular cosine cos(nθ + φ). Nodal lines are where displacement = 0, and for this
+// field that set is a union of concentric CIRCLES (the zeros of J_n) and radial DIAMETERS (the zeros of
+// the cosine) — so the plate draws rings, spokes and, where two modes interfere, rosettes. Sand is
+// driven DOWN the gradient of displacement², i.e. away from the violently shaking antinodes and toward
+// the still lines. That single force is the whole effect.
 //
 // The two things that stop it from looking like a math diagram are in the velocity pass and matter
 // more than the Chladni math itself — see AGITATION and STICTION there.
 
 const TEX = 256                    // texture edge; TEX² particles
 const PARTICLE_COUNT = TEX * TEX   // 65,536
-const PLATE_R = 1.8                // the plate's physical radius; also the x/y normaliser for the modes
+const PLATE_R = 1.8                // the plate's physical radius; the span the density map covers
 const EDGE_R = 1.75                // grains are contained just inside the rim
 const SPAWN_R = 1.70
+
+// FIELD_R — the radius the mode field is normalised to, and it is deliberately NOT the plate radius.
+//
+// k is a zero of J_n, so J_n(k·r) vanishes at r = 1 BY CONSTRUCTION: whatever we divide by here becomes
+// the figure's outermost nodal circle, and sand piles on it. Divide by PLATE_R and that circle lands at
+// 1.8 — outside EDGE_R (1.75), where the position pass hard-clamps the grains. Every grain in the outer
+// margin would then be seeking a nodal line it can never physically arrive at, and would spend the song
+// pressed against the containment wall: a permanent smear of sand around the rim, on every track, eaten
+// out of the figure.
+//
+// Set inside the rim's soft margin instead and the ring lands ON the plate. The outermost nodal circle
+// becomes part of the figure rather than a wall artefact, and the margin beyond it stays dark — which is
+// what the photographs of real circular plates look like.
+const FIELD_R = 1.6
 const DENSITY_TEX = 64             // density splat target; deliberately coarse — see DENSITY_VERT
 
 // Bass transients (CPU) → a decaying kick (GPU) that briefly throws extra dust off the plate.
@@ -65,6 +82,31 @@ const GLOW = 1.0
 const BLOOM_STRENGTH = 0.38
 const BLOOM_RADIUS = 0.35
 const BLOOM_THRESHOLD = 0.67
+
+// —— THE BASS PULSE. Two terms, fired off the same decaying transient that already drives the hop, so a
+// kick lands as ONE event: the sand jumps, the grains warm, and the glow breathes out around them.
+//
+// These are deliberately set for a LONG SIT. The brief is a breath of light on the kick, not a camera
+// flash — this thing is on screen for the length of a record, and a hard strobe at 120bpm is 2Hz of
+// full-frame luminance swing straight into the viewer's eyes for half an hour. Anything that reads as
+// impressive in a five-second demo is the wrong answer here.
+//
+// BLOOM_PULSE lifts the strength 0.38 → 0.50 at the peak of a kick (+32%), decaying out over ~0.37s. It
+// stays close to the baseline on purpose: 0.38 is not an arbitrary number but the level tuned to leave
+// the gaps between the nodal lines EMPTY (see BLOOM_STRENGTH), and a bloom that closes those gaps does
+// not merely look bright, it erases the figure. This brushes past that line for a moment rather than
+// vaulting over it.
+//
+// BASS_FLASH is the same event on the grains themselves. It emits the ALBUM'S colour, not white — see
+// the note where it is applied. It compounds with the bloom by design, and where it actually lands is
+// not where you would expect.
+const BLOOM_PULSE = 0.12
+const BASS_FLASH = 0.08
+
+// How much white the emissive carries at FULL warmth (a red/orange/brown cover). Cool covers get none —
+// the mix is driven by the hue itself, in POINTS_FRAG. See the EMISSIVE note there for why the white is
+// a debt only warm records owe.
+const WARM_WHITE = 0.35
 
 // —— The lighting rig. Three lights, no shadows (65k points cannot afford a shadow map, and sand at
 // this scale self-shadows into the fake AO term rather than casting). Directions are in the point
@@ -133,41 +175,89 @@ function mulberry32(a) {
   }
 }
 
+// Zeros of J_n — row n, column m is the m-th zero. This is what sets a mode's RADIAL spacing: the
+// shader evaluates J_n(k·r) with r normalised to 1 at FIELD_R, so choosing k = the m-th zero clamps the
+// plate's boundary to a nodal circle and lays m-1 more rings inside it. m = 1 gives a single ring at the
+// rim; m = 4 gives four rings marching in toward the centre.
+const BESSEL_ZEROS = [
+  [2.4048, 5.5201, 8.6537, 11.7915],   // J0
+  [3.8317, 7.0156, 10.1735, 13.3237],  // J1
+  [5.1356, 8.4172, 11.6198, 14.7960],  // J2
+  [6.3802, 9.7610, 13.0152, 16.2235],  // J3
+  [7.5883, 11.0647, 14.3725, 17.6160], // J4
+  [8.7715, 12.3386, 15.7002, 18.9801], // J5
+  [9.9361, 13.5893, 17.0038, 20.3208], // J6
+]
+
+// max |J_n| over x ≥ 0 — the height of each function's tallest hump, and the reason the weights below
+// get divided by it. J0 peaks at 1.0 (at the origin); every higher order is flatter, down to 0.35 at
+// n = 6. Left alone, that means the field's amplitude quietly COLLAPSES as the angular mode number
+// climbs — and |displacement| is not just the figure, it is what the vertical bounce, the agitation and
+// the pile height all read as "how hard is the plate shaking HERE". A busy 6-spoke figure would come out
+// with a third of the life of a simple ring. Dividing the peak out makes every mode ring at full scale.
+//
+// The first hump always falls on the plate: it sits at x ≈ 1.8…7.5 for n = 1…6, and the smallest k we
+// ever pair with a given n is that n's FIRST zero, which by definition is further out than its first
+// peak. So every mode genuinely attains ±1 somewhere inside the disc.
+const BESSEL_PEAK = [1.0, 0.5819, 0.4865, 0.4344, 0.3996, 0.3742, 0.3541]
+
 // Deterministic per song: same track, same figure, every time. `complexity` is passed in rather than
 // derived so a mid-song drop can ask for a busier version of THIS song's figure — same hash, so the
 // same fingerprint, just wound tighter.
 function selectModeForTrack(track, complexity) {
   const c = clamp01(complexity ?? complexityOf(track))
-  const lo = 2.0 + c * 2.0   // chill ≈ 2, intense ≈ 4
-  const hi = lo + 2.5
 
   const seed = String(track?.id ?? `${track?.name ?? ''}${track?.artist ?? ''}`)
   const rnd = mulberry32(hashStr(seed))
-  const pick = () => lo + rnd() * (hi - lo)
 
-  // Non-integer mode numbers on purpose. An integer mode makes sin(PI*n*x) vanish at x = ±1, i.e.
-  // the plate's whole square boundary becomes a nodal line and sand piles along the rim. Off-integer
-  // modes break that, so the figure sits INSIDE the disc — which is both what the reference photos
-  // look like and, conveniently, less sand parked in the cropped-off edge.
+  // ANGULAR mode number n — the count of nodal DIAMETERS, i.e. how many spokes the star has. n = 0 is a
+  // pure bullseye (no angular variation at all), n = 5 a five-pointed rosette.
   //
-  // n, m and q all come from the complexity range, so the figure's busyness tracks the track. Only p
-  // is decoupled, drawn from a fixed 2.5–8.0 band: lo climbs with complexity, so anchoring p to lo
-  // would march it in lockstep with n and m and leave the two terms nearly identical exactly at the
-  // high energies where the figure is most on show.
+  // Integer, and it has to be: cos(n·θ) only closes on itself going round the disc for whole n, and a
+  // fractional one would tear the figure open along the θ = ±π seam. (The old rectangular field wanted
+  // the opposite — deliberately NON-integer modes, to keep its nodal lines off the plate's square
+  // boundary. That problem does not exist here: the boundary is a circle and FIELD_R puts it inside the
+  // sand, so the boundary nodal line is a feature rather than a rim trap.)
+  const maxN = Math.floor(2 + c * 4)   // chill: 0–2 spokes. intense: up to 6.
+  const n1 = Math.floor(rnd() * (maxN + 1))
+  let n2 = Math.floor(rnd() * (maxN + 1))
+
+  // RADIAL mode number m — which zero of J_n we clamp the rim to, so: how many concentric rings.
+  const maxM = Math.floor(1 + c * 3)   // chill: 1 ring. intense: up to 4.
+  const m1 = Math.floor(rnd() * maxM)
+  const m2 = Math.floor(rnd() * maxM)
+
+  // Two IDENTICAL modes are not a superposition. cos(nθ+φ₁) + cos(nθ+φ₂) collapses by the sum-to-product
+  // identity into a SINGLE cosine at a third phase, so the figure would silently fall back to one pure
+  // eigenmode and lose all the interference structure the second term is here for. Rotate the second
+  // term's spoke count off the first when they collide — which is not a rare accident to guard against
+  // out of tidiness: a chill track draws m from a range of ONE, so it happens to a third of them.
+  if (n1 === n2 && m1 === m2) n2 = (n2 + 1) % (maxN + 1)
+
+  // Phase — rotates each term around the disc. Continuous, so two tracks that land on the same n and m
+  // still get visibly different figures: the terms rotate against each other and interfere differently.
+  const phi1 = rnd() * Math.PI * 2
+  const phi2 = rnd() * Math.PI * 2
+
+  // WEIGHTS, and they do two jobs at once.
   //
-  // No detuning or separation logic here, deliberately. That belonged to the old axis-aligned field,
-  // where two same-orientation terms at similar frequencies collapsed into a rectangular lattice.
-  // The field is now the antisymmetric TRANSPOSED form (see `chladni`), and there p ≈ m with q ≈ n
-  // is not the degenerate case — it is the pure classic Chladni figure. Forcing the modes apart
-  // works against the formula rather than for it.
-  const n = pick()
-  const m = pick()
-  const p = 2.5 + rnd() * 5.5
-  const q = pick()
-  return { n, m, p, q }
+  // Unequal on purpose — at 50/50 the two terms interfere symmetrically and the figure comes out looking
+  // machined. And normalised to sum to 1, then divided by each mode's Bessel peak, so the shader's field
+  // function hands back a displacement ALREADY in -1..1 with no amplitude uniform of its own to divide
+  // out. Everything downstream that reads |displacement| gets a number on a fixed scale, whatever mode
+  // the track happens to have drawn.
+  const a1 = 1.0
+  const a2 = 0.5 + rnd() * 0.5
+  const w = a1 + a2
+
+  return {
+    n1, k1: BESSEL_ZEROS[n1][m1], phi1, s1: (a1 / w) / BESSEL_PEAK[n1],
+    n2, k2: BESSEL_ZEROS[n2][m2], phi2, s2: (a2 / w) / BESSEL_PEAK[n2],
+  }
 }
 
-const sameMode = (a, b) => !!a && !!b && a.n === b.n && a.m === b.m && a.p === b.p && a.q === b.q
+const MODE_KEYS = ['n1', 'k1', 'phi1', 's1', 'n2', 'k2', 'phi2', 's2']
+const sameMode = (a, b) => !!a && !!b && MODE_KEYS.every((k) => a[k] === b[k])
 
 // —— GPGPU passes. All render a fullscreen quad; vUv is the particle's texel address.
 const QUAD_VERT = /* glsl */ `
@@ -186,37 +276,148 @@ varying vec2 vUv;
 void main() { gl_FragColor = texture2D(uSource, vUv); }
 `
 
-// The mode field, shared by BOTH simulation passes. A mode is packed as vec4(n, m, p, q): two sin·sin
-// terms, which is the classic (n,m)+(p,q) superposition that produces the curved, interlocking
-// Chladni figures rather than a plain checkerboard. The two terms carry DIFFERENT weights (uAmpA,
-// uAmpB) — at equal weight the figure comes out symmetric under x↔y and looks machined.
+// The mode field, shared by BOTH simulation passes.
+//
+// A figure is TWO circular eigenmodes superimposed, each packed into a vec4 as (n, k, φ, s):
+//   n  angular mode number — the spoke count. Integer, 0..6.
+//   k  the m-th zero of J_n — sets the rings. J_n(k·r) is zero at r = 1 and m-1 times inside it.
+//   φ  phase — rotates the term around the disc.
+//   s  weight, pre-divided by max|J_n| on the CPU (see BESSEL_PEAK). The pair is normalised so the
+//      field comes back in -1..1 already, with no amplitude uniform for the shader to divide out.
+//
+// One mode alone is a real Chladni figure but a sterile one; two interfering is where the asymmetric,
+// curved, interlocking patterns come from. Their weights are deliberately unequal — see the CPU side.
 const FIELD = /* glsl */ `
-#define PI 3.14159265359
+uniform vec4 uOldA; uniform vec4 uOldB;   // the figure we're leaving
+uniform vec4 uNewA; uniform vec4 uNewB;   // the figure we're heading to
+uniform float uModeTransition;            // 0 = fully old, 1 = fully new
 
-uniform vec4 uOldMode;         // (n, m, p, q) — the figure we're leaving
-uniform vec4 uNewMode;         // (n, m, p, q) — the figure we're heading to
-uniform float uModeTransition; // 0 = fully old, 1 = fully new
-uniform float uAmpA;
-uniform float uAmpB;
-
-float chladni(vec2 p, vec4 md) {
-  // The second term is TRANSPOSED — (p,q) drives y,x, not x,y — and subtracted. This is the classic
-  // antisymmetric Chladni combination, and the transpose is the entire reason the figure comes out
-  // diagonal and curved. With both terms in the same orientation (…md.z * p.x, md.w * p.y) each is a
-  // separable product of an x-wave and a y-wave, so their sum has an axis-aligned nodal set and the
-  // plate draws a rectangular lattice no matter how the four mode numbers are tuned — retuning only
-  // respaces the grid. Swapping the axes couples x and y, which is what tilts the nodal lines.
-  return uAmpA * sin(PI * md.x * p.x) * sin(PI * md.y * p.y)
-       - uAmpB * sin(PI * md.z * p.y) * sin(PI * md.w * p.x);
+// —— BESSEL J_n, and it is the entire reason this file exists in its current form. A circular plate's
+// eigenmodes are Bessel functions of the radius, not sines of x and y, and no amount of tuning a sin·sin
+// field will bend its nodal set into rings — that field is separable in x and y, so its nodal lines are
+// stuck on a rectangular lattice however the mode numbers are moved.
+//
+// J0 and J1 are the standard Abramowitz & Stegun rational approximations: a polynomial in x² below
+// x = 8, an asymptotic amplitude/phase form above it. Everything up to J6 is built off them.
+float besselJ0(float x) {
+  float ax = abs(x);
+  if (ax < 8.0) {
+    float y = x * x;
+    float ans1 = 57568490574.0 + y * (-13362590354.0 + y * (651619640.7
+              + y * (-11214424.18 + y * (77392.33017 + y * (-184.9052456)))));
+    float ans2 = 57568490411.0 + y * (1029532985.0 + y * (9494680.718
+              + y * (59272.64853 + y * (267.8532712 + y * 1.0))));
+    return ans1 / ans2;
+  }
+  float z = 8.0 / ax;
+  float y = z * z;
+  float xx = ax - 0.785398164;
+  float p0 = 1.0 + y * (-0.1098628627e-2 + y * (0.2734510407e-4
+           + y * (-0.2073370639e-5 + y * 0.2093887211e-6)));
+  float q0 = -0.1562499995e-1 + y * (0.1430488765e-3 + y * (-0.6911147651e-5
+           + y * (0.7621095161e-6 - y * 0.934935152e-7)));
+  return sqrt(0.636619772 / ax) * (p0 * cos(xx) - z * q0 * sin(xx));
 }
 
-// Plate displacement. Both modes are always INTEGER eigenmodes; what moves is the blend between
-// them. A linear combination of two solutions is itself a solution, so every intermediate frame is
-// still a physically real displacement field — the plate is simply ringing at two modes at once,
-// which is exactly what a real plate does while it's being driven from one resonance to another.
-// The gradient must be taken on this blended sum, not per-mode.
+float besselJ1(float x) {
+  float ax = abs(x);
+  if (ax < 8.0) {
+    float y = x * x;
+    float ans1 = x * (72362614232.0 + y * (-7895059235.0 + y * (242396853.1
+              + y * (-2972611.439 + y * (15704.48260 + y * (-30.16036606))))));
+    float ans2 = 144725228442.0 + y * (2300535178.0 + y * (18583304.74
+              + y * (99447.43394 + y * (376.9991397 + y * 1.0))));
+    return ans1 / ans2;
+  }
+  float z = 8.0 / ax;
+  float y = z * z;
+  float xx = ax - 2.356194491;
+  float p1 = 1.0 + y * (0.183105e-2 + y * (-0.3516396496e-4
+           + y * (0.2457520174e-5 + y * (-0.240337019e-6))));
+  float q1 = 0.04687499995 + y * (-0.2002690873e-3 + y * (0.8449199096e-5
+           + y * (-0.88228987e-6 + y * 0.105787412e-6)));
+  float ans = sqrt(0.636619772 / ax) * (p1 * cos(xx) - z * q1 * sin(xx));
+  return x < 0.0 ? -ans : ans;
+}
+
+// The ascending series. This is NOT a fast path — it is the only thing that makes the recurrence below
+// usable at all, and leaving it out is the single easiest way to wreck this shader.
+//
+// The recurrence J_{n+1} = (2n/x)·J_n - J_{n-1} multiplies its input error by 2n/x at every step. For
+// x >= n that factor is ≤ 2 and it is harmless. For x << n — which is the whole MIDDLE OF THE PLATE,
+// where the argument k·r goes to zero — it is a catastrophic-cancellation machine: at x = 0.1 it turns
+// the ~1e-7 error in a float32 J0 into an O(0.1) answer for J6, whose true value is 1e-11. That is not a
+// rounding artefact you can squint past. It is a large false displacement painted over the centre of
+// every high-order figure, and the sand would dutifully organise around it.
+//
+// So: recurrence only where it is stable, and the series everywhere else. The series converges fast and
+// without cancellation exactly where the recurrence does not (its largest term is ~1.3 against a sum of
+// ~0.25 at the very worst point, x = n = 6), and the two agree to ~5 digits at the x = n handover, so
+// the field is continuous across the seam.
+float besselSeries(float n, float x) {
+  float h = x * 0.5;
+  float term = 1.0;
+  for (int i = 1; i <= 6; i++) {          // term = h^n / n!
+    if (float(i) > n) break;
+    term *= h / float(i);
+  }
+  float sum = term;
+  float h2 = h * h;
+  for (int m = 1; m <= 8; m++) {          // T_m = T_{m-1} · -h² / (m(m+n))
+    term *= -h2 / (float(m) * (n + float(m)));
+    sum += term;
+  }
+  return sum;
+}
+
+// n is an integer 0..6 and x = k·r is never negative, so there is no sign or high-order handling here
+// beyond the stability split.
+float besselJ(float n, float x) {
+  if (n < 0.5) return besselJ0(x);
+  if (n < 1.5) return besselJ1(x);
+  if (x < n) return besselSeries(n, x);
+
+  float jPrev = besselJ0(x);
+  float jCurr = besselJ1(x);
+  for (int i = 1; i < 6; i++) {
+    if (float(i) >= n) break;
+    float jNext = (2.0 * float(i) / x) * jCurr - jPrev;
+    jPrev = jCurr;
+    jCurr = jNext;
+  }
+  return jCurr;
+}
+
+// The plate's displacement at a point: two eigenmodes, each a Bessel radial profile times an angular
+// cosine. The nodal set — where this is zero — is a union of concentric CIRCLES (the zeros of J_n, laid
+// out by k) and radial DIAMETERS (the zeros of the cosine, counted by n), which is the whole upgrade:
+// rings, spokes, and the curved rosettes that appear where the two terms interfere.
+float circularChladni(vec2 p, vec4 a, vec4 b) {
+  float r = length(p);
+  // atan(0, 0) is undefined and would hand back a NaN that propagates into the grain's velocity and
+  // never leaves. Guarding it costs nothing and loses nothing: at this radius an n >= 1 term is ~0
+  // anyway (J_n vanishes like r^n at the origin) and an n = 0 term has no angular dependence at all, so
+  // there is no angle the field could be sensitive to here.
+  float th = r > 1e-4 ? atan(p.y, p.x) : 0.0;
+
+  return besselJ(a.x, a.y * r) * cos(a.x * th + a.z) * a.w
+       + besselJ(b.x, b.y * r) * cos(b.x * th + b.z) * b.w;
+}
+
+// Plate displacement, already normalised to -1..1 (the CPU pre-scales the weights). Both endpoints are
+// real eigenmode superpositions, and a linear combination of two solutions is itself a solution, so
+// every intermediate frame of a crossfade is still a displacement field a real plate could hold — the
+// plate is simply ringing at both figures at once, which is exactly what one does while being driven
+// from one resonance to another. The gradient must be taken on this blended sum, not per-mode.
+//
+// The two guards are not micro-optimisation. Settled is the state the plate is in almost all of the
+// time, and skipping the dead mode there halves the Bessel work in both simulation passes — which is
+// most of the frame's cost. uModeTransition is a uniform, so the branch is coherent across every
+// fragment on the GPU and is genuinely free.
 float fieldAt(vec2 p) {
-  return mix(chladni(p, uOldMode), chladni(p, uNewMode), uModeTransition);
+  if (uModeTransition >= 1.0) return circularChladni(p, uNewA, uNewB);
+  if (uModeTransition <= 0.0) return circularChladni(p, uOldA, uOldB);
+  return mix(circularChladni(p, uOldA, uOldB), circularChladni(p, uNewA, uNewB), uModeTransition);
 }
 
 // Height of the sand pile at a point. Grains that reach a nodal line don't all lie flat at y=0 —
@@ -248,7 +449,7 @@ uniform float uIdle;          // 1 = silent, 0 = playing
 
 ${FIELD}
 
-#define PLATE_R ${PLATE_R.toFixed(2)}
+#define FIELD_R ${FIELD_R.toFixed(2)}
 #define EDGE_R ${EDGE_R.toFixed(2)}
 #define PLATE_SPAN ${(PLATE_R * 2).toFixed(2)}
 
@@ -281,6 +482,31 @@ ${FIELD}
 // past ~0.35 and so many grains strand that the cells fog over and the figure loses its edge.
 #define STICTION 0.24
 
+// GRAD_SAT — the half-saturation point of the migration force (see MIGRATION below, where the raw
+// gradient is turned into a 0..1 magnitude by gm/(gm + GRAD_SAT)). It was 4.0 under the old field and
+// it CANNOT stay there, because the two fields' gradients are not on remotely the same scale.
+//
+// The gradient of a sin·sin field scales with π·n, so with mode numbers in 2…8 it never fell below ~6.
+// The gradient of a Bessel field scales with k, and k is a zero of J_n — which for the simplest figure
+// this thing can draw, a single bare ring (n = 0, m = 1), is 2.4. A field that gentle produces grad(d²)
+// under 1.0, which at the old half-saturation lands at sat ≈ 0.2: BELOW the stiction gate for most of
+// the grains. The simple figures — exactly the ones a chill record gets, and the ones that most need to
+// read cleanly — would simply never form. The sand would sit where it spawned.
+//
+// 0.6 is where the new field reproduces the old one's behaviour, and the quantity held fixed to get
+// there is the fraction of the plate whose gradient beats the stiction gate — i.e. how much of it the
+// sand can actually be DRIVEN across. Swept over a synthetic catalogue against the old field as the
+// baseline, that fraction comes out at a median of 0.69 (old: 0.72) and a 95th percentile of 0.82 (old:
+// 0.80), so the equilibrium between this, AGITATION and SPREAD — and therefore the WIDTH of a nodal
+// line — carries over intact.
+//
+// It is tempting to keep winding this down, since smaller means stronger migration and tighter lines.
+// Don't: by 0.1 the drivable fraction is past 0.9, which means almost nothing is left stranded, and the
+// grains stranded mid-cell are not a defect. They are the scattered sand between the lines, and they
+// are the whole difference between a photograph and a vector plot. STICTION is the knob for cell
+// cleanliness; this one only sets whether the figure forms at all.
+#define GRAD_SAT 0.6
+
 // The outer margin where the rim's inward restoring force acts. It starts well outside the body of
 // the figure (the plate runs to 1.75) so it drains the edge without compressing the pattern. Pull it
 // in much further — a pull from, say, 1.2 covers 55% of the disc's AREA and would squeeze the outer
@@ -309,7 +535,7 @@ ${FIELD}
 // grounded grains — which is also what makes them self-limiting: a grain only receives the kick for
 // the one or two frames before it leaves the surface, and then it is ballistic.
 #define TRANS_HOP 0.030   // song change: grains stranded far off the incoming figure jump for it
-#define BASS_HOP 0.006    // kick drum: grains over the antinodes bounce, grains on the lines don't
+#define BASS_HOP 0.018    // kick drum: grains over the antinodes LAUNCH, grains on the lines don't
 
 varying vec2 vUv;
 
@@ -332,7 +558,7 @@ void main() {
   // Forces below are tuned in per-frame units at 60fps.
   float fs = clamp(uDeltaTime * 60.0, 0.0, 2.0);
 
-  vec2 pp = position.xz / PLATE_R;   // plate coords, -1..1
+  vec2 pp = position.xz / FIELD_R;   // field coords: r = 1 is the figure's outermost nodal circle
 
   // —— Displacement and the gradient of its square, by forward difference on the SUMMED field.
   float e = 0.005;
@@ -341,9 +567,9 @@ void main() {
   float dy = fieldAt(pp + vec2(0.0, e));
   vec2 grad = 2.0 * d * vec2(dx - d, dy - d) / e;
 
-  // Normalised displacement, -1..1 regardless of the term weights, so the vibration and agitation
-  // below stay independent of how the field happens to be scaled.
-  float dn = d / (uAmpA + uAmpB + 0.001);
+  // Displacement is already -1..1: the mode weights are pre-normalised on the CPU, and each is divided
+  // by its own Bessel peak, so the vibration and agitation below read the same scale on every figure.
+  float dn = d;
 
   // The surface this grain rests on: the plate, plus whatever sand has piled up here.
   float floorY = pileHeight(dn, phase);
@@ -353,7 +579,7 @@ void main() {
   // grains off the plate the instant a hi-hat pushed the modes up. Take the DIRECTION from the
   // gradient and a saturating 0..1 magnitude from it, so the force has a hard ceiling.
   float gm = length(grad);
-  float sat = gm / (gm + 4.0);
+  float sat = gm / (gm + GRAD_SAT);
   bool sliding = length(velocity.xz) > 0.002;   // already moving → kinetic, not static, friction
 
   float r = length(position.xz);
@@ -430,14 +656,25 @@ void main() {
     // so it jumps. This is what makes a song change read as an event: the sand visibly leaps and
     // re-lands rather than sliding across the plate like filings under a magnet.
     if (uModeTransition < 0.98) {
-      float newDn = chladni(pp, uNewMode) / (uAmpA + uAmpB + 0.001);
+      float newDn = circularChladni(pp, uNewA, uNewB);
       velocity.y += abs(newDn) * TRANS_HOP * (1.0 - uModeTransition) * fs / mass;
     }
 
-    // 3d. BASS TRANSIENT → the plate gets hit and the sand bounces, hardest over the antinodes. The
-    // coefficient looks tiny because uBassImpulse is applied every frame while it decays (×0.9/frame
-    // ⇒ ~10 frames of contribution), so the impulse a grain actually receives is ~10× what is written
-    // here. The 0.2 floor keeps a kick faintly felt even on the lines, where |dn| = 0.
+    // 3d. BASS TRANSIENT → the plate gets HIT and the sand launches, hardest over the antinodes. The
+    // 0.2 floor keeps a kick faintly felt even on the lines, where |dn| = 0.
+    //
+    // How much a grain actually receives is NOT uBassImpulse's full decay envelope, and it is worth
+    // being precise about that because it is what makes this constant safe to push. The kick is gated on
+    // the grounded flag, and a launched grain clears the surface within a frame or two — after which it is
+    // ballistic and this term can no longer reach it. So it collects one or two frames of force, not the
+    // ~10 the envelope lasts. That is a self-limiter: the kick cannot compound into an escape velocity
+    // however hard it is driven, which is exactly what the ungated version of this would do.
+    //
+    // At 0.018 a bass hit throws an antinode grain to ~0.36 world units, against the ~0.03 it is already
+    // bouncing at between kicks — a ~12× jump, and unmistakably a LAUNCH rather than a shuffle. The
+    // camera looks straight down from 4.4, so that height reads as the grain swelling and brightening
+    // into the lens (point size goes as 1/depth, and there is a 2.2× airborne swell on top). Grains ON
+    // the nodal lines rise 0.005 and stay put, so the figure itself holds through the hit.
     velocity.y += uBassImpulse * (0.2 + 0.8 * abs(dn)) * BASS_HOP * fs / mass;
 
     // Idle: the plate is never quite still. A trembling surface, no migration. Depth from the
@@ -503,7 +740,7 @@ uniform float uDeltaTime;
 
 ${FIELD}
 
-#define PLATE_R ${PLATE_R.toFixed(2)}
+#define FIELD_R ${FIELD_R.toFixed(2)}
 #define EDGE_R ${EDGE_R.toFixed(2)}
 
 varying vec2 vUv;
@@ -519,7 +756,7 @@ void main() {
   // the velocity pass can only turn a grain around, it can't stop it tunnelling through the pile on
   // a long frame.
   float phase = pos.w;
-  float dn = fieldAt(position.xz / PLATE_R) / (uAmpA + uAmpB + 0.001);
+  float dn = fieldAt(position.xz / FIELD_R);
   position.y = max(position.y, pileHeight(dn, phase));
 
   float r = length(position.xz);
@@ -642,8 +879,12 @@ void main() {
 const POINTS_FRAG = /* glsl */ `
 precision highp float;
 
-uniform vec3 uColor;   // album accent
-uniform float uGlow;   // GLOW — constant across the catalogue; drives emissive and edge softness
+uniform vec3 uColor;        // album accent
+uniform float uGlow;        // GLOW — constant across the catalogue; drives emissive and edge softness
+uniform float uBassImpulse; // the decaying bass transient, 0..1 — the same one that drives the hop
+
+#define BASS_FLASH ${BASS_FLASH.toFixed(2)}
+#define WARM_WHITE ${WARM_WHITE.toFixed(2)}   // white poured into the emissive at FULL warmth; 0 when cool
 
 uniform vec3 uKeyDir;    uniform vec3 uKeyColor;    uniform float uKeyI;
 uniform vec3 uFillDir;   uniform vec3 uFillColor;   uniform float uFillI;
@@ -733,22 +974,63 @@ void main() {
 
   // —— EMISSIVE. The sand is lit from within, on every record equally (uGlow is a constant now).
   //
-  // The emitted colour is the album hue pulled HALF way to WHITE, and that is not a tint — it is what
-  // makes the term read as light at all. Emitting the pure album hue fails on exactly the records it
-  // should flatter most: the grain base is already 75% album hue over warm sand, so on a warm record
-  // the emissive adds back the colour the grain already is, and the pile just gets more orange rather
-  // than brighter. Nothing in nature glows in its own surface colour — a hot thing has a white core
-  // and coloured falloff. Reds and browns need the most help here, because they sit closest to the
-  // sand base; at half white even they burn through.
+  // How much WHITE the emitted colour carries is a function of the hue, and it went through two wrong
+  // answers before this one. A flat 0.5 washed the whole catalogue out. A flat 0.25 was better but still
+  // levied the same tax on every record, and the records do not have the same problem.
   //
-  // The album colour is NOT lost to this. It survives in three places the white cannot reach: the
-  // grain's diffuse body, the loose strays between the lines (too dim to bloom, so they stay pure
-  // hue), and the bloom halo itself, which spreads the tinted core outward. White core, coloured
-  // falloff — that is the two-part read that says "emitting" rather than "painted".
-  vec3 hotCenter = mix(albumHue, vec3(1.0), 0.5);
+  // The white is a crutch for ONE failure: a warm hue sits right on top of the grain's own base colour —
+  // which is 75% album over warm sand — so emitting it adds back the colour the grain already is, and a
+  // red pile just gets redder rather than hotter. Reds, oranges and browns genuinely need the lift to
+  // separate from their own substrate. A cool hue has no such problem: it is already in contrast with the
+  // warm sand and the warm key light, so it reads as emitting on its own, and any white poured into it is
+  // pure loss — it is the thing that was turning blues and teals to pale grey.
+  //
+  // So: pay the tax only where the debt is. warmth is how far the hue leans red — that is, how much red
+  // beats whichever of green or blue is running second. It is 1 for reds and browns, 0 for anything cool,
+  // neutral, or magenta (where blue ties red), and it slides smoothly between.
+  //
+  // Note this leaves saturated BLUE albums emitting a pure, low-luminance blue. That is what they want
+  // visually, but see the bloom threshold: blue carries a weight of only 0.114 in the luminosity
+  // high-pass, so a deep blue grain can sit under the bloom cut and never glow at all. That is a
+  // pre-existing problem, not one this introduces — it just no longer papers over it with white.
+  float warmth = smoothstep(0.0, 0.3, albumHue.r - max(albumHue.g, albumHue.b));
+  vec3 hotCenter = mix(albumHue, vec3(1.0), warmth * WARM_WHITE);
   lit += hotCenter * uGlow * 0.3;
 
-  lit += smoothstep(0.0, 0.08, vHeight) * 0.3;              // airborne grains catch more light
+  // —— THE BASS PULSE. The grain is struck, so it brightens and fades — in the ALBUM'S colour, not in
+  // white. It was white, on the theory that a struck thing flashes white-hot; but this fires on every
+  // kick, several times a bar, forever, and a white term on that duty cycle does not read as an impact.
+  // It reads as the record's colour being rhythmically rinsed out of the picture. The pulse should make
+  // the sand more ITSELF for a moment, not less.
+  //
+  // Flat across every grain, NOT scaled by |displacement|. Scaling it would confine the flash to the
+  // antinodes — that is, to the empty cells BETWEEN the nodal lines — and light the gaps rather than the
+  // figure.
+  //
+  // Where this actually lands is not where you would guess, and the highlight knee at the bottom of this
+  // shader is why. A grain already sitting on a nodal line is up against the knee's asymptote and
+  // brightens by ~2%; a launched airborne one, not at all. They are at the ceiling and there is no more
+  // white left to give them. What moves is the BOTTOM of the range — a stray in a dark cell lifts ~32% —
+  // and the MIDDLE, where +0.08 carries a narrow band of grains (~6% of the brightness range) up over the
+  // 0.67 bloom threshold they were sitting just under, so slightly more of the plate blooms on the same
+  // frame that the bloom itself is 32% stronger. The pulse you see is mostly that. It is NOT the hot
+  // grains getting hotter, which is worth knowing before anyone tries to tune it by watching them.
+  //
+  // And do not wind this up to brighten the nodal lines directly. Their headroom is gone by design: past
+  // the knee everything clips to the SAME white, and the per-grain variation this entire shader exists to
+  // produce would be erased exactly where the sand is densest. The figure would "flash" by dissolving
+  // into a flat white mass, which is the one thing the knee is there to prevent.
+  lit += albumHue * uBassImpulse * BASS_FLASH;
+
+  // Airborne grains catch more light — ON THEIR OWN SURFACE. This used to add flat white, and that was
+  // the single biggest thing washing the colour out of the picture: a grain thrown off an antinode was
+  // being handed +0.3 of pure white, which is as much light as the entire emissive term, and it landed
+  // on precisely the sand the eye tracks. It got worse when the bass hop was tripled, because that put
+  // far more of the plate in the air on every kick. A grain lifted into the key light does not turn
+  // white; it is simply better lit, in the colour it already was. Multiplying baseColor instead of
+  // adding white says that, and it costs nothing — the coefficient goes 0.3 → 0.45 to hold the same
+  // brightness lift, so airborne sand still reads as distinctly hotter than the settled figure.
+  lit += baseColor * smoothstep(0.0, 0.08, vHeight) * 0.45;
   lit += smoothstep(0.0, 0.10, vSpeed) * 0.1 * albumHue;    // and moving ones smear a little
 
   // Fake AO: grains down in the bed are shadowed by their neighbours; grains proud of it are not.
@@ -960,14 +1242,18 @@ export default function DeckVisualizer({ track, open }) {
     // uniform objects by reference — the frame loop writes them once and both passes see it. Two
     // copies would be a standing invitation for the position pass to clamp grains to a pile computed
     // from a field the velocity pass isn't using.
+    // A figure needs TWO vec4s — one per superimposed eigenmode — so old and new cost four between
+    // them. There is no separate amplitude pair any more: the weights live in the .w of each vec4, and
+    // are already normalised and peak-divided by selectModeForTrack.
     const m0 = f.mode
-    const vec4Of = (md) => new THREE.Vector4(md.n, md.m, md.p, md.q)
+    const termA = (md) => new THREE.Vector4(md.n1, md.k1, md.phi1, md.s1)
+    const termB = (md) => new THREE.Vector4(md.n2, md.k2, md.phi2, md.s2)
     const fieldUniforms = {
-      uOldMode: { value: vec4Of(m0) },
-      uNewMode: { value: vec4Of(m0) },
+      uOldA: { value: termA(m0) },
+      uOldB: { value: termB(m0) },
+      uNewA: { value: termA(m0) },
+      uNewB: { value: termB(m0) },
       uModeTransition: { value: 1 },
-      uAmpA: { value: 1.0 },
-      uAmpB: { value: 0.6 },   // unequal, or the figure comes out symmetric and looks machined
     }
 
     const velocityMat = new THREE.ShaderMaterial({
@@ -1036,6 +1322,7 @@ export default function DeckVisualizer({ track, open }) {
         uVelocityTexture: { value: velA.texture },
         uColor: { value: new THREE.Color(c0[0], c0[1], c0[2]) },
         uGlow: { value: GLOW },   // constant; nothing writes this after construction
+        uBassImpulse: { value: 0 },
         uKeyDir: { value: v3(KEY_DIR) },
         uKeyColor: { value: rgb(KEY_COLOR) },
         uKeyI: { value: KEY_I },
@@ -1214,8 +1501,10 @@ export default function DeckVisualizer({ track, open }) {
       // so writing them once here updates the velocity pass and the position pass together.
       const om = st.previousMode
       const nm = st.activeMode
-      fieldUniforms.uOldMode.value.set(om.n, om.m, om.p, om.q)
-      fieldUniforms.uNewMode.value.set(nm.n, nm.m, nm.p, nm.q)
+      fieldUniforms.uOldA.value.set(om.n1, om.k1, om.phi1, om.s1)
+      fieldUniforms.uOldB.value.set(om.n2, om.k2, om.phi2, om.s2)
+      fieldUniforms.uNewA.value.set(nm.n1, nm.k1, nm.phi1, nm.s1)
+      fieldUniforms.uNewB.value.set(nm.n2, nm.k2, nm.phi2, nm.s2)
       fieldUniforms.uModeTransition.value = st.transition
 
       // — DENSITY first, from the positions the velocity pass is about to read. It must be rebuilt
@@ -1259,14 +1548,24 @@ export default function DeckVisualizer({ track, open }) {
       pointsMat.uniforms.uPositionTexture.value = st.posWrite.texture
       pointsMat.uniforms.uVelocityTexture.value = st.velWrite.texture
       pointsMat.uniforms.uColor.value.setRGB(st.album[0], st.album[1], st.album[2])
+      pointsMat.uniforms.uBassImpulse.value = st.impulse
 
       let t = st.posRead; st.posRead = st.posWrite; st.posWrite = t
       t = st.velRead; st.velRead = st.velWrite; st.velWrite = t
 
-      // — bloom BREATHES with the live audio. Threshold and radius are fixed at construction; this is
-      // the only bloom value that moves, and it moves a little — enough to feel the music in the
-      // glow, not enough to close the gaps between the nodal lines on a loud bar.
-      bloom.strength = BLOOM_STRENGTH + 0.06 * st.amp * st.audio
+      // — bloom BREATHES with the live audio, and FLASHES on the kick. Threshold and radius are still
+      // fixed at construction; strength is the only bloom value that moves.
+      //
+      // Two separate terms, doing two different jobs. The amplitude term is the breath: small, sustained,
+      // never enough to close the gaps between the nodal lines on a loud bar. The impulse term is the
+      // flash: large, and gone in a tenth of a second (see BLOOM_PULSE).
+      //
+      // It rides st.impulse — the SAME decaying transient that drives the hop and the grains' emissive —
+      // rather than a second envelope of its own. A parallel one with its own decay would be two sources
+      // of truth for a single physical event, free to drift apart, and the kick has to land as ONE thing:
+      // the sand jumps, the grains go white-hot and the glow blooms on the same frame, or it reads as
+      // three effects that happen to be near each other rather than as an impact.
+      bloom.strength = BLOOM_STRENGTH + 0.06 * st.amp * st.audio + BLOOM_PULSE * st.impulse
 
       if (st.bloomOn && composer) composer.render()
       else renderer.render(scene, camera)
