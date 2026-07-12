@@ -23,7 +23,16 @@ import FlowToggle from './FlowToggle'
 // Flow-space canvas dimensions. A large canvas gives songs room to separate as you
 // zoom in (Google Maps model, Decision Log #17) — the primary energy×mood mapping only
 // resolves songs to a coarse position, so the extra pixels are what reveals granularity.
-const W = 6000
+//
+// LANDSCAPE, not square (3:2). The map card is a wide rectangle, so a square canvas can only be
+// fit to it by matching its height — which left the whole plot, and the axis cross drawn around it,
+// stranded in a narrow column with dead gutters either side. Matching the canvas to the card's
+// rough aspect lets the coordinate system fill the space it's drawn in. The consequence is that
+// mood gets more pixels per unit than energy: flow space is anisotropic, which is fine because
+// nothing reads distance ACROSS the two axes — this is a vibe map, not a metric space. (Wire
+// lengths, the one canvas-space distance we do measure, only pace the strobe along a single path,
+// and on-screen path length still scales uniformly with zoom.)
+const W = 9000
 const H = 6000
 
 // Map the 0–100 feature range into the inner 5%–95% of the canvas (Decision Log #22),
@@ -176,6 +185,7 @@ const MAP_BG = '#141415'
 const CARD = '#141416'
 const BORDER = '#222224'
 const TEXT_SECONDARY = '#848484'
+const ICON_PRIMARY = '#808080' // Figma "Icons/Primary" — the toolbar glyphs
 
 // Layout: rail + map are separate cards floating on a black page, both inset 10px from the
 // edges with a 10px gap between them (Figma node 748-2842). The map card starts after the rail.
@@ -183,7 +193,27 @@ const PAGE_INSET = 10
 const RAIL_W = 93
 const RAIL_GAP = 10
 const MAP_LEFT = PAGE_INSET + RAIL_W + RAIL_GAP // 113
-const EDGE = 16 // inset of axis pills / brackets from the map card edge
+const EDGE = 16 // inset of the HUD brackets / zone chip from the map card edge
+
+// Axis extent in CANVAS space. The crosshair runs to 2% from each canvas edge — just outside the
+// 5%–95% band the songs occupy (PAD) — so the terminator pills cap the axis right past the most
+// extreme songs. At the default fit zoom that inset lands ~16px in from the canvas bounds, which
+// reads the same as the old card-edge pinning while now being anchored to the map, not the viewport.
+const AXIS_INSET = 0.02
+const AXIS_X = [W * AXIS_INSET, W * (1 - AXIS_INSET)]
+const AXIS_Y = [H * AXIS_INSET, H * (1 - AXIS_INSET)]
+
+// The axis box is what "fit view" frames — see the fit logic below for why it's this and not the
+// songs' bounding box. It always contains the songs, since the axis (2%–98%) brackets PAD (5%–95%).
+const AXIS_BOUNDS = {
+  x: AXIS_X[0],
+  y: AXIS_Y[0],
+  width: AXIS_X[1] - AXIS_X[0],
+  height: AXIS_Y[1] - AXIS_Y[0],
+}
+// Breathing room around the axis box when fitting, as a fraction of the card per side. Small: the
+// box already carries a 2% canvas margin, and the terminator pills hang inward from its edges.
+const FIT_PAD_FRAC = 0.04
 
 // Static dot grid (Figma "Backgrind grid") painted on the map card.
 const DOT_GRID = 'radial-gradient(circle, rgba(255,255,255,0.055) 1px, transparent 1.3px)'
@@ -313,12 +343,15 @@ function useThrottledZoom(onZoom) {
   }, [store])
 }
 
-// AxisLayer overlay. The crosshair lines mark value 50 on each axis (= canvas centre W/2, H/2)
-// and the pole pills sit at the crosshair endpoints: all of it lives in canvas space and
-// pans/zooms with the map, fading out as you zoom in since it's only an overview aid. A zone chip
-// names the quadrant under the viewport centre, fading in as the crosshair fades out.
-// Positions/opacities are written imperatively per frame (via useOnViewportChange) so the lines
-// and pills stay locked to the nodes with no batch-cycle lag — no React re-render on pan/zoom.
+// AxisLayer overlay. The crosshair lines mark value 50 on each axis (= canvas centre W/2, H/2) and
+// the pole pills cap the crosshair ends. Both are CANVAS-space furniture, not viewport chrome: they
+// are anchored to the map, so panning away scrolls them off the card edge rather than dragging them
+// along. (They are deliberately NOT sticky at the viewport edge — a song's position relative to the
+// axis is the whole read of this map, and an axis that follows the camera lies about that.) They
+// fade out as you zoom in, since they're only an overview aid, and a zone chip — which IS viewport
+// chrome, along with the corner brackets — fades in to name the quadrant under the viewport centre.
+// Positions/opacities are written imperatively per frame (via useOnViewportChange) so the lines and
+// pills stay locked to the nodes with no batch-cycle lag — no React re-render on pan/zoom.
 function AxisLayer({ preset }) {
   const rf = useReactFlow()
   const rootRef = useRef(null)
@@ -346,19 +379,35 @@ function AxisLayer({ preset }) {
   }, [preset])
 
   const applyViewport = useCallback(({ x, y, zoom }) => {
-    // Crosshair lines: canvas centre mapped to screen, faded by zoom.
-    const cx = (W / 2) * zoom + x
-    const cy = (H / 2) * zoom + y
     const lineOpacity = crosshairOpacityFor(zoom)
-    if (hLineRef.current) { hLineRef.current.style.top = `${cy}px`; hLineRef.current.style.opacity = lineOpacity }
-    if (vLineRef.current) { vLineRef.current.style.left = `${cx}px`; vLineRef.current.style.opacity = lineOpacity }
 
-    // Pills ride the crosshair endpoints — Intense/Chill slide along the vertical axis (x = cx),
-    // Dark/Bright along the horizontal (y = cy) — and fade with the lines (same opacity).
-    if (intenseRef.current) { intenseRef.current.style.left = `${cx}px`; intenseRef.current.style.opacity = lineOpacity }
-    if (chillRef.current) { chillRef.current.style.left = `${cx}px`; chillRef.current.style.opacity = lineOpacity }
-    if (darkRef.current) { darkRef.current.style.top = `${cy}px`; darkRef.current.style.opacity = lineOpacity }
-    if (brightRef.current) { brightRef.current.style.top = `${cy}px`; brightRef.current.style.opacity = lineOpacity }
+    // Every coordinate below is a CANVAS point pushed through the viewport transform, so the
+    // crosshair and its pills are welded to the songs: they pan with the map and clip off the card
+    // edge (the root is overflow:hidden) once you pan away from the centre. Only their *size* is
+    // screen-space — the lines keep a 1px hairline and the pills a fixed type size at any zoom,
+    // the same counter-scale trick the nodes use.
+    const cx = (W / 2) * zoom + x        // crosshair centre = value 50 on each axis
+    const cy = (H / 2) * zoom + y
+    const ax0 = AXIS_X[0] * zoom + x     // axis endpoints (canvas 2% / 98%)
+    const ax1 = AXIS_X[1] * zoom + x
+    const ay0 = AXIS_Y[0] * zoom + y
+    const ay1 = AXIS_Y[1] * zoom + y
+
+    if (hLineRef.current) {
+      const s = hLineRef.current.style
+      s.top = `${cy}px`; s.left = `${ax0}px`; s.width = `${ax1 - ax0}px`; s.opacity = lineOpacity
+    }
+    if (vLineRef.current) {
+      const s = vLineRef.current.style
+      s.left = `${cx}px`; s.top = `${ay0}px`; s.height = `${ay1 - ay0}px`; s.opacity = lineOpacity
+    }
+
+    // Pills cap the four axis ends — Intense/Chill at the top/bottom of the vertical axis (x = cx),
+    // Dark/Bright at the left/right of the horizontal (y = cy) — and fade with the lines.
+    if (intenseRef.current) { const s = intenseRef.current.style; s.left = `${cx}px`; s.top = `${ay0}px`; s.opacity = lineOpacity }
+    if (chillRef.current)   { const s = chillRef.current.style;   s.left = `${cx}px`; s.top = `${ay1}px`; s.opacity = lineOpacity }
+    if (darkRef.current)    { const s = darkRef.current.style;    s.left = `${ax0}px`; s.top = `${cy}px`; s.opacity = lineOpacity }
+    if (brightRef.current)  { const s = brightRef.current.style;  s.left = `${ax1}px`; s.top = `${cy}px`; s.opacity = lineOpacity }
 
     // Zone chip: quadrant under the viewport centre; fades in as the crosshair fades out.
     const { w, h } = dimsRef.current
@@ -427,20 +476,22 @@ function AxisLayer({ preset }) {
 
   return (
     <div ref={rootRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
-      {/* Crosshair in canvas space (position set per frame) — marks value 50 on each axis. */}
-      <div ref={hLineRef} style={{ position: 'absolute', top: 0, left: EDGE, right: EDGE, height: 1, background: AXIS_COLOR, transform: 'translateY(-0.5px)' }} />
-      <div ref={vLineRef} style={{ position: 'absolute', left: 0, top: EDGE, bottom: EDGE, width: 1, background: AXIS_COLOR, transform: 'translateX(-0.5px)' }} />
+      {/* Crosshair, in canvas space — marks value 50 on each axis. Both ends and the crossing point
+          are set per frame from the viewport transform, so it pans off with the songs. */}
+      <div ref={hLineRef} style={{ position: 'absolute', height: 1, background: AXIS_COLOR, transform: 'translateY(-0.5px)' }} />
+      <div ref={vLineRef} style={{ position: 'absolute', width: 1, background: AXIS_COLOR, transform: 'translateX(-0.5px)' }} />
 
       <Bracket pos="tl" />
       <Bracket pos="tr" />
       <Bracket pos="bl" />
       <Bracket pos="br" />
 
-      {/* Pole pills on the canvas crosshair — left/top set per frame; fade with the lines. */}
-      <span ref={intenseRef} style={{ ...pillBase, top: EDGE, transform: 'translateX(-50%)', color: ACCENT1 }}>{preset.yHigh}</span>
-      <span ref={chillRef}   style={{ ...pillBase, bottom: EDGE, transform: 'translateX(-50%)', color: ACCENT1 }}>{preset.yLow}</span>
-      <span ref={darkRef}    style={{ ...pillBase, left: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>{preset.xLow}</span>
-      <span ref={brightRef}  style={{ ...pillBase, right: EDGE, transform: 'translateY(-50%)', color: ACCENT2 }}>{preset.xHigh}</span>
+      {/* Pole pills, in canvas space — left/top set per frame; each is pinned by its OUTER edge to
+          an axis end, so the pill body hangs inward over the line as it did against the card edge. */}
+      <span ref={intenseRef} style={{ ...pillBase, transform: 'translateX(-50%)', color: ACCENT1 }}>{preset.yHigh}</span>
+      <span ref={chillRef}   style={{ ...pillBase, transform: 'translate(-50%, -100%)', color: ACCENT1 }}>{preset.yLow}</span>
+      <span ref={darkRef}    style={{ ...pillBase, transform: 'translateY(-50%)', color: ACCENT2 }}>{preset.xLow}</span>
+      <span ref={brightRef}  style={{ ...pillBase, transform: 'translate(-100%, -50%)', color: ACCENT2 }}>{preset.xHigh}</span>
 
       {/* Zone chip — fades in when zoomed in, replacing the crosshair as orientation aid.
           Opacity is managed imperatively; clicking opens a 4-quadrant pan shortcut. */}
@@ -489,13 +540,22 @@ function AxisLayer({ preset }) {
 
 // —— Map chrome ————————————————————————————————————————————————————————————————
 
+// The two Figma surface tokens this chrome is built from: "extrusion" (a raised slab, lit from the
+// top-left) and "Inset" (a recess cut into one, lit from the bottom-right so it reads as carved in).
 const barShadow = '4px 4px 2.5px 0px rgba(0,0,0,0.9), inset 1px 1.5px 3px 0px #373737'
+const insetShadow = 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px rgba(0,0,0,0.7)'
+
+// Search glyph (Figma) — a filled outline, not a stroked circle+line, so the ring keeps its taper
+// and the handle its rounded join. Figma exports this as two paths behind an outside-mask (its way
+// of faking an outward stroke), but a mask forces the browser to rasterize the glyph through an
+// offscreen buffer, which is what made it render soft. A centred 1px stroke on the single base path
+// reproduces the same weight with no mask, so it stays vector-crisp at any DPR.
+const MAGNIFIER_PATH = 'M7.58341 14.6569C5.60748 14.6569 3.93273 13.9709 2.55914 12.5988C1.18638 11.2276 0.5 9.55415 0.5 7.57844C0.5 5.60274 1.18638 3.92887 2.55914 2.55683C3.93191 1.18479 5.60666 0.499177 7.58341 0.500001C9.56015 0.500824 11.2345 1.18684 12.6064 2.55806C13.9784 3.92928 14.6648 5.60274 14.6656 7.57844C14.6656 8.43659 14.5135 9.26714 14.2095 10.0701C13.9054 10.8731 13.5058 11.5599 13.0106 12.1306L20.314 19.4277C20.4294 19.543 20.4912 19.6851 20.4994 19.8539C20.5068 20.0211 20.445 20.1706 20.314 20.3023C20.1822 20.4341 20.0363 20.5 19.8765 20.5C19.7166 20.5 19.5708 20.4341 19.4389 20.3023L12.1368 13.004C11.5188 13.5303 10.8081 13.9375 10.0047 14.2258C9.2013 14.514 8.3938 14.6581 7.58217 14.6581M7.58217 13.4228C9.2219 13.4228 10.6066 12.8587 11.7363 11.7304C12.8652 10.6021 13.4296 9.21814 13.4296 7.57844C13.4296 5.93875 12.8656 4.55518 11.7375 3.42773C10.6095 2.30029 9.2252 1.73615 7.58464 1.73533C5.94408 1.73533 4.55937 2.29947 3.43051 3.42773C2.30165 4.556 1.7368 5.93957 1.73598 7.57844C1.73516 9.21732 2.29959 10.6009 3.42927 11.7292C4.55896 12.8574 5.94326 13.4216 7.58217 13.4216'
 
 function MagnifierIcon({ color }) {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="7.5" cy="7.5" r="5" stroke={color} strokeWidth="1.6" />
-      <line x1="11.4" y1="11.4" x2="15.5" y2="15.5" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
+    <svg width="21" height="21" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d={MAGNIFIER_PATH} fill={color} stroke={color} strokeWidth="1" strokeLinejoin="round" />
     </svg>
   )
 }
@@ -585,55 +645,77 @@ function SearchBar({ tracks, rf, onHighlight }) {
 
   return (
     <div ref={wrapperRef} style={{ position: 'absolute', left: 19, top: 19, width: 350, zIndex: 4 }}>
-      {/* Pill */}
+      {/* Extruded outer slab (Figma 925:49, 350×70) with the input field recessed into it — the 7px
+          gutter is what lets the inset field read as carved out of the slab rather than sat on it.
+          6px padding + the 1px border makes that 7px, and keeps the slab exactly 350×70 (matching the
+          toolbar's height) since the height is content-driven and so escapes border-box. */}
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '8px 10px 8px 22px',
+          padding: 6,
           background: CARD,
           borderRadius: 100,
+          border: '1px solid #000000',
           boxShadow: barShadow,
         }}
       >
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
-          onFocus={() => { if (query.length >= 2) setOpen(true) }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') { setOpen(false); setQuery(''); inputRef.current?.blur() }
-          }}
-          placeholder="Find a Song on Your Map"
-          style={{
-            flex: 1,
-            background: 'transparent',
-            border: 'none',
-            outline: 'none',
-            fontFamily: FONT,
-            fontSize: 14,
-            fontWeight: 500,
-            color: query ? '#fff' : TEXT_SECONDARY,
-          }}
-        />
         <div
-          onClick={() => inputRef.current?.focus()}
           style={{
-            width: 42,
-            height: 42,
-            borderRadius: '50%',
-            // Always shows the Flow toggle ON knob treatment: orange ring + dark tinted fill + orange glyph.
-            border: `1.5px solid ${ACCENT1}`,
-            background: 'rgba(20,20,22,0.2)',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            cursor: 'pointer',
+            gap: 8,
+            height: 56,
+            padding: '0 6px 0 20px',
+            background: CARD,
+            borderRadius: 100,
+            boxShadow: insetShadow,
           }}
         >
-          <MagnifierIcon color={ACCENT1} />
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
+            onFocus={() => { if (query.length >= 2) setOpen(true) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { setOpen(false); setQuery(''); inputRef.current?.blur() }
+            }}
+            placeholder="Find a Song on Your Map"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              background: 'transparent',
+              border: 'none',
+              outline: 'none',
+              fontFamily: FONT,
+              fontSize: 14,
+              fontWeight: 500,
+              color: query ? '#fff' : TEXT_SECONDARY,
+            }}
+          />
+          <div
+            onClick={() => inputRef.current?.focus()}
+            style={{
+              width: 45,
+              height: 45,
+              borderRadius: '50%',
+              // Orange ring + dark tinted fill + orange glyph — the Flow toggle's ON knob treatment.
+              border: `1.5px solid ${ACCENT1}`,
+              background: 'rgba(20,20,22,0.2)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              cursor: 'pointer',
+              // Pinned to Figma's y=6 rather than flex-centred, and that is deliberate: centring a
+              // 45px circle in the 56px field lands it on 5.5px, putting the ring AND the 21px glyph
+              // inside it on half-pixels, which is what made the icon look blurry. At y=6 every
+              // offset is a whole pixel (6, and 6 + (45-21)/2 = 18). Figma snapped it for the same
+              // reason — 6 above / 5 below is not sloppy centring, it is the pixel grid.
+              alignSelf: 'flex-start',
+              marginTop: 6,
+            }}
+          >
+            <MagnifierIcon color={ACCENT1} />
+          </div>
         </div>
       </div>
 
@@ -672,40 +754,100 @@ function SearchBar({ tracks, rf, onHighlight }) {
   )
 }
 
-function ToolDivider() {
-  return <div style={{ width: 1, height: 28, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
+// Recenter / fit-view glyph (Figma): a viewfinder — four bracketed corners around a centre dot.
+function RecenterIcon({ color }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M10 6.15385C8.97994 6.15385 8.00165 6.55907 7.28036 7.28036C6.55907 8.00165 6.15385 8.97994 6.15385 10C6.15385 11.0201 6.55907 11.9983 7.28036 12.7196C8.00165 13.4409 8.97994 13.8462 10 13.8462C11.0201 13.8462 11.9983 13.4409 12.7196 12.7196C13.4409 11.9983 13.8462 11.0201 13.8462 10C13.8462 8.97994 13.4409 8.00165 12.7196 7.28036C11.9983 6.55907 11.0201 6.15385 10 6.15385ZM7.33333 0H7.29949C6.17949 0 5.29128 -8.0237e-08 4.57641 0.0584615C3.8441 0.117949 3.22564 0.243077 2.66051 0.530256C1.74358 0.997615 0.998199 1.74335 0.531282 2.66051C0.243077 3.22462 0.117949 3.8441 0.0584615 4.57641C-8.0237e-08 5.29128 0 6.17949 0 7.29949V7.33333C0 7.53735 0.0810436 7.733 0.225302 7.87726C0.369561 8.02152 0.565218 8.10256 0.769231 8.10256C0.973244 8.10256 1.1689 8.02152 1.31316 7.87726C1.45742 7.733 1.53846 7.53735 1.53846 7.33333C1.53846 6.17231 1.53846 5.34667 1.59179 4.70154C1.64308 4.06564 1.74256 3.67077 1.90154 3.35795C2.22109 2.7309 2.7309 2.22109 3.35795 1.90154C3.67077 1.74256 4.06564 1.6441 4.70154 1.59179C5.34769 1.53949 6.17231 1.53846 7.33333 1.53846C7.53735 1.53846 7.733 1.45742 7.87726 1.31316C8.02152 1.1689 8.10256 0.973244 8.10256 0.769231C8.10256 0.565218 8.02152 0.369561 7.87726 0.225302C7.733 0.0810436 7.53735 0 7.33333 0ZM12.6667 1.53846C13.8287 1.53846 14.6533 1.53846 15.2985 1.59179C15.9344 1.64308 16.3292 1.74256 16.6421 1.90154C17.2691 2.22109 17.7789 2.7309 18.0985 3.35795C18.2574 3.67077 18.3559 4.06564 18.4082 4.70154C18.4605 5.34769 18.4615 6.17231 18.4615 7.33333C18.4615 7.53735 18.5426 7.733 18.6868 7.87726C18.8311 8.02152 19.0268 8.10256 19.2308 8.10256C19.4348 8.10256 19.6304 8.02152 19.7747 7.87726C19.919 7.733 20 7.53735 20 7.33333V7.29949C20 6.17949 20 5.29128 19.9415 4.57641C19.8821 3.8441 19.7569 3.22564 19.4697 2.66051C19.0027 1.74373 18.2573 0.998374 17.3405 0.531282C16.7744 0.243077 16.1559 0.117949 15.4236 0.0584615C14.7087 -8.0237e-08 13.8205 0 12.7005 0H12.6667C12.4627 4.29925e-09 12.267 0.0810436 12.1227 0.225302C11.9785 0.369561 11.8974 0.565218 11.8974 0.769231C11.8974 0.973244 11.9785 1.1689 12.1227 1.31316C12.267 1.45742 12.4627 1.53846 12.6667 1.53846ZM1.53846 12.6667C1.53846 12.4627 1.45742 12.267 1.31316 12.1227C1.1689 11.9785 0.973244 11.8974 0.769231 11.8974C0.565218 11.8974 0.369561 11.9785 0.225302 12.1227C0.0810436 12.267 0 12.4627 0 12.6667V12.7005C0 13.8205 -8.0237e-08 14.7087 0.0584615 15.4236C0.117949 16.1559 0.243077 16.7744 0.530256 17.3405C0.99779 18.2571 1.74351 19.0021 2.66051 19.4687C3.22462 19.7569 3.8441 19.8821 4.57641 19.9415C5.29128 20 6.17949 20 7.29949 20H7.33333C7.53735 20 7.733 19.919 7.87726 19.7747C8.02152 19.6304 8.10256 19.4348 8.10256 19.2308C8.10256 19.0268 8.02152 18.8311 7.87726 18.6868C7.733 18.5426 7.53735 18.4615 7.33333 18.4615C6.17231 18.4615 5.34667 18.4615 4.70154 18.4082C4.06564 18.3569 3.67077 18.2574 3.35795 18.0985C2.7309 17.7789 2.22109 17.2691 1.90154 16.6421C1.74256 16.3292 1.6441 15.9344 1.59179 15.2985C1.53949 14.6523 1.53846 13.8277 1.53846 12.6667ZM20 12.6667C20 12.4627 19.919 12.267 19.7747 12.1227C19.6304 11.9785 19.4348 11.8974 19.2308 11.8974C19.0268 11.8974 18.8311 11.9785 18.6868 12.1227C18.5426 12.267 18.4615 12.4627 18.4615 12.6667C18.4615 13.8287 18.4615 14.6533 18.4082 15.2985C18.3569 15.9344 18.2574 16.3292 18.0985 16.6421C17.7789 17.2691 17.2691 17.7789 16.6421 18.0985C16.3292 18.2574 15.9344 18.3559 15.2985 18.4082C14.6523 18.4605 13.8277 18.4615 12.6667 18.4615C12.4627 18.4615 12.267 18.5426 12.1227 18.6868C11.9785 18.8311 11.8974 19.0268 11.8974 19.2308C11.8974 19.4348 11.9785 19.6304 12.1227 19.7747C12.267 19.919 12.4627 20 12.6667 20H12.7005C13.8205 20 14.7087 20 15.4236 19.9415C16.1559 19.8821 16.7744 19.7569 17.3405 19.4697C18.2569 19.0025 19.0019 18.2571 19.4687 17.3405C19.7569 16.7744 19.8821 16.1559 19.9415 15.4236C20 14.7087 20 13.8205 20 12.7005V12.6667Z" fill={color} />
+    </svg>
+  )
 }
 
-function ToolButton({ children, onClick }) {
+// Zoom glyphs (Figma) — solid magnifiers with a chunky handle, not stroked outlines.
+function ZoomInIcon({ color }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M14.656 12.8978H13.7296L13.4013 12.5812C14.1341 11.73 14.6697 10.7273 14.9697 9.64495C15.2697 8.56258 15.3267 7.42729 15.1367 6.3203C14.5856 3.06086 11.8652 0.457994 8.58201 0.0593566C3.622 -0.550323 -0.540653 3.62364 0.0573628 8.58315C0.45604 11.866 3.05917 14.5862 6.31893 15.1372C7.42603 15.3272 8.56144 15.2702 9.64392 14.9702C10.7264 14.6702 11.7292 14.1347 12.5805 13.402L12.8971 13.7303V14.6565L17.8923 19.6395C18.373 20.1202 19.1469 20.1202 19.6277 19.6395L19.6394 19.6277C20.1202 19.147 20.1202 18.3732 19.6394 17.8925L14.656 12.8978ZM7.6205 12.8978C4.70078 12.8978 2.34389 10.5412 2.34389 7.62174C2.34389 4.70231 4.70078 2.34566 7.6205 2.34566C10.5402 2.34566 12.8971 4.70231 12.8971 7.62174C12.8971 10.5412 10.5402 12.8978 7.6205 12.8978ZM7.6205 4.69058C7.29218 4.69058 7.03421 4.94852 7.03421 5.27681V7.0355H5.27534C4.94702 7.0355 4.68905 7.29345 4.68905 7.62174C4.68905 7.95002 4.94702 8.20797 5.27534 8.20797H7.03421V9.96666C7.03421 10.2949 7.29218 10.5529 7.6205 10.5529C7.94882 10.5529 8.20679 10.2949 8.20679 9.96666V8.20797H9.96566C10.294 8.20797 10.5519 7.95002 10.5519 7.62174C10.5519 7.29345 10.294 7.0355 9.96566 7.0355H8.20679V5.27681C8.20679 4.94852 7.94882 4.69058 7.6205 4.69058Z" fill={color} />
+    </svg>
+  )
+}
+
+function ZoomOutIcon({ color }) {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M14.656 12.8978H13.7296L13.4013 12.5812C14.1341 11.73 14.6697 10.7273 14.9697 9.64495C15.2697 8.56258 15.3267 7.42729 15.1367 6.3203C14.5856 3.06086 11.8652 0.457994 8.58201 0.0593566C3.622 -0.550323 -0.540653 3.62364 0.0573628 8.58315C0.45604 11.866 3.05917 14.5862 6.31893 15.1372C7.42603 15.3272 8.56144 15.2702 9.64392 14.9702C10.7264 14.6702 11.7292 14.1347 12.5805 13.402L12.8971 13.7303V14.6565L17.8923 19.6395C18.373 20.1202 19.1469 20.1202 19.6277 19.6395L19.6394 19.6277C20.1202 19.147 20.1202 18.3732 19.6394 17.8925L14.656 12.8978ZM7.6205 12.8978C4.70078 12.8978 2.34389 10.5412 2.34389 7.62174C2.34389 4.70231 4.70078 2.34566 7.6205 2.34566C10.5402 2.34566 12.8971 4.70231 12.8971 7.62174C12.8971 10.5412 10.5402 12.8978 7.6205 12.8978ZM7.62176 7.03477C7.29344 7.03477 7.62176 7.03477 7.03547 7.03477L7.03421 7.0355H5.27534C4.94702 7.0355 4.68905 7.29345 4.68905 7.62174C4.68905 7.95002 4.94702 8.20797 5.27534 8.20797L7.03421 8.20723C7.03421 8.20723 7.29245 8.20723 7.62113 8.20723C7.94981 8.20723 8.20805 8.20723 8.20805 8.20723L8.20679 8.20797H9.96566C10.294 8.20797 10.5519 7.95002 10.5519 7.62174C10.5519 7.29345 10.294 7.0355 9.96566 7.0355H8.20679C8.20405 7.03477 7.95009 7.03477 7.62176 7.03477Z" fill={color} />
+    </svg>
+  )
+}
+
+function ToolDivider() {
+  return <div style={{ width: 1, height: 42, background: BORDER, flexShrink: 0 }} />
+}
+
+// A click on these fires an instant action (zoom step / recenter), so a raw :active flash would be
+// gone before the eye caught it. Hold the accent on for a floor of ~180ms after press instead.
+const PRESS_MIN_MS = 180
+
+// Recessed circular icon well (Figma 748:2975 et al). 50px against the 20px glyph keeps the inset
+// on whole pixels — (50 - 20) / 2 = 15 — so the icons stay crisp; see MagnifierIcon on why that
+// matters. Owns its icon rather than taking children so the pressed state can recolour the glyph.
+function ToolButton({ icon: Icon, onClick }) {
+  const [pressed, setPressed] = useState(false)
+  const downAt = useRef(0)
+  const timer = useRef(0)
+
+  useEffect(() => () => clearTimeout(timer.current), [])
+
+  const press = useCallback(() => {
+    clearTimeout(timer.current)
+    downAt.current = performance.now()
+    setPressed(true)
+  }, [])
+
+  // Keep the accent lit for the remainder of PRESS_MIN_MS if the click was quicker than that.
+  const release = useCallback(() => {
+    clearTimeout(timer.current)
+    const held = performance.now() - downAt.current
+    timer.current = setTimeout(() => setPressed(false), Math.max(0, PRESS_MIN_MS - held))
+  }, [])
+
   return (
     <div
       onClick={onClick}
+      onPointerDown={press}
+      onPointerUp={release}
+      onPointerLeave={() => { if (pressed) release() }}
       style={{
-        width: 40,
-        height: 40,
+        width: 50,
+        height: 50,
         borderRadius: '50%',
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         background: CARD,
-        color: '#9a9a9a',
-        boxShadow: 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px rgba(0,0,0,0.7)',
+        // The accent ring is an INSET shadow, not a border: a border would shrink the content box to
+        // 47px and drop the 20px glyph onto a half-pixel (13.5), so it would blur on every press.
+        // A shadow paints over the well without touching layout, so the glyph stays put at 15px.
+        boxShadow: pressed ? `inset 0 0 0 1.5px ${ACCENT1}, ${insetShadow}` : insetShadow,
+        transition: 'box-shadow 120ms ease',
         cursor: onClick ? 'pointer' : 'default',
       }}
     >
-      {children}
+      <Icon color={pressed ? ACCENT1 : ICON_PRIMARY} />
     </div>
   )
 }
 
 // Top-right toolbar: active preset label + zoom controls + compass dropdown.
 function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
-  const stroke = '#9a9a9a'
+  const stroke = ICON_PRIMARY
   const [compassOpen, setCompassOpen] = useState(false)
 
+  // Fit the axis box, not the nodes — same framing the map opens with, so this button always
+  // returns you to the full crosshair with its four poles in view.
   const handleFitView = useCallback(() => {
-    rf.fitView({ padding: 0.12, maxZoom: FIT_MAX_ZOOM, duration: 600 })
+    rf.fitBounds(AXIS_BOUNDS, { padding: FIT_PAD_FRAC, duration: 600 })
   }, [rf])
 
   const handleZoomIn  = useCallback(() => rf.zoomIn({ duration: 200 }), [rf])
@@ -720,44 +862,25 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
           Figma 748-1804) + the toolbar pill, right-anchored so the pill never shifts. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
       <FlowToggle />
-      {/* Toolbar pill — height matched to the Flow toggle (70px) so they sit as an even pair. */}
+      {/* Toolbar pill (Figma 748:2968). Height falls out of the design rather than being forced:
+          10px padding + the 50px icon wells = 70, which is exactly the search bar and Flow toggle
+          height, so all three sit as an even row. */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 16,
+        display: 'flex', alignItems: 'center', gap: 20,
         height: 70, boxSizing: 'border-box',
-        padding: '8px 22px', background: CARD, borderRadius: 100, boxShadow: barShadow,
+        padding: '10px 30px', background: CARD, borderRadius: 100, boxShadow: barShadow,
         position: 'relative',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 500, color: TEXT_SECONDARY }}>Preset</span>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1 }} />
           <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: '#fff' }}>{presetName}</span>
         </div>
         <ToolDivider />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <ToolButton onClick={handleFitView}>
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <circle cx="9" cy="9" r="3" stroke={stroke} strokeWidth="1.5" />
-              <line x1="9" y1="1.5" x2="9" y2="3.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="9" y1="14.5" x2="9" y2="16.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="1.5" y1="9" x2="3.5" y2="9" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="14.5" y1="9" x2="16.5" y2="9" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </ToolButton>
-          <ToolButton onClick={handleZoomIn}>
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <circle cx="7.5" cy="7.5" r="5" stroke={stroke} strokeWidth="1.5" />
-              <line x1="11.4" y1="11.4" x2="15.5" y2="15.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="5.3" y1="7.5" x2="9.7" y2="7.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="7.5" y1="5.3" x2="7.5" y2="9.7" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </ToolButton>
-          <ToolButton onClick={handleZoomOut}>
-            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-              <circle cx="7.5" cy="7.5" r="5" stroke={stroke} strokeWidth="1.5" />
-              <line x1="11.4" y1="11.4" x2="15.5" y2="15.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-              <line x1="5.3" y1="7.5" x2="9.7" y2="7.5" stroke={stroke} strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          </ToolButton>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <ToolButton icon={RecenterIcon} onClick={handleFitView} />
+          <ToolButton icon={ZoomInIcon} onClick={handleZoomIn} />
+          <ToolButton icon={ZoomOutIcon} onClick={handleZoomOut} />
         </div>
         <ToolDivider />
         {/* Chevron toggle — rotates when compass is open */}
@@ -804,8 +927,8 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
   )
 }
 
-// 3000px overflow on each side of the 6000×6000 canvas — songs at the edges
-// can be centered without hitting a hard wall
+// 3000px of overflow on each side of the canvas — songs at the edges can be centered without
+// hitting a hard wall.
 const TRANSLATE_EXTENT = [[-3000, -3000], [W + 3000, H + 3000]]
 
 // Manual zoom ceiling. Cards grow only slowly with zoom (dampened counter-scale — see NODE_PIN /
@@ -815,9 +938,9 @@ const TRANSLATE_EXTENT = [[-3000, -3000], [W + 3000, H + 3000]]
 // covers centering at this zoom.
 const MAX_ZOOM = 3.5
 
-// Auto-fit (initial load + the fit-view button) is capped lower than MAX_ZOOM so a tightly
-// clustered library opens with surrounding context instead of slamming to the manual ceiling;
-// the user can then zoom deeper by hand.
+// Ceiling on the auto-fit zoom, below MAX_ZOOM. Now that the fit frames the axis box rather than
+// the song cluster, this only binds on a very small card — but it keeps the fit from ever slamming
+// to the manual ceiling; the user can still zoom deeper by hand.
 const FIT_MAX_ZOOM = 1.6
 
 function DriftMapInner({ tracks }) {
@@ -1067,37 +1190,28 @@ function DriftMapInner({ tracks }) {
     const allMeasured = nodes.every((n) => n.measured?.width && n.measured?.height)
     if (!allMeasured) return
 
-    const songNodes = nodes.filter((n) => n.type === 'track')
-    const xs = songNodes.map((n) => n.position.x)
-    const ys = songNodes.map((n) => n.position.y)
-    const minX = Math.min(...xs), maxX = Math.max(...xs)
-    const minY = Math.min(...ys), maxY = Math.max(...ys)
-
-    // Frame the songs' actual bounding box (not the whole canvas): center on the box's
-    // midpoint and zoom to fit its extent, so a clustered library fills the view instead
-    // of leaving empty canvas around it.
-    const bboxW = (maxX - minX) || 1
-    const bboxH = (maxY - minY) || 1
-    const bboxCx = (minX + maxX) / 2
-    const bboxCy = (minY + maxY) / 2
-
-    // Measure the map card (ReactFlow's container), not the window — the canvas now lives
-    // inside an inset card, so centering must use the card's own dimensions.
+    // Frame the AXIS box, not the songs' bounding box. The crosshair and its terminator pills are
+    // canvas-anchored (see AxisLayer), so they only work as a frame of reference if the default view
+    // actually contains them — fitting the song cluster alone crops the axis ends, and their pills,
+    // off the card. The axis box always contains the songs (2%–98% brackets PAD's 5%–95%), so this
+    // still frames the whole library; it just pulls back far enough to show the poles the library is
+    // being measured against. Cost, accepted: a tightly-clustered library no longer fills the view.
+    // Measure the map card (ReactFlow's container), not the window — the canvas lives inside an
+    // inset card, so centering must use the card's own dimensions.
     const rect = wrapperRef.current?.getBoundingClientRect()
     const vw = rect?.width ?? window.innerWidth - MAP_LEFT - PAGE_INSET
     const vh = rect?.height ?? window.innerHeight - 2 * PAGE_INSET
 
-    const PAD_FRAC = 0.12
     const zoom = Math.min(
-      (vw * (1 - 2 * PAD_FRAC)) / bboxW,
-      (vh * (1 - 2 * PAD_FRAC)) / bboxH,
-      FIT_MAX_ZOOM, // don't auto-open a tight cluster slammed to the manual ceiling
+      (vw * (1 - 2 * FIT_PAD_FRAC)) / AXIS_BOUNDS.width,
+      (vh * (1 - 2 * FIT_PAD_FRAC)) / AXIS_BOUNDS.height,
+      FIT_MAX_ZOOM,
     )
-    const x = vw / 2 - bboxCx * zoom
-    const y = vh / 2 - bboxCy * zoom
+    // The axis box is centred on the canvas, so its midpoint is the crosshair itself.
+    const x = vw / 2 - (W / 2) * zoom
+    const y = vh / 2 - (H / 2) * zoom
 
-    // Let users still zoom out to take in the full canvas, even though the default frames
-    // only the songs.
+    // Let users still zoom out past the default to take in the full canvas.
     const canvasFitZoom = Math.min(vw / W, vh / H)
 
     console.log(`[drift] viewport: zoom=${zoom.toFixed(4)} x=${x.toFixed(1)} y=${y.toFixed(1)} (map ${Math.round(vw)}×${Math.round(vh)})`)
