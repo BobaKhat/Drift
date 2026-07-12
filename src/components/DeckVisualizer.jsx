@@ -803,17 +803,21 @@ export default function DeckVisualizer({ track, open }) {
     // Straight down. A Chladni figure IS a 2D shape lying on the surface, and any rake foreshortens
     // it into an ellipse — the pattern is the subject, so the pattern gets the undistorted view.
     //
-    // The distance keeps the CROPPED framing chosen earlier: the rim projects to ~1.16 in NDC, so
-    // the disc runs off the top and bottom and the panel shows a close-up of a larger plate. A
-    // fully-contained disc would need ~4.9 here, but it only fills 93% of the panel height and the
-    // ceiling on an uncropped plate is about +7% — so containment costs a fifth of the size. If the
-    // whole rim should be visible instead, this one number goes to 4.9 and nothing else changes.
+    // The distance FRAMES the figure, and the whole figure is now inside the frame. The tile is
+    // landscape (~16:9 and wider), so the VERTICAL axis is the one that crops: at a 45° vertical fov
+    // the frame shows ±d·tan(22.5°) = ±0.414·d world units, and the sand is hard-clamped at EDGE_R
+    // (1.75) by the position pass. So containment is one inequality — 0.414·d > 1.75, i.e. d > 4.23.
+    // At 4.4 the sand rim lands at ~96% of the half-height: contained, with a little air around it.
     //
-    // Because the rim now sits outside the frame, the circular containment at EDGE_R is load-bearing:
-    // without it, outward-driven grains would pile into a hard arc just off-screen. Fixed; no
-    // OrbitControls.
+    // This used to sit at 3.85, which put the rim at 110% of the half-height and sliced the disc flat
+    // along the top and bottom edges. That was a deliberate crop back when a 1.85-radius PLATE mesh
+    // sat under the sand and the shot was a close-up of a larger object — the plate is gone, so the
+    // crop was just clipping the subject.
+    //
+    // The circular clamp at EDGE_R stays load-bearing regardless: it is what stops outward-driven
+    // grains piling into a hard arc at the boundary. Fixed camera; no OrbitControls.
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 50)
-    camera.position.set(0, 3.85, 0)
+    camera.position.set(0, 4.4, 0)
     // Looking straight down, the view direction is parallel to the DEFAULT up vector (0,1,0), and
     // lookAt's cross product degenerates — the camera's orientation is undefined and the scene can
     // come out blank or arbitrarily rolled. Re-point up along -Z first so "up the screen" means
