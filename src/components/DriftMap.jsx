@@ -241,11 +241,12 @@ function Bracket({ pos }) {
   const c = 'rgba(255,255,255,0.22)'
   const w = '1.5px solid ' + c
   const size = 22
+  const r = 8 // elbow radius — the L bends into a soft arc rather than a hard right angle
   const variants = {
-    tl: { top: EDGE, left: EDGE, borderTop: w, borderLeft: w, borderTopLeftRadius: 3 },
-    tr: { top: EDGE, right: EDGE, borderTop: w, borderRight: w, borderTopRightRadius: 3 },
-    bl: { bottom: EDGE, left: EDGE, borderBottom: w, borderLeft: w, borderBottomLeftRadius: 3 },
-    br: { bottom: EDGE, right: EDGE, borderBottom: w, borderRight: w, borderBottomRightRadius: 3 },
+    tl: { top: EDGE, left: EDGE, borderTop: w, borderLeft: w, borderTopLeftRadius: r },
+    tr: { top: EDGE, right: EDGE, borderTop: w, borderRight: w, borderTopRightRadius: r },
+    bl: { bottom: EDGE, left: EDGE, borderBottom: w, borderLeft: w, borderBottomLeftRadius: r },
+    br: { bottom: EDGE, right: EDGE, borderBottom: w, borderRight: w, borderBottomRightRadius: r },
   }
   return <div style={{ position: 'absolute', width: size, height: size, ...variants[pos] }} />
 }
@@ -269,7 +270,7 @@ const zoneChipStyle = {
   fontSize: 12,
   fontWeight: 500,
   letterSpacing: '0.02em',
-  color: '#cfcfcf',
+  color: '#fff',
   whiteSpace: 'nowrap',
   zIndex: 3,
   cursor: 'pointer',
@@ -291,7 +292,7 @@ function ZoneOption({ label, onSelect, isLast }) {
         fontSize: 12,
         fontWeight: 500,
         letterSpacing: '0.02em',
-        color: '#cfcfcf',
+        color: '#fff',
         background: hovered ? 'rgba(255,255,255,0.06)' : 'transparent',
         borderBottom: isLast ? 'none' : `1px solid ${BORDER}`,
         whiteSpace: 'nowrap',
@@ -588,7 +589,7 @@ function SearchResult({ track, onSelect, isLast }) {
             draggable={false}
           />
         ) : (
-          <div style={{ width: '100%', height: '100%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: 'rgba(255,255,255,0.3)' }}>
+          <div style={{ width: '100%', height: '100%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: TEXT_SECONDARY }}>
             ♪
           </div>
         )}
@@ -644,7 +645,7 @@ function SearchBar({ tracks, rf, onHighlight }) {
   const showDropdown = open && query.length >= 2
 
   return (
-    <div ref={wrapperRef} style={{ position: 'absolute', left: 19, top: 19, width: 350, zIndex: 4 }}>
+    <div ref={wrapperRef} style={{ position: 'absolute', left: 39, top: 19, width: 350, zIndex: 4 }}>
       {/* Extruded outer slab (Figma 925:49, 350×70) with the input field recessed into it — the 7px
           gutter is what lets the inset field read as carved out of the slab rather than sat on it.
           6px padding + the 1px border makes that 7px, and keeps the slab exactly 350×70 (matching the
@@ -780,10 +781,6 @@ function ZoomOutIcon({ color }) {
   )
 }
 
-function ToolDivider() {
-  return <div style={{ width: 1, height: 42, background: BORDER, flexShrink: 0 }} />
-}
-
 // A click on these fires an instant action (zoom step / recenter), so a raw :active flash would be
 // gone before the eye caught it. Hold the accent on for a floor of ~180ms after press instead.
 const PRESS_MIN_MS = 180
@@ -855,7 +852,7 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
 
   return (
     <div style={{
-      position: 'absolute', right: 19, top: 19, zIndex: 4,
+      position: 'absolute', right: 39, top: 19, zIndex: 4,
       display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10,
     }}>
       {/* Top row: Flow toggle (build mode only, sits LEFT of the toolbar — Decision Log #48–50,
@@ -866,7 +863,7 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
           10px padding + the 50px icon wells = 70, which is exactly the search bar and Flow toggle
           height, so all three sit as an even row. */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 20,
+        display: 'flex', alignItems: 'center', gap: 14,
         height: 70, boxSizing: 'border-box',
         padding: '10px 30px', background: CARD, borderRadius: 100, boxShadow: barShadow,
         position: 'relative',
@@ -876,13 +873,11 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1 }} />
           <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: '#fff' }}>{presetName}</span>
         </div>
-        <ToolDivider />
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <ToolButton icon={RecenterIcon} onClick={handleFitView} />
           <ToolButton icon={ZoomInIcon} onClick={handleZoomIn} />
           <ToolButton icon={ZoomOutIcon} onClick={handleZoomOut} />
         </div>
-        <ToolDivider />
         {/* Chevron toggle — rotates when compass is open */}
         <button
           onClick={() => setCompassOpen((o) => !o)}

@@ -63,7 +63,10 @@ export function PrimaryButton({ children, onClick, disabled, style }) {
   )
 }
 
-// Recessed secondary button (Paste your tracklist / Back).
+// Secondary button (Paste your tracklist / Back). Styled to match the Explore By preset rows at
+// rest (ExploreByPanel): card fill, #848484 label, pill, 16px/500 — all of which already lined up —
+// plus the outer drop-shadow those rows carry. Without it the button read as purely recessed (inset
+// lip only); the drop-shadow is what makes it sit proud of the panel the way the preset rows do.
 export function SecondaryButton({ children, onClick, disabled, style }) {
   return (
     <button
@@ -74,6 +77,7 @@ export function SecondaryButton({ children, onClick, disabled, style }) {
         background: C.card,
         color: C.textSecondary,
         boxShadow: PANEL_LIP,
+        filter: 'drop-shadow(4px 4px 2.5px black)',
         opacity: disabled ? 0.4 : 1,
         ...style,
       }}

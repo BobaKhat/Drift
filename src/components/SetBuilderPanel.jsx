@@ -60,7 +60,7 @@ function SongThumb({ url, size = ROW_ART }) {
       {url ? (
         <img src={url} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
       ) : (
-        <div style={{ width: '100%', height: '100%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, color: 'rgba(255,255,255,0.3)' }}>♪</div>
+        <div style={{ width: '100%', height: '100%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, color: C.textSecondary }}>♪</div>
       )}
     </div>
   )
@@ -466,8 +466,8 @@ export default function SetBuilderPanel() {
           r2 #5). Empty prompt shows only when there's nothing at all in the set. */}
       {empty ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 8, padding: '0 20px' }}>
-          <div style={{ fontSize: 15, fontWeight: 500, color: 'rgba(255,255,255,0.55)' }}>Click a song to start your set</div>
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>Then drag a wire from its socket to chain the next track.</div>
+          <div style={{ fontSize: 15, fontWeight: 500, color: C.textSecondary }}>Click a song to start your set</div>
+          <div style={{ fontSize: 12, color: C.textSecondary }}>Then drag a wire from its socket to chain the next track.</div>
         </div>
       ) : (
         <div ref={scrollRef} className="hide-scrollbar" style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: ROW_GAP, flex: 1, overflowY: 'auto', minHeight: 0 }}>

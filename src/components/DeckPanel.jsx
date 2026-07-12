@@ -397,7 +397,7 @@ function NextUp({ track, nextTrack }) {
       background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
       display: 'flex', flexDirection: 'column', gap: GAP,
     }}>
-      <div style={{ fontFamily: FONT, fontSize: 10, fontWeight: 500, color: '#5D5D5D', letterSpacing: '0.04em' }}>NEXT UP</div>
+      <div style={{ fontFamily: FONT, fontSize: 10, fontWeight: 500, color: SUB, letterSpacing: '0.04em' }}>NEXT UP</div>
       {nextTrack ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
@@ -419,8 +419,8 @@ function NextUp({ track, nextTrack }) {
       ) : (
         // Not in an active set chain — the V1 solo-browse state (Decision Log #66).
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 6, paddingBottom: 4 }}>
-          <div style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.75)' }}>Add to a set</div>
-          <div style={{ fontFamily: FONT, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>Chain this song in the Set Builder to see what mixes next.</div>
+          <div style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: SUB }}>Add to a set</div>
+          <div style={{ fontFamily: FONT, fontSize: 11, color: SUB }}>Chain this song in the Set Builder to see what mixes next.</div>
         </div>
       )}
     </div>
@@ -458,8 +458,8 @@ function CompatibleKeys({ track }) {
       ) : (
         // Key-unknown empty state (Decision Log #65, key-unknown state).
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.6)' }}>Key unknown</div>
-          <div style={{ fontFamily: FONT, fontSize: 11, color: 'rgba(255,255,255,0.3)', marginTop: 6 }}>No Camelot data for this track.</div>
+          <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: SUB }}>Key unknown</div>
+          <div style={{ fontFamily: FONT, fontSize: 11, color: SUB, marginTop: 6 }}>No Camelot data for this track.</div>
         </div>
       )}
     </div>

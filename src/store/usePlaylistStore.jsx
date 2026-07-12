@@ -119,19 +119,16 @@ export function PlaylistProvider({ children }) {
     }
   }, [])
 
-  // Sever the wire AFTER the song at `index` (Decision Log #35, Slice 9 #2). Downstream songs
-  // orphan as one group, keeping their wires to each other. The tail row is a no-op (nothing
-  // downstream). Unlinking the head is special: song #2 re-anchors as the new head and the former
-  // head becomes a solo orphan.
+  // Sever the wire AFTER the song at `index` (Decision Log #35, Slice 9 #2). The rule is anchored on
+  // the head: the side of the cut still connected to the head KEEPS anchor status, and the side that
+  // lost its path back to the head orphans as one group, keeping its internal wires. So the upstream
+  // remainder [0..index] stays the chain and everything downstream orphans — uniformly, at every
+  // index. Cutting head→#2 is just index 0 of that rule: the head survives as a 1-song chain (still
+  // the head, still haloed, since headId = chain[0]) and songs #2..n orphan together. The tail row is
+  // a no-op (nothing downstream).
   const unlinkAfter = useCallback((index) => {
     const prev = chainRef.current
     if (index < 0 || index >= prev.length || index === prev.length - 1) return
-    if (index === 0) {
-      const former = prev[0]
-      setChain(prev.slice(1))
-      setOrphanGroups((g) => [...g, { id: nextGroupId(), tracks: [former] }])
-      return
-    }
     const downstream = prev.slice(index + 1)
     setChain(prev.slice(0, index + 1))
     setOrphanGroups((g) => [...g, { id: nextGroupId(), tracks: downstream }])

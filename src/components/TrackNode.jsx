@@ -3,7 +3,7 @@ import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react'
 import ColorThief from 'colorthief'
 import { nearestCardinal } from '../lib/setChain'
 import { camelotColor } from '../lib/camelot'
-import { ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
+import { C, ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
 
 // Album-art ambient glow (Slice 11.5): one shared ColorThief extractor + a URL→color cache so each
 // unique cover is sampled only once across the whole map (and the color survives node data being
@@ -135,12 +135,12 @@ const ROOT_TRANSITION = t('width', 'height', 'border-radius', 'background', 'bor
 
 const nameStyle = {
   fontFamily: FONT, fontSize: 11, fontWeight: 600, letterSpacing: '0.02em',
-  color: 'rgba(255,255,255,0.9)', lineHeight: 1.3,
+  color: C.textPrimary, lineHeight: 1.3,
   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
 }
 const subStyle = {
   fontFamily: FONT, fontSize: 9, letterSpacing: '0.03em',
-  color: 'rgba(255,255,255,0.4)',
+  color: C.textSecondary,
   whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
 }
 

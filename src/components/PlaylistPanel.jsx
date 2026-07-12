@@ -46,7 +46,7 @@ export default function PlaylistPanel() {
                   }}
                 />
               )}
-              <span style={{ fontSize: 14, fontWeight: 500, color: active ? C.textPrimary : 'rgba(255,255,255,0.72)' }}>
+              <span style={{ fontSize: 14, fontWeight: 500, color: active ? C.textPrimary : C.textSecondary }}>
                 {p.name}
               </span>
               <span style={{ fontSize: 12, color: C.textSecondary }}>
@@ -57,24 +57,35 @@ export default function PlaylistPanel() {
         })}
       </div>
 
+      {/* Matches the Explore By preset rows' resting style (ExploreByPanel: 58px pill, card fill,
+          outer drop-shadow + inset lip overlay, 16px/500 label). Those rows are a radio group with
+          an indicator knob and an active state; this is a one-shot action, so it takes the shell
+          only — no knob, label centred — and keeps the accent-orange label that marks it as the
+          panel's CTA. */}
       <button
         onClick={() => openImport('welcome')}
         style={{
+          position: 'relative',
           marginTop: 16,
-          height: 44,
+          height: 58,
           borderRadius: RADIUS.pill,
           background: C.card,
-          boxShadow: PANEL_LIP,
           border: 'none',
+          filter: 'drop-shadow(4px 4px 2.5px black)',
           color: C.accent1,
           fontFamily: FONT,
-          fontSize: 14,
+          fontSize: 16,
           fontWeight: 500,
           cursor: 'pointer',
           flexShrink: 0,
         }}
       >
-        Import more
+        <div style={{
+          position: 'absolute', inset: 0, borderRadius: 'inherit',
+          boxShadow: PANEL_LIP,
+          pointerEvents: 'none',
+        }} />
+        <span style={{ position: 'relative' }}>Import more</span>
       </button>
     </div>
   )

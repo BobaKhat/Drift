@@ -3,7 +3,7 @@ import PlaylistPanel from './PlaylistPanel'
 import ExploreByPanel from './ExploreByPanel'
 import SetBuilderPanel from './SetBuilderPanel'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { ACCENT1_FILL } from './import/tokens'
+import { ACCENT1_FILL, C } from './import/tokens'
 import brandmark from '../assets/brandmark.png'
 import logo from '../assets/Logo.png'
 
@@ -401,7 +401,7 @@ export default function LeftNav() {
                 fontFamily: FONT,
                 fontSize: 9,
                 letterSpacing: '0.20em',
-                color: 'rgba(255,255,255,0.40)',
+                color: C.textSecondary,
                 marginBottom: 20,
                 textTransform: 'uppercase',
               }}
@@ -416,7 +416,7 @@ export default function LeftNav() {
                   fontFamily: FONT,
                   fontSize: 10,
                   letterSpacing: '0.06em',
-                  color: 'rgba(255,255,255,0.18)',
+                  color: C.textSecondary,
                 }}
               >
                 Coming soon

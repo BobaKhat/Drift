@@ -29,8 +29,10 @@ const pillInset = {
   boxShadow: 'inset 0px 0px 5px 0px #505050',
   pointerEvents: 'none',
 }
+// 12px in both mounts (Explore By panel + map toolbar) so the two compasses read as one component
+// at one scale — the toolbar copy used to render its pills at 14.
 const pillText = {
-  fontFamily: FONT, fontSize: 14, fontWeight: 510,
+  fontFamily: FONT, fontSize: 12, fontWeight: 510,
   lineHeight: 'normal', whiteSpace: 'nowrap', position: 'relative',
 }
 
@@ -38,7 +40,6 @@ export default function CompassPreview({ presetKey, locked = false }) {
   const p = PRESETS[presetKey] ?? PRESETS.vibe
   const { activeQuadrant: storeQuadrant } = usePlaylistStore()
   const activeQuadrant = locked ? null : storeQuadrant
-  const pillFontSize = locked ? 12 : 14
 
   // Active quadrant dims non-active sectors; null = all visible (panel before any pan)
   const qOp = (q) => activeQuadrant == null ? 1 : activeQuadrant === q ? 1 : 0.12
@@ -151,22 +152,22 @@ export default function CompassPreview({ presetKey, locked = false }) {
       {/* Top — yHigh (orange) */}
       <div style={{ ...pillShell, left: '50%', top: 10, transform: 'translateX(-50%)', padding: '10px 25px' }}>
         <div style={pillInset} />
-        <span style={{ ...pillText, fontSize: pillFontSize, color: yHighColor, transition: 'color 300ms ease' }}>{p.yHigh}</span>
+        <span style={{ ...pillText, color: yHighColor, transition: 'color 300ms ease' }}>{p.yHigh}</span>
       </div>
       {/* Bottom — yLow (orange) */}
       <div style={{ ...pillShell, left: '50%', top: 228, transform: 'translateX(-50%)', padding: '10px 25px' }}>
         <div style={pillInset} />
-        <span style={{ ...pillText, fontSize: pillFontSize, color: yLowColor, transition: 'color 300ms ease' }}>{p.yLow}</span>
+        <span style={{ ...pillText, color: yLowColor, transition: 'color 300ms ease' }}>{p.yLow}</span>
       </div>
       {/* Right — xHigh (blue) */}
       <div style={{ ...pillShell, right: 10, top: '50%', transform: 'translateY(-50%)', padding: '10px 15px' }}>
         <div style={pillInset} />
-        <span style={{ ...pillText, fontSize: pillFontSize, color: xHighColor, transition: 'color 300ms ease' }}>{p.xHigh}</span>
+        <span style={{ ...pillText, color: xHighColor, transition: 'color 300ms ease' }}>{p.xHigh}</span>
       </div>
       {/* Left — xLow (blue) */}
       <div style={{ ...pillShell, left: 10, top: '50%', transform: 'translateY(-50%)', padding: '10px 15px' }}>
         <div style={pillInset} />
-        <span style={{ ...pillText, fontSize: pillFontSize, color: xLowColor, transition: 'color 300ms ease' }}>{p.xLow}</span>
+        <span style={{ ...pillText, color: xLowColor, transition: 'color 300ms ease' }}>{p.xLow}</span>
       </div>
     </div>
   )
