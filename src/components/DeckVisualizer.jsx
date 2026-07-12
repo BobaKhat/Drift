@@ -35,12 +35,51 @@ const PARTICLE_COUNT = TEX * TEX   // 65,536
 const PLATE_R = 1.8                // the plate's physical radius; also the x/y normaliser for the modes
 const EDGE_R = 1.75                // grains are contained just inside the rim
 const SPAWN_R = 1.70
+const DENSITY_TEX = 64             // density splat target; deliberately coarse — see DENSITY_VERT
 
 // Bass transients (CPU) → a decaying kick (GPU) that briefly throws extra dust off the plate.
 const BASS_ONSET = 0.15
 const BASS_JUMP = 0.08
 
 const FALLBACK_RGB = [0.5, 0.53, 0.62] // neutral slate when no album colour is available
+const BG = 0x0a0a0a                    // matches the panel; there is no plate, so this IS the backdrop
+
+// GLOW — flat across the catalogue. It used to scale with the track's cached energy, and that is
+// deliberately gone: the sand should read as luminous on every record, not just the loud ones. The
+// song is still legible in the FIGURE (mode selection is energy- and hash-driven and untouched) and
+// in how hard the plate is being shaken; it is no longer legible in how brightly the grains burn.
+//
+// This drives the grains' own emission — the emissive term and the edge softness. It does NOT set the
+// bloom any more; see below.
+const GLOW = 1.0
+
+// BLOOM — hand-tuned, and deliberately NOT derived from GLOW. Emission and bloom pull in opposite
+// directions here and the single knob was hiding that. Emission is what makes a GRAIN look hot; bloom
+// is what smears that heat into the black between the nodal lines, and past a certain strength it
+// fills the cells and the figure stops being readable at all. The pattern is the subject, so the
+// bloom is set to whatever still leaves the gaps empty, and the grains are made hot by the emissive
+// instead — where the light stays ON the sand rather than spilling off it.
+//
+// Threshold stays low (only the brightest cores bloom at all); strength and radius are what got pulled
+// back. Strength gets a small live-audio term on top of this each frame.
+const BLOOM_STRENGTH = 0.38
+const BLOOM_RADIUS = 0.35
+const BLOOM_THRESHOLD = 0.67
+
+// —— The lighting rig. Three lights, no shadows (65k points cannot afford a shadow map, and sand at
+// this scale self-shadows into the fake AO term rather than casting). Directions are in the point
+// sprite's space: +x right, +y up the screen, +z toward the camera.
+const KEY_DIR = [0.5, 0.9, 0.3]      // warm, strong, high
+const KEY_COLOR = [1.0, 0.95, 0.88]
+const KEY_I = 0.85
+const FILL_DIR = [-0.4, 0.5, -0.2]   // cool, soft, opposite — keeps the shadow side off pure black
+const FILL_COLOR = [0.85, 0.9, 1.0]
+const FILL_I = 0.25
+const RIM_COLOR = [1.0, 0.95, 0.9]   // Fresnel edge light; directionless by design (see POINTS_FRAG)
+const RIM_I = 0.4
+
+const v3 = (a) => new THREE.Vector3(a[0], a[1], a[2]).normalize()
+const rgb = (a) => new THREE.Vector3(a[0], a[1], a[2])
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v))
 
@@ -175,6 +214,7 @@ precision highp float;
 
 uniform sampler2D uPositionTexture;
 uniform sampler2D uVelocityTexture;
+uniform sampler2D uDensityTexture;  // 64×64 splat of where the grains currently are
 uniform float uTime;
 uniform float uDeltaTime;
 uniform float uBass;
@@ -189,11 +229,22 @@ ${FIELD}
 
 #define PLATE_R ${PLATE_R.toFixed(2)}
 #define EDGE_R ${EDGE_R.toFixed(2)}
+#define PLATE_SPAN ${(PLATE_R * 2).toFixed(2)}
 
 // Migration: acceleration toward the nodal lines, per frame at 60fps. Budget from the TARGET SPEED,
 // not from the force: xz damping keeps 97% per frame, so a constant force compounds to F/(1-0.97) =
-// 33F. A grain should cross a cell in a couple of seconds — ~0.012 units/frame — so F ≈ 0.0004.
-#define MIGRATE 0.0004
+// 33F. A grain crossing a cell in a couple of seconds wants ~0.012 units/frame, which is F ≈ 0.0004.
+//
+// This runs at 1.5× that. The extra is bought to CLEAR THE CELLS: migration and AGITATION are in
+// equilibrium, and the balance point sets both how wide a nodal line is and how much loose sand hangs
+// between the lines. At the budgeted force the figure was legible but hazy — enough strays mid-cell to
+// grey out the gaps, and with the bloom on, that haze filled them in. Winding migration up biases the
+// equilibrium toward the lines: they tighten and the cells empty.
+//
+// What this does NOT fix is the grains stranded at the antinode PEAKS, where grad(d²) vanishes and
+// STICTION pins them regardless of how strong this is (see STICTION — those strays are on purpose).
+// If the cells still are not clean enough, STICTION is the knob, not this one.
+#define MIGRATE 0.0006
 
 // AGITATION — the plate is shaking, so grains random-walk. This is not a garnish: without it every
 // grain settles onto the mathematical zero of the field and the plate renders as clean one-pixel
@@ -215,6 +266,29 @@ ${FIELD}
 // nodal lines inward into a false ring.
 #define RIM_SOFT 1.63
 #define RIM_RETURN 0.0004
+
+// SPREADING — grains push each other sideways, so a nodal line is a BAND with a thick core and
+// sparse shoulders, not a hairline. Read as a gradient off the density splat and applied against
+// MIGRATE: at a saturated gradient this is comparable to the seek force, so the pile widens until
+// its own density gradient flattens and the two balance. That equilibrium IS the line's width.
+//
+// The raw gradient is unusable as a force. Density is an unbounded additive accumulation (65k grains
+// splatting into 4k texels — a packed nodal line reads several units per texel), so scaling it by a
+// constant, as the obvious formulation does, produces forces two orders of magnitude past MIGRATE and
+// blows the plate apart on the first frame the sand gets anywhere near organised. Same fix as the
+// migration force below it: DIRECTION from the gradient, saturating 0..1 magnitude.
+#define SPREAD 0.0003
+#define DENS_STEP 0.02
+
+// Gravity, lowered from 0.008 so a hop reads. Hang time is 2v/g frames: a bass hop leaves the
+// surface at ~0.06/frame, so 24 frames ≈ 0.4s in the air, peaking ~0.35 units up.
+#define GRAVITY 0.005
+
+// The two hops. Both are budgeted as an INTEGRAL, not a per-frame force, and both are gated to
+// grounded grains — which is also what makes them self-limiting: a grain only receives the kick for
+// the one or two frames before it leaves the surface, and then it is ballistic.
+#define TRANS_HOP 0.030   // song change: grains stranded far off the incoming figure jump for it
+#define BASS_HOP 0.006    // kick drum: grains over the antinodes bounce, grains on the lines don't
 
 varying vec2 vUv;
 
@@ -282,35 +356,79 @@ void main() {
     velocity.xz -= (grad / gm) * (MIGRATE * seek * sat / mass) * fs;
   }
 
+  // —— 1b. SPREADING — push down the density gradient, away from where the sand already is. This is
+  // the grain-on-grain contact the simulation otherwise has no notion of at all: without it, every
+  // grain's equilibrium is the same mathematical curve and the entire pile collapses onto a line with
+  // no width, which no real plate has ever produced.
+  vec2 duv = position.xz / PLATE_SPAN + 0.5;
+  float dL = texture2D(uDensityTexture, duv - vec2(DENS_STEP, 0.0)).r;
+  float dR = texture2D(uDensityTexture, duv + vec2(DENS_STEP, 0.0)).r;
+  float dD = texture2D(uDensityTexture, duv - vec2(0.0, DENS_STEP)).r;
+  float dU = texture2D(uDensityTexture, duv + vec2(0.0, DENS_STEP)).r;
+  vec2 dgrad = vec2(dR - dL, dU - dD);
+  float dgm = length(dgrad);
+  if (dgm > 1e-5) {
+    float dsat = dgm / (dgm + 2.0);
+    velocity.xz -= (dgrad / dgm) * (SPREAD * dsat / mass) * fs;
+  }
+
   // —— 2. AGITATION. The 0.3 floor is the important term: it keeps jostling grains that are already
   // ON a line (where |dn| = 0 and the vibration term below is silent), and that is what gives the
-  // line its width and its ragged edge instead of a hairline.
+  // line its ragged edge.
   float drive = mix(0.15, 1.0, uAmplitude) + uBassImpulse * 0.6;  // idle floor keeps the sand alive
   float ag = AGITATION * drive * (0.3 + 0.7 * abs(dn)) / mass;
   velocity.xz += hash22(vUv * 137.0 + uTime * 13.7) * ag * fs;
 
-  // —— 3. VERTICAL BOUNCE. Grains sitting on a violently moving part of the plate get thrown off it;
-  // grains on a nodal line never leave the surface. |dn| is the local shake amplitude, so the
-  // airborne dust appears exactly over the antinodes and the lines stay crisp.
-  if (position.y < floorY + 0.01) {
+  // —— 3. THE SURFACE. Everything below acts only on grains in CONTACT with it. The grounded gate
+  // is what keeps a hop ballistic: a grain that has left the plate is in free flight and cannot be
+  // pushed further up by a surface that is no longer touching it. Ungate any of these and the kick
+  // keeps compounding for as long as the condition holds — the transition hop in particular sums to
+  // ~40 frames of force and fires the entire plate's worth of sand into the camera.
+  bool grounded = position.y < floorY + 0.01;
+
+  if (grounded) {
+    // 3a. VERTICAL BOUNCE. Grains sitting on a violently moving part of the plate get thrown off it;
+    // grains on a nodal line never leave the surface. |dn| is the local shake amplitude, so the
+    // airborne dust appears exactly over the antinodes and the lines stay crisp.
     float vibeAmp = abs(dn) * (uAmplitude + uBassImpulse * 0.8) * 0.05;
     float vibeHz = 3.0 + uBass * 8.0;
     velocity.y += max(sin(uTime * vibeHz + phase * 6.2831) * vibeAmp, 0.0) / mass;
+
+    // 3b. MICRO-VIBRATION. The plate is being driven, so its surface is never still and neither is
+    // anything resting on it. Amplitude-scaled, so it is the difference between sand that is settled
+    // and sand that is settled ON SOMETHING RUNNING. Sub-visible per frame; the read is that the
+    // figure breathes rather than sitting there like a printed image.
+    velocity.y += sin(uTime * 10.0 + phase * 40.0) * uAmplitude * 0.003 * fs / mass;
+
+    // Highs → fine shimmer. A hi-hat section makes the whole plate tremble at grain scale without
+    // touching the macro figure.
+    velocity.y += sin(uTime * 18.0 + phase * 60.0) * uHighs * 0.002 * fs / mass;
+
+    // 3c. TRANSITION HOP. While the field is crossfading, a grain sitting far from the INCOMING
+    // figure's nodal lines is standing on a part of the plate that is about to start shaking hard —
+    // so it jumps. This is what makes a song change read as an event: the sand visibly leaps and
+    // re-lands rather than sliding across the plate like filings under a magnet.
+    if (uModeTransition < 0.98) {
+      float newDn = chladni(pp, uNewMode) / (uAmpA + uAmpB + 0.001);
+      velocity.y += abs(newDn) * TRANS_HOP * (1.0 - uModeTransition) * fs / mass;
+    }
+
+    // 3d. BASS TRANSIENT → the plate gets hit and the sand bounces, hardest over the antinodes. The
+    // coefficient looks tiny because uBassImpulse is applied every frame while it decays (×0.9/frame
+    // ⇒ ~10 frames of contribution), so the impulse a grain actually receives is ~10× what is written
+    // here. The 0.2 floor keeps a kick faintly felt even on the lines, where |dn| = 0.
+    velocity.y += uBassImpulse * (0.2 + 0.8 * abs(dn)) * BASS_HOP * fs / mass;
 
     // Idle: the plate is never quite still. A trembling surface, no migration. Depth from the
     // track's cached energy, so a loud song still reads as a loud song sitting paused.
     velocity.y += sin(uTime * 1.0 + phase * 6.2831) * uAmbient * uIdle;
   }
 
-  // —— 3b. HIGHS → surface shimmer. Fine, fast, everywhere: a hi-hat section makes the whole plate
-  // tremble at grain scale without touching the macro figure.
-  velocity.y += sin(uTime * 12.0 + phase * 50.0) * uHighs * 0.003 * fs;
-
-  // —— 3c. BASS TRANSIENT → the plate gets hit. Grains jump off the surface. The coefficient looks
-  // tiny because uBassImpulse is applied EVERY frame while it decays (×0.9/frame ⇒ ~10 frames of
-  // contribution), so the impulse a grain actually receives is ~10× what is written here: ≈0.04 up,
-  // which arcs it to about 0.1 above the plate. Budget the integral, not the frame.
-  velocity.y += uBassImpulse * 0.004 / mass * fs;
+  // —— 3e. XZ MICRO-JITTER — grains shuffling in place. Unlike the vertical terms this one is not
+  // gated: it is small enough not to disturb a ballistic arc, and gating it would make airborne
+  // grains fall in unnaturally straight lines.
+  velocity.x += sin(uTime * 7.3 + phase * 31.0) * uAmplitude * 0.001 * fs;
+  velocity.z += cos(uTime * 8.7 + phase * 37.0) * uAmplitude * 0.001 * fs;
 
   // The horizontal kick is RANDOM per grain, not radially outward. A struck plate throws sand up and
   // rattles it; it does not blow it away from the centre. An outward-only shove is a DC pump — every
@@ -321,11 +439,11 @@ void main() {
 
   // —— 4. Gravity, and the landing. The grain lands on the PILE, not on the plate: floorY rises
   // toward the nodal lines, so arriving grains come to rest on top of the ones already there.
-  velocity.y -= 0.008 * fs;
+  velocity.y -= GRAVITY * fs;
 
   if (position.y + velocity.y * fs < floorY) {
-    velocity.y *= -0.15;    // sand barely bounces; it mostly just lands
-    velocity.xz *= 0.85;    // and skids to a stop when it does
+    velocity.y *= -0.2;     // sand barely bounces; it mostly just lands
+    velocity.xz *= 0.8;     // and skids to a stop when it does
   }
 
   // —— 5. Rim. This used to be a wall that both killed 80% of a grain's speed AND left it sitting in
@@ -390,6 +508,44 @@ void main() {
 }
 `
 
+// —— DENSITY SPLAT PASS. Draws every grain as a soft blob into a 64×64 additive target, producing a
+// coarse map of where the sand currently IS. The velocity pass reads its gradient and pushes grains
+// downhill, which is the only thing in the simulation that knows grains cannot occupy the same space.
+//
+// It is deliberately low resolution. This is a crowding term, not a collision solver — 64×64 over the
+// plate makes one texel ≈ 0.056 world units, a few grain diameters, which is the scale at which
+// "there is already sand here" is the right question. Higher resolution would resolve individual
+// grains and start modelling contacts, which is both wrong and unaffordable at 65k particles.
+const DENSITY_VERT = /* glsl */ `
+precision highp float;
+
+uniform sampler2D uPositionTexture;
+
+attribute vec2 aRef;
+
+#define PLATE_SPAN ${(PLATE_R * 2).toFixed(2)}
+
+void main() {
+  vec4 posData = texture2D(uPositionTexture, aRef);
+
+  // Straight from plate XZ to clip space — no camera. The density map is a top-down orthographic
+  // image of the plate, always, regardless of what the display camera happens to be doing.
+  vec2 plateUV = posData.xz / PLATE_SPAN + 0.5;
+  gl_Position = vec4(plateUV * 2.0 - 1.0, 0.0, 1.0);
+  gl_PointSize = 3.0;   // device px in the 64×64 target ⇒ a splat radius of ~0.08 world units
+}
+`
+
+const DENSITY_FRAG = /* glsl */ `
+precision highp float;
+
+void main() {
+  float d = length(gl_PointCoord - 0.5);
+  if (d > 0.5) discard;
+  gl_FragColor = vec4(smoothstep(0.5, 0.0, d) * 0.02, 0.0, 0.0, 1.0);
+}
+`
+
 // —— Render pass. The vertex shader reads position AND velocity out of the simulation textures; the
 // CPU-side position attribute is a dummy that only exists so three knows how many points to draw.
 const POINTS_VERT = /* glsl */ `
@@ -404,17 +560,36 @@ attribute vec2 aRef;   // this particle's texel address
 
 varying float vHeight;
 varying float vSpeed;
+varying float vRand;   // per-grain material seed — see below
 
 void main() {
   vec4 posData = texture2D(uPositionTexture, aRef);
   vec4 velData = texture2D(uVelocityTexture, aRef);
 
+  float phase = posData.w;   // 0..1, a per-grain constant
   vHeight = posData.y;
   vSpeed = length(velData.xyz);
-  float mass = velData.w;
+
+  // A SECOND independent random, not phase again. phase already drives the grain's size class below
+  // AND its rest height in the pile, so reusing it for colour and roughness would correlate all
+  // three: every large grain would also be the palest and sit highest, and the sand would come out
+  // visibly sorted rather than mixed. Hashing the texel address costs nothing and is decorrelated.
+  vRand = fract(sin(dot(aRef, vec2(12.9898, 78.233))) * 43758.5453);
 
   vec4 mvPosition = modelViewMatrix * vec4(posData.xyz, 1.0);
   float depth = -mvPosition.z;
+
+  // SIZE CLASSES, not a uniform spread. Real sand is graded: mostly fines, some medium, a few coarse
+  // grains. A flat random distribution reads as noise; a graded one reads as a material. The 60/30/10
+  // split is what makes a close look at the pile show individual big grains sitting proud of it.
+  //
+  // Size correlates with phase, and so does the pile's rest height — which is a happy accident worth
+  // keeping: in a vibrated granular bed the large grains rise to the top (the Brazil-nut effect), and
+  // that is exactly what this produces.
+  float sizeClass;
+  if (phase < 0.6)      sizeClass = 0.8 + phase * 0.3;          // 60% fines
+  else if (phase < 0.9) sizeClass = 1.0 + (phase - 0.6) * 1.0;  // 30% medium
+  else                  sizeClass = 1.3 + (phase - 0.9) * 2.0;  // 10% coarse
 
   // True perspective sizing. NOT a hardcoded pixel constant: gl_PointSize is in DEVICE pixels, so
   // "size * (15.0 / -mvPosition.z)" bakes in the canvas resolution — the same grain would come out
@@ -422,62 +597,148 @@ void main() {
   // change texture with the window. uSizeScale is height/(2·tan(fov/2)) in device px, so uSize is a
   // world DIAMETER and a grain holds its physical size at any resolution or DPR.
   //
-  // Mass doubles as size variance — heavier grains are bigger — and airborne grains swell a touch so
-  // the dust over the antinodes reads as dust rather than as noise.
-  float world = uSize * (0.75 + mass * 0.4)
-              * (1.0 + smoothstep(0.0, 0.10, posData.y) * 0.8)
-              * (1.0 + vSpeed * 2.0);
-  gl_PointSize = clamp(world * uSizeScale / max(depth, 0.001), 1.0, 8.0);
+  // Airborne and moving grains swell, so the dust thrown off the antinodes reads as dust rather than
+  // as noise, and a grain caught mid-hop is the thing your eye goes to.
+  float world = uSize * sizeClass
+              * (1.0 + smoothstep(0.0, 0.10, posData.y) * 1.2)
+              * (1.0 + vSpeed * 1.5);
+  gl_PointSize = clamp(world * uSizeScale / max(depth, 0.001), 1.0, 10.0);
 
   gl_Position = projectionMatrix * mvPosition;
 }
 `
 
-// Opaque, lit grains. Every grain is a sphere impostor: the normal is reconstructed from the point
-// coord so a directional key light rakes across each one. That, plus depth-sorted occlusion, is
-// what separates "sand" from "glowing dots" — under additive blending a pile just gets brighter,
-// whereas real sand piles get SHADED, and the near grains hide the ones behind them.
+// Lit grains under a three-point studio rig. Every grain is a sphere impostor: the normal is
+// reconstructed from the point coord, so the lights rake across each one individually and a grain has
+// a bright side, a dark side and a specular hit. That, plus depth-sorted occlusion, is what separates
+// "sand" from "glowing dots" — under additive blending a pile just gets brighter, whereas a real pile
+// gets SHADED, and the near grains hide the ones behind them.
+//
+// The lights are declared in the point sprite's own space (+x right, +y up, +z toward the camera),
+// not world space. There is no correct world-space answer for an impostor — the geometry is a lie —
+// and screen-space light directions are what a C4D render of this shot would look like anyway,
+// because the camera is locked overhead and never moves.
 const POINTS_FRAG = /* glsl */ `
 precision highp float;
 
-uniform vec3 uColor;      // album accent
-uniform vec3 uLightDir;   // key light, view-space-ish
+uniform vec3 uColor;   // album accent
+uniform float uGlow;   // GLOW — constant across the catalogue; drives emissive and edge softness
+
+uniform vec3 uKeyDir;    uniform vec3 uKeyColor;    uniform float uKeyI;
+uniform vec3 uFillDir;   uniform vec3 uFillColor;   uniform float uFillI;
+uniform vec3 uRimColor;  uniform float uRimI;
 
 varying float vHeight;
 varying float vSpeed;
+varying float vRand;
+
+// HIGHLIGHT ROLLOFF, and the reason there is no tone mapping on the renderer. This is now the single
+// most load-bearing line in the shader: with GLOW flat at 1.0, EVERY record's grains sum past 1.0
+// where the sand is dense (emissive + key + rim + airborne runs past 2.0 on a lit airborne grain),
+// so the whole catalogue depends on this behaving rather than just the loud end of it.
+//
+// Clipping that overflow is not a cosmetic problem. Everything above 1.0 clamps to the SAME white, so
+// the per-grain brightness variation this entire shader exists to produce is erased exactly where the
+// sand is densest, and the nodal lines render as one flat white mass. The grains stop being grains.
+//
+// ACES on the renderer would fix the clipping and cost more than it saves — it is a filmic curve that
+// pulls the MIDS down too (a 0.78 grain lands near 0.6), and the sand goes muddy everywhere to solve
+// a problem the highlights have. This is a knee instead: below K it is completely transparent, so the
+// shaded body of every grain is untouched; above K, a smooth asymptote to 1.0 that keeps hot grains
+// ORDERED rather than equal. That ordering is what still reads as texture inside a blown-out pile.
+vec3 rolloff(vec3 c) {
+  const float K = 0.8;
+  vec3 over = max(c - K, 0.0);
+  return min(c, vec3(K)) + (1.0 - K) * (over / (over + (1.0 - K)));
+}
 
 void main() {
-  // Sphere impostor: turn the square point sprite into a lit ball.
-  vec3 normal;
-  normal.xy = gl_PointCoord * 2.0 - 1.0;
-  normal.y = -normal.y;                       // gl_PointCoord's y runs down the screen
-  float r2 = dot(normal.xy, normal.xy);
-  if (r2 > 1.0) discard;                      // hard circular edge — no soft glow halo
-  normal.z = sqrt(1.0 - r2);
+  // Sphere impostor: turn the square point sprite into a ball.
+  vec2 cc = gl_PointCoord * 2.0 - 1.0;
+  cc.y = -cc.y;                          // gl_PointCoord's y runs down the screen
+  float r2 = dot(cc, cc);
+  if (r2 > 1.0) discard;
+  vec3 normal = vec3(cc, sqrt(1.0 - r2));
 
-  float diffuse = max(dot(normal, uLightDir), 0.0);
-  float lighting = 0.3 + diffuse * 0.7;       // ambient + key
+  const vec3 viewDir = vec3(0.0, 0.0, 1.0);   // the camera, in sprite space
 
-  // ALBUM FIRST. The grains take the record's colour — 75% of it — with a warm sand base left under
-  // it so they still read as a material rather than as coloured light.
+  // —— BASE COLOUR. ALBUM FIRST: the grains take 75% of the record's colour, over a sand base that
+  // keeps them reading as a material rather than as coloured light.
   //
-  // uColor is normalised to full value before mixing, and that guard matters: a dominant colour is
-  // often DARK (moody covers, black-heavy art), and mixing 75% of a near-black toward the grains
-  // would paint near-black sand onto a near-black plate — the figure would simply vanish for those
-  // records. Dividing by the largest channel keeps the album's HUE and saturation exactly, and only
-  // lifts its brightness; the directional light below is what puts the shading back.
-  vec3 sand = vec3(0.75, 0.72, 0.68);
+  // uColor is normalised to full value before mixing, and that guard is load-bearing: a dominant
+  // album colour is very often DARK (moody covers, black-heavy art), and mixing 75% of a near-black
+  // into the grains would paint near-black sand onto a near-black background — the figure would
+  // simply vanish for those records. Dividing by the largest channel preserves the album's HUE and
+  // saturation exactly and only lifts its brightness; the lighting below puts the shading back.
   float peak = max(uColor.r, max(uColor.g, uColor.b));
   vec3 albumHue = uColor / max(peak, 0.001);
-  vec3 color = mix(sand, albumHue, 0.75) * lighting;
 
-  color += diffuse * vec3(0.08, 0.06, 0.03);              // warm highlight on the lit side
-  color += smoothstep(0.0, 0.10, vHeight) * 0.15;         // airborne grains catch more light
-  color += smoothstep(0.0, 0.05, vSpeed) * 0.05;
+  vec3 baseSand = mix(vec3(0.78, 0.74, 0.68), vec3(0.72, 0.70, 0.66), step(0.5, vRand));
+  vec3 baseColor = mix(baseSand, albumHue, 0.75) * (0.85 + vRand * 0.3);
 
-  // Fully opaque. Density now reads as COVERAGE (more grains hide more plate), the way sand works —
-  // not as summed luminance. This is the whole point of dropping additive blending.
-  gl_FragColor = vec4(color, 1.0);
+  // —— MATERIAL. Roughness varies per grain, which is the whole reason the pile glitters: at uniform
+  // roughness every grain takes the specular identically and the highlight becomes a flat sheen
+  // across the whole plate. Varied, only some grains catch the key at the right angle at any moment,
+  // and the pile sparkles the way a real one does.
+  float roughness = 0.65 + vRand * 0.2;
+  float specPower = mix(80.0, 20.0, roughness);      // smoother grains: tighter, brighter hit
+  float specIntensity = mix(0.5, 0.15, roughness);
+
+  // —— KEY. Warm, strong, high.
+  float keyDiff = max(dot(normal, uKeyDir), 0.0);
+  vec3 keyHalf = normalize(uKeyDir + viewDir);
+  float keySpec = pow(max(dot(normal, keyHalf), 0.0), specPower) * specIntensity;
+  vec3 lit = (baseColor * keyDiff + keySpec) * uKeyColor * uKeyI;
+
+  // —— FILL. Cool, soft, opposite. It exists to stop the unlit side of every grain going to pure
+  // black, which is what makes a naive one-light impostor read as a flat crescent rather than a ball.
+  lit += baseColor * max(dot(normal, uFillDir), 0.0) * uFillColor * uFillI;
+
+  // —— RIM. A Fresnel edge light, tinted with the album. It has no direction: at grain scale a rim
+  // light IS just "the edges are brighter", and giving it a direction would only make half the grains
+  // in the pile disagree about where the back of the studio is.
+  float rimFresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+  lit += rimFresnel * uRimColor * uRimI * mix(vec3(1.0), albumHue, 0.5);
+
+  lit += baseColor * 0.12;   // ambient — nothing in a lit room is ever fully black
+
+  // —— ENVIRONMENT. A one-line fake: reflect the view off the normal and look up a vertical gradient
+  // (bright above, dark to the sides). Scaled by the INVERSE of roughness, so it only touches the
+  // smooth grains. Not a mirror — just enough sheen that the grains feel like they are sitting under
+  // something rather than floating in a void.
+  vec3 refl = reflect(-viewDir, normal);
+  vec3 envColor = mix(vec3(0.02), vec3(0.15, 0.14, 0.13), refl.z * 0.5 + 0.5);
+  lit = mix(lit, lit + envColor, (1.0 - roughness) * 0.3);
+
+  // —— EMISSIVE. The sand is lit from within, on every record equally (uGlow is a constant now).
+  //
+  // The emitted colour is the album hue pulled HALF way to WHITE, and that is not a tint — it is what
+  // makes the term read as light at all. Emitting the pure album hue fails on exactly the records it
+  // should flatter most: the grain base is already 75% album hue over warm sand, so on a warm record
+  // the emissive adds back the colour the grain already is, and the pile just gets more orange rather
+  // than brighter. Nothing in nature glows in its own surface colour — a hot thing has a white core
+  // and coloured falloff. Reds and browns need the most help here, because they sit closest to the
+  // sand base; at half white even they burn through.
+  //
+  // The album colour is NOT lost to this. It survives in three places the white cannot reach: the
+  // grain's diffuse body, the loose strays between the lines (too dim to bloom, so they stay pure
+  // hue), and the bloom halo itself, which spreads the tinted core outward. White core, coloured
+  // falloff — that is the two-part read that says "emitting" rather than "painted".
+  vec3 hotCenter = mix(albumHue, vec3(1.0), 0.5);
+  lit += hotCenter * uGlow * 0.3;
+
+  lit += smoothstep(0.0, 0.08, vHeight) * 0.3;              // airborne grains catch more light
+  lit += smoothstep(0.0, 0.10, vSpeed) * 0.1 * albumHue;    // and moving ones smear a little
+
+  // Fake AO: grains down in the bed are shadowed by their neighbours; grains proud of it are not.
+  lit *= 0.85 + smoothstep(0.0, 0.03, vHeight) * 0.15;
+
+  // —— EDGE. Antialiasing, and a material cue — a glowing grain has a softer silhouette than an inert
+  // one, because light bleeds past its edge. Tied to uGlow so it stays in step with the emissive; at
+  // GLOW = 1.0 that is a fixed 0.7, i.e. the outer 30% of every grain feathers.
+  float alpha = smoothstep(1.0, mix(0.85, 0.7, uGlow), sqrt(r2));
+
+  gl_FragColor = vec4(rolloff(lit), alpha);
 }
 `
 
@@ -519,12 +780,13 @@ export default function DeckVisualizer({ track, open }) {
     const pr = Math.min(window.devicePixelRatio, 2)
     renderer.setPixelRatio(pr)
 
-    // NO tone mapping. ACES earned its place when the grains were additive and the dense lines summed
-    // far past 1.0 — it rolled that overflow into a highlight instead of clipping. The grains are
-    // opaque now, so nothing ever exceeds 1.0, and all ACES would do is crush the sand's midtones:
-    // a 0.78 grain lands around 0.6 and the whole plate reads muddy. OutputPass still runs, for the
-    // sRGB conversion.
+    // NO tone mapping — but no longer because nothing overflows. A loud track's emissive + rim +
+    // airborne terms DO push grains past 1.0; that overflow is handled by the highlight knee at the
+    // end of POINTS_FRAG, which leaves the midtones alone. A global ACES curve here would instead
+    // pull every grain in the catalogue down (a 0.78 grain lands near 0.6, and the sand reads muddy)
+    // to solve a problem only the loud end has. OutputPass still runs, for the sRGB conversion.
     renderer.toneMapping = THREE.NoToneMapping
+    renderer.setClearColor(BG, 1)
 
     // Simulation textures must be renderable AND filterable-as-data. Full float is the target;
     // half float is the fallback on GPUs without EXT_color_buffer_float (positions stay within ±2
@@ -578,6 +840,28 @@ export default function DeckVisualizer({ track, open }) {
     const posB = makeTarget()
     const velA = makeTarget()
     const velB = makeTarget()
+
+    // The density target, and the two things about it that are NOT free choices:
+    //
+    // HALF float, not full, even where full float is available for the simulation. The splat pass
+    // additively BLENDS into this target, and blending into a 32-bit float attachment needs
+    // EXT_float_blend — which is not universal, and where it is missing the blend is silently dropped
+    // and the density map comes out as the last grain drawn rather than the sum of all of them. Half
+    // float blending is core in WebGL2. The values here run 0..~10 with no precision demands.
+    //
+    // LINEAR filtering, unlike the simulation targets: the velocity pass reads this at four offset
+    // taps to take a gradient, and nearest filtering would quantise that gradient into 64 steps
+    // across the plate — grains would feel a staircase and visibly snap to texel boundaries.
+    const densityTarget = new THREE.WebGLRenderTarget(DENSITY_TEX, DENSITY_TEX, {
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter,
+      wrapS: THREE.ClampToEdgeWrapping,
+      wrapT: THREE.ClampToEdgeWrapping,
+      format: THREE.RGBAFormat,
+      type: THREE.HalfFloatType,
+      depthBuffer: false,
+      stencilBuffer: false,
+    })
 
     // —— Seed data. Grains start scattered evenly across the bare plate, with no pattern at all;
     // the first few seconds of playback are the sand FINDING the figure, which is the whole trick
@@ -666,6 +950,7 @@ export default function DeckVisualizer({ track, open }) {
         ...fieldUniforms,
         uPositionTexture: { value: null },
         uVelocityTexture: { value: null },
+        uDensityTexture: { value: densityTarget.texture },
         uTime: { value: 0 },
         uDeltaTime: { value: 0.016 },
         uBass: { value: 0 },
@@ -695,41 +980,63 @@ export default function DeckVisualizer({ track, open }) {
       depthWrite: false,
     })
 
-    // —— The plate. Almost black: it exists to give the sand a surface and an edge, nothing more.
-    // Drawn opaque and below the grains so it wins the depth test against nothing and simply sits
-    // there. The sand is the only thing in the frame that is meant to be looked at.
-    const plateGeo = new THREE.CircleGeometry(1.85, 96)
-    const plateMat = new THREE.MeshBasicMaterial({ color: 0x0e0e10 })
-    const plate = new THREE.Mesh(plateGeo, plateMat)
-    plate.rotation.x = -Math.PI / 2
-    plate.position.y = -0.005
-    scene.add(plate)
+    // There is NO plate. The Chladni figure is the subject and it is the entire subject — a disc
+    // under it is a stage, and a stage tells you that you are looking at a rendering of an
+    // experiment. The sand hangs in the dark instead, and the pattern has to carry the frame alone.
 
+    // ONE geometry, TWO Points objects: the display pass and the density splat. They share the same
+    // buffers (an Object3D can only have one parent, so they cannot be the same object, but the
+    // 65k-vertex geometry is not duplicated).
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.BufferAttribute(dummyPos, 3))
     geometry.setAttribute('aRef', new THREE.BufferAttribute(refs, 2))
+
+    const densityMat = new THREE.ShaderMaterial({
+      uniforms: { uPositionTexture: { value: null } },
+      vertexShader: DENSITY_VERT,
+      fragmentShader: DENSITY_FRAG,
+      blending: THREE.AdditiveBlending,   // the whole point: overlapping grains SUM
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    })
+    const densityScene = new THREE.Scene()
+    const densityPoints = new THREE.Points(geometry, densityMat)
+    densityPoints.frustumCulled = false   // the shader writes gl_Position directly; three's bounds are meaningless here
+    densityScene.add(densityPoints)
 
     const pointsMat = new THREE.ShaderMaterial({
       uniforms: {
         uPositionTexture: { value: posA.texture },
         uVelocityTexture: { value: velA.texture },
         uColor: { value: new THREE.Color(c0[0], c0[1], c0[2]) },
-        uLightDir: { value: new THREE.Vector3(0.4, 0.8, 0.3).normalize() },
-        // A grain is a couple of device pixels across. 65k of them over a ~600px disc means a bare
-        // patch is genuinely sparse, while a nodal pile covers its ground completely — which, with
-        // opaque grains, is now what makes a line read as solid: coverage, not summed light.
+        uGlow: { value: GLOW },   // constant; nothing writes this after construction
+        uKeyDir: { value: v3(KEY_DIR) },
+        uKeyColor: { value: rgb(KEY_COLOR) },
+        uKeyI: { value: KEY_I },
+        uFillDir: { value: v3(FILL_DIR) },
+        uFillColor: { value: rgb(FILL_COLOR) },
+        uFillI: { value: FILL_I },
+        uRimColor: { value: rgb(RIM_COLOR) },
+        uRimI: { value: RIM_I },
+        // A grain is a couple of device pixels across. 65k of them over a ~600px figure means a bare
+        // patch is genuinely sparse, while a nodal pile covers its ground completely — which is what
+        // makes a line read as solid: coverage, not summed light.
         uSize: { value: 0.009 },
         uSizeScale: { value: 1000 }, // real value set by resize()
       },
       vertexShader: POINTS_VERT,
       fragmentShader: POINTS_FRAG,
-      // Opaque sand, not glowing energy. NormalBlending + depthWrite means a grain in front HIDES
-      // the grain behind it, so a pile has a surface and a silhouette instead of just getting
-      // brighter. transparent:false keeps it in the opaque pass, where the depth buffer does the
-      // sorting for free — with 65k points there is no correct back-to-front order to sort into
-      // anyway, and every alpha value this shader emits is exactly 1.0.
+      // NormalBlending + depthWrite. A grain in front HIDES the grain behind it, so a pile has a
+      // surface and a silhouette instead of just getting brighter — additive blending is what makes
+      // particle systems look like energy instead of matter, and this is matter. The glow comes from
+      // the emissive term and the bloom, not from summing luminance.
+      //
+      // transparent:true only because the fragment shader feathers the last 15% of each grain's
+      // radius for antialiasing; the interior is fully opaque and depth still does the occlusion, so
+      // the lack of a back-to-front sort (impossible at 65k points) costs nothing but the edge pixels.
       blending: THREE.NormalBlending,
-      transparent: false,
+      transparent: true,
       depthWrite: true,
       depthTest: true,
     })
@@ -738,13 +1045,15 @@ export default function DeckVisualizer({ track, open }) {
     points.frustumCulled = false
     scene.add(points)
 
-    // —— Post. Bloom is now barely there: it exists to take the hard digital edge off the brightest
-    // grains, nothing more. The old strong bloom was compensating for additive blending; opaque lit
-    // sand doesn't glow, and a plate that glows stops reading as a material.
+    // —— Post. Bloom is fixed at construction (see BLOOM_* — it is hand-tuned against the figure's
+    // readability, not derived from GLOW). Only strength moves at runtime, and only with the live
+    // audio, so the plate breathes without the gaps ever filling in.
     let composer = new EffectComposer(renderer)
     composer.setPixelRatio(pr)
     composer.addPass(new RenderPass(scene, camera))
-    const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.2, 0.3, 0.85)
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(256, 256), BLOOM_STRENGTH, BLOOM_RADIUS, BLOOM_THRESHOLD,
+    )
     composer.addPass(bloom)
     composer.addPass(new OutputPass())
 
@@ -872,7 +1181,7 @@ export default function DeckVisualizer({ track, open }) {
       st.prevBass = bass
       st.impulse *= Math.pow(0.9, dt * 60)
 
-      // — per-track glide: album colour crossfades.
+      // — per-track glide: album colour crossfades rather than cuts.
       const ca = ft.album ?? FALLBACK_RGB
       for (let i = 0; i < 3; i++) st.album[i] += (ca[i] - st.album[i]) * 0.08
 
@@ -883,6 +1192,22 @@ export default function DeckVisualizer({ track, open }) {
       fieldUniforms.uOldMode.value.set(om.n, om.m, om.p, om.q)
       fieldUniforms.uNewMode.value.set(nm.n, nm.m, nm.p, nm.q)
       fieldUniforms.uModeTransition.value = st.transition
+
+      // — DENSITY first, from the positions the velocity pass is about to read. It must be rebuilt
+      // every frame and it must NOT accumulate across frames: this is a snapshot of where the sand is
+      // right now, and a running total would be a heat map of everywhere it has ever been — the
+      // repulsion would then push grains out of regions that emptied minutes ago.
+      //
+      // Cleared to BLACK explicitly, not to the renderer's clear colour. That colour is the panel's
+      // near-black #0a0a0a, whose red channel is 0.039 — a uniform density floor across the whole
+      // plate. It would cancel out of the gradient and do no harm, but it is the kind of thing that
+      // stops being harmless the moment anyone reads the raw density value instead of its gradient.
+      densityMat.uniforms.uPositionTexture.value = st.posRead.texture
+      renderer.setClearColor(0x000000, 1)
+      renderer.setRenderTarget(densityTarget)
+      renderer.render(densityScene, quadCamera)
+      renderer.setRenderTarget(null)
+      renderer.setClearColor(BG, 1)
 
       // — simulate. Velocity first: the position pass integrates the velocity written this frame.
       const vu = velocityMat.uniforms
@@ -913,7 +1238,10 @@ export default function DeckVisualizer({ track, open }) {
       let t = st.posRead; st.posRead = st.posWrite; st.posWrite = t
       t = st.velRead; st.velRead = st.velWrite; st.velWrite = t
 
-      bloom.strength = 0.2 + 0.08 * st.amp * st.audio
+      // — bloom BREATHES with the live audio. Threshold and radius are fixed at construction; this is
+      // the only bloom value that moves, and it moves a little — enough to feel the music in the
+      // glow, not enough to close the gaps between the nodal lines on a loud bar.
+      bloom.strength = BLOOM_STRENGTH + 0.06 * st.amp * st.audio
 
       if (st.bloomOn && composer) composer.render()
       else renderer.render(scene, camera)
@@ -944,15 +1272,15 @@ export default function DeckVisualizer({ track, open }) {
       posB.dispose()
       velA.dispose()
       velB.dispose()
+      densityTarget.dispose()
       posSeed.dispose()
       velSeed.dispose()
       copyMat.dispose()
       velocityMat.dispose()
       positionMat.dispose()
+      densityMat.dispose()
       quadGeo.dispose()
-      plateGeo.dispose()
-      plateMat.dispose()
-      geometry.dispose()
+      geometry.dispose()   // shared by `points` and `densityPoints` — one dispose, not two
       pointsMat.dispose()
       bloom.dispose()
       composer?.dispose()
