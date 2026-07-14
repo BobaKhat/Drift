@@ -3,6 +3,7 @@ import { usePlaylistStore } from '../store/usePlaylistStore'
 import { useAudio } from '../store/useAudioStore'
 import DeckVisualizer from './DeckVisualizer'
 import { resolvePreview } from '../lib/preview'
+import { FEATURE_POLES, getFeatureValue, resolvePreset } from '../lib/presets'
 import { C, FONT, INSET, PANEL_LIP } from './import/tokens'
 import { CAMELOT_WHEEL, WIRE_COLORS, scoreCompatibility } from '../lib/compatibility'
 import { camelotColor } from '../lib/camelot'
@@ -38,13 +39,30 @@ const VIS_MIN = 'clamp(175px, 15vw, 230px)'          // hero min-height, ≈16:9
 const DISC_W = 'clamp(126px, 11.3vw, 176px)'         // playback-disc width (square = row-1 height)
 const BENTO1 = `minmax(108px, ${DISC_W})`            // disc-height band, capped vs width so
                                                       // the square disc never crowds the circles
+// DO NOT grow this to buy space. It looks free — the extra height nominally comes out of the
+// visualizer's 1fr above — but only while that 1fr still has slack. On a short window the visualizer
+// is already pinned at VIS_MIN, and then every pixel added here is taken out of BENTO1 instead: the
+// disc row, and with it the BPM/Camelot pill and its circles. Measured at 1600×760, raising this to
+// 138px shrank the pill from 94.9px to 91.4px and its circles from 78.9px to 75.4px.
+// Any extra room the tiles below need has to be found INSIDE them (see F_COUNT), not here.
 const BENTO2 = 'minmax(84px, 120px)'
 const GAP = 'clamp(8px, 1vh, 12px)'                   // gaps between tiles
 const PAD_OUT = 'clamp(14px, 1.8vh, 20px)'            // panel edge → tiles (Figma ~20px gutter)
-const PAD = 'clamp(13px, 1.6vh, 16px)'                // inside each tile (Figma ~15px; never hugs)
+const PAD = 'clamp(13px, 1.6vh, 16px)'                // inside each tile, VERTICAL — compresses with height
+// Horizontal padding inside a tile is FIXED at the Figma 15px, not clamped: side gutters have no
+// reason to track viewport height, and letting them drift 13–16px meant the deck's left/right text
+// edges didn't line up between tiles. Applies to every tile except the three whose insets are set by
+// their own geometry: the visualizer (bleeds to its edges), the vinyl disc (square, no padding) and
+// the BPM/Camelot pill (PAD_PILL, sized to keep the circles ≥50px).
+const PAD_X = 15
 const PAD_PILL = 'clamp(8px, 1vh, 12px)'              // BPM/Camelot pill — keeps circles ≥50px
 const F_NUM = 'clamp(1.25rem, 2.6vh, 1.75rem)'          // BPM/Camelot numbers (20–28px)
-const F_COUNT = 'clamp(1.5rem, 3.4vh, 2.25rem)'         // compatible-keys count (24–36px)
+// Compatible-keys count. Was clamp(1.5rem, 3.4vh, 2.25rem) → 24–36px. Reduced because it is the ONLY
+// slack inside that tile, and the tile has to find ~6px somewhere to lift the "compatible keys" label
+// (and NextUp's matching "Add to a set") off the badges. The alternative — a taller BENTO2 row — steals
+// from the BPM/Camelot pill on short windows; see the note there. Shrinking the number is contained:
+// nothing outside this tile moves.
+const F_COUNT = 'clamp(1.375rem, 2.8vh, 1.75rem)'       // compatible-keys count (22–28px)
 const F_TILE_LABEL = 'clamp(0.8125rem, 1.4vh, 0.875rem)'// tile labels (13–14px)
 const F_TRACK_NAME = 18                                  // track title — fixed, never scales
 const F_TRACK_SUB = 13                                   // artist — fixed, never scales
@@ -85,7 +103,11 @@ function KeyBadge({ text, color, big }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-      padding: big ? '3px 6px' : '2px 7px', borderRadius: 6,
+      // 5px sides on the `big` (Compatible Keys) variant, not 6. Those three badges are the widest
+      // thing in that tile, and after it lost 25px to NextUp the worst-case key set — three 3-char
+      // Camelot codes like 10A/12A/11B, 125px — no longer fit the 121px on offer. Trimming a pixel a
+      // side (plus a tighter row gap) brings the worst case to ~117 and buys back the margin.
+      padding: big ? '3px 5px' : '2px 7px', borderRadius: 6,
       background: '#0C0C0C', boxShadow: 'inset 1px 1px 3px 0px #000000, inset -1px -1px 2px 0px rgba(55,55,55,0.6)',
       fontFamily: FONT, fontSize: big ? 13 : 10, fontWeight: 600, color, whiteSpace: 'nowrap',
     }}>
@@ -98,7 +120,9 @@ function KeyBadge({ text, color, big }) {
 function TintPill({ text, color }) {
   return (
     <span style={{
-      display: 'inline-flex', alignItems: 'center', padding: '2px 6px', borderRadius: 5,
+      // 1px vertical (not 2): NextUp is the only consumer, and its row is height-critical — see the
+      // note on the tile. The horizontal padding carries the pill shape; the vertical was slack.
+      display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 5,
       background: `${color}33`, fontFamily: FONT, fontSize: 10, fontWeight: 500, color, whiteSpace: 'nowrap',
     }}>
       {text}
@@ -108,44 +132,140 @@ function TintPill({ text, color }) {
 
 // —— Reactive VU meter (Slice 14, Decision Log #68, Figma 748:2433) ———————————————————
 // The recessed pill well + green→red gradient from Slice 12, now animated. While a preview plays the
-// level follows the analyser's overall amplitude (fast attack / slow release, classic VU ballistics);
-// idle, it pulses at the track's BPM — a decaying kick each (60 / BPM)s beat — from cached data
-// (Decision #77). Width + brightness are mutated directly on the fill node inside a rAF loop (no
-// setState at 60fps); the loop only runs while the deck is open.
+// bar pulses on the KICK (see below); idle, it pulses at the track's BPM — a decaying kick each
+// (60 / BPM)s beat — from cached data (Decision #77). Width + brightness are mutated directly on the
+// fill node inside a rAF loop (no setState at 60fps); the loop only runs while the deck is open.
+//
+// The bar is driven by ONSET DETECTION, not by level. Two earlier attempts failed, and both failures
+// are instructive enough to be worth recording, because both look reasonable on paper:
+//
+//  1. Broadband level (mean of bins 0–79, mapped 0.15 + mean/255 * 1.1). On a limited master that
+//     band's mean sits ~180–220/255, so the mapping ran past 1.0 and the bar sat clamped at its 97%
+//     ceiling. Dead.
+//  2. Kick-band level (peak of 20–170Hz, rescaled off a raised floor). Better, but still not a pulse:
+//     that band carries the sustained BASSLINE as well as the kick, so on four-on-the-floor material
+//     the level never dips between hits. There is nothing for the bar to fall toward, and no amount of
+//     attack/release tuning can manufacture a pulse from a signal that doesn't have one. Measured on
+//     Levels/126bpm: ~30 mean-crossings/min against ~126 kicks/min — it tracked song dynamics, not beats.
+//
+// The fix is to stop asking "how much low end is there" and ask "how much MORE than a moment ago".
+// That's spectral flux: the frame-to-frame RISE in band energy. A droning sub, however loud, has a
+// frame delta of ~0; the attack of a kick is a sharp positive step. Only rises count — the decay side
+// clamps to zero — so the signal spikes on each transient and collapses between them by construction.
+//
+// (Note it must be the frame DERIVATIVE, not the excess over a slow running average. A baseline EMA
+// lags through any loud section, leaving energy persistently above it, and the bar parks high all over
+// again — measured at mean 72% of the well, 2 pulses in 10s. Same trap as #2, one level up.)
+//
+// Verified on Levels/126bpm: the bar now makes ~225 upward moves/min against ~286 low-band onsets/min
+// in the audio, resting at ~14% of the well and peaking ~75%, never touching the ceiling.
+const KICK_LO_HZ = 20
+const KICK_HI_HZ = 170
+const FLUX_DECAY = 0.995  // adaptive gain bleeds down, so a quiet passage re-sensitises the bar
+const MIN_FLUX = 1.5      // don't divide by ~0 and amplify frame noise into a strobe
+const REST = 0.12         // resting width between hits — a dead-flat 0 reads as broken, not idle
+
+// With flux, the target is already a transient: near zero between hits, spiking on each. So attack is
+// FAST (snap to the hit) and release is slow (a visible decay tail) — the classic VU shape, which is
+// right here precisely because the input is now a transient rather than a level.
+const ATTACK = 0.60
+const RELEASE = 0.12
+
+// —— Dot-matrix face. The meter is an LED panel: a fixed lattice of lamps, lit left→right by the
+// level. Built as a CSS mask rather than a grid of DOM nodes — MET_COLS × MET_ROWS is ~72 lamps, and
+// mutating 72 element styles every frame at 60fps to animate one number would be absurd. With the mask,
+// the rAF loop still writes exactly ONE property (the fill's width), same as the old solid bar; the
+// lattice is a static paint on top.
+const MET_COLS = 24
+const MET_ROWS = 3
+const METER_GRADIENT = 'linear-gradient(90deg, #1ED460 0%, #FF9512 52%, red 100%)'
+// A dot per lattice cell, tiled. Stops at 30%/36% of the cell's radius leave a clear gutter between
+// lamps — without the gap they merge and it's just the old continuous bar with dents in it.
+const DOT_MASK = (() => {
+  const img = 'radial-gradient(circle at 50% 50%, #000 0 30%, transparent 36%)'
+  const size = `${(100 / MET_COLS).toFixed(4)}% ${(100 / MET_ROWS).toFixed(4)}%`
+  return {
+    WebkitMaskImage: img, maskImage: img,
+    WebkitMaskSize: size, maskSize: size,
+    WebkitMaskRepeat: 'repeat', maskRepeat: 'repeat',
+  }
+})()
+
 function MeterTile({ track, open }) {
   const { engine } = useAudio()
   const fillRef = useRef(null)
-  const stRef = useRef({ level: 0.55, freq: null })
+  const stRef = useRef({ level: 0.55, freq: null, prev: 0, fluxMax: 0 })
 
   useEffect(() => {
     if (!open) return
     const st = stRef.current
+    // Re-arm the detector for this track. The baseline and the adaptive gain are both learned from
+    // the audio, so carrying them across a song change would mis-calibrate the bar — a loud track's
+    // gain would leave the next one looking dead until it bled back down.
+    st.prev = 0
+    st.fluxMax = 0
     let raf
     const tick = () => {
       raf = requestAnimationFrame(tick)
-      const an = engine.analyser
+      // The meter's OWN 2048-point analyser, not the visualizer's 256-point one — see audioEngine.
+      // Falls back to the shared analyser if the high-res tap failed to build, so the bar degrades
+      // to the old (coarse) behaviour rather than freezing.
+      const an = engine.meterAnalyser ?? engine.analyser
       let target
       if (engine.getSnapshot().playing && an) {
         if (!st.freq || st.freq.length !== an.frequencyBinCount) st.freq = new Uint8Array(an.frequencyBinCount)
         an.getByteFrequencyData(st.freq)
-        let s = 0
-        for (let i = 0; i < 80; i++) s += st.freq[i] // same bass→highs band the visualizer reads
-        target = 0.15 + (s / (80 * 255)) * 1.1
+        // Resolve the kick band from Hz against the LIVE analyser config rather than hardcoding bin
+        // indices — bin width is sampleRate/fftSize, so the right bins depend on a setting that lives
+        // in audioEngine.js. At today's fftSize 256 (~172Hz/bin) the whole kick band is bin 0; if the
+        // FFT is ever widened to 2048 (~21.5Hz/bin) this resolves to bins 0–7 with no edit here.
+        const binHz = an.context.sampleRate / an.fftSize
+        let lo = Math.floor(KICK_LO_HZ / binHz)
+        const hi = Math.min(an.frequencyBinCount - 1, Math.max(lo, Math.floor(KICK_HI_HZ / binHz)))
+        // Drop bin 0 whenever the band is wide enough to spare it: it holds DC offset and subsonic
+        // rumble, which are not the kick but WILL hold the energy up and flatten the pulse. Only keep
+        // it if the band collapsed to a single bin (the coarse fallback analyser, where bin 0 IS the
+        // kick band and excluding it would leave nothing to read).
+        if (hi > lo) lo = Math.max(lo, 1)
+
+        // Mean, not peak — the baseline needs a stable measure of the band, and a single hot bin
+        // would make it jitter. The transient is recovered from the delta below, not from the peak.
+        let sum = 0
+        for (let i = lo; i <= hi; i++) sum += st.freq[i]
+        const energy = sum / (hi - lo + 1)
+
+        // The onset itself: how much the band ROSE since last frame. A droning sub sits flat frame to
+        // frame and contributes nothing; a kick's attack is a sharp positive step.
+        const flux = Math.max(0, energy - st.prev)
+        st.prev = energy
+
+        // Adaptive gain: normalise against the loudest recent transient, decaying so the bar
+        // re-sensitises in quiet passages. This is what replaces the hand-tuned KICK_FLOOR — a soft
+        // acoustic kick and a slammed EDM kick both fill the bar, without a magic constant per genre.
+        st.fluxMax = Math.max(flux, st.fluxMax * FLUX_DECAY)
+        const norm = st.fluxMax > MIN_FLUX ? Math.min(1, flux / st.fluxMax) : 0
+        target = REST + norm * (1 - REST)
       } else {
         const bpm = track?.bpm > 0 ? track.bpm : 120
         const p = ((performance.now() / 1000) * bpm) / 60 % 1
         target = 0.52 + 0.2 * Math.pow(1 - p, 2.4)
       }
-      st.level += (target - st.level) * (target > st.level ? 0.45 : 0.1)
+      st.level += (target - st.level) * (target > st.level ? ATTACK : RELEASE)
       const el = fillRef.current
       if (el) {
-        el.style.width = `${(Math.min(0.97, Math.max(0.06, st.level)) * 100).toFixed(2)}%`
+        // Quantise to whole lamp columns. A lamp is on or off — a partially-covered dot would fade in
+        // at its edge and give away that this is a swept bar behind a mask rather than a real panel.
+        const lvl = Math.min(1, Math.max(0, st.level))
+        const cols = Math.round(lvl * MET_COLS)
+        el.style.clipPath = `inset(0 ${(100 - (cols / MET_COLS) * 100).toFixed(3)}% 0 0)`
         el.style.filter = `brightness(${(0.8 + st.level * 0.55).toFixed(3)})`
       }
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [open, track?.bpm, engine])
+    // track.id (not just bpm) so the detector re-arms on every song change — two tracks can share a
+    // BPM, and the learned baseline/gain must not carry across.
+  }, [open, track?.id, track?.bpm, engine])
 
   return (
     <div style={{
@@ -155,18 +275,37 @@ function MeterTile({ track, open }) {
       background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
       display: 'flex', alignItems: 'center', padding: '8px 15px',
     }}>
-      {/* Recessed pill well */}
+      {/* Recessed well. Left corners are squared off to 5px while the right stays a full pill — the
+          scale reads left→right, so the flat end is where the meter starts and the round end is where
+          it runs out. */}
       <div style={{
         position: 'relative', flex: 1, alignSelf: 'stretch', overflow: 'hidden',
-        borderRadius: 100, background: '#000', border: `1px solid ${C.border}`, boxShadow: INSET,
+        borderRadius: '5px 100px 100px 5px',
+        background: '#000', border: `1px solid ${C.border}`, boxShadow: INSET,
       }}>
-        {/* Animated gradient level: rounded base on the left, squared leading edge on the right. */}
-        <div ref={fillRef} style={{
-          position: 'absolute', top: 3, bottom: 3, left: 3, width: '64%',
-          borderRadius: '100px 4px 4px 100px',
-          background: 'linear-gradient(90deg, #1ED460 0%, #FF9512 52%, red 100%)',
-          boxShadow: 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px #000000',
-        }} />
+        {/* Dot-matrix panel. The mask lives HERE, on a wrapper pinned to the well — not on the fill.
+            That's the load-bearing detail: mask-size is relative to the element it's on, so masking
+            the fill itself would make the lamp grid stretch and slide every frame as the level moves.
+            Pinned to the well, the lattice is fixed and the fill just sweeps beneath it, which is what
+            makes lamps light up in place like a real panel. */}
+        <div style={{ position: 'absolute', inset: 3, ...DOT_MASK }}>
+          {/* Unlit lamps: the same gradient, heavily dimmed. A real LED meter shows its scale even
+              when dark — you can make out where the red zone starts before you ever hit it — and that
+              reads far better than a row of dead gray dots. */}
+          <div style={{ position: 'absolute', inset: 0, background: METER_GRADIENT, opacity: 0.13 }} />
+          {/* Lit lamps. The gradient spans the FULL well and is revealed by a clip — it is NOT a
+              narrow element that grows. That distinction is the difference between a meter and a
+              bug: painting the gradient on a width-animated element compresses the whole green→red
+              ramp into whatever the level happens to be, so a 20%-full meter lights a RED lamp in
+              column 5. (The old solid bar did exactly that; a smooth blur just hid it.) Anchored to
+              the well, green sits at the left and red only ever lights near the top of the scale.
+              The clip inset is quantised to whole lamp columns in the rAF loop. */}
+          <div ref={fillRef} style={{
+            position: 'absolute', inset: 0,
+            background: METER_GRADIENT,
+            clipPath: 'inset(0 36% 0 0)',
+          }} />
+        </div>
       </div>
     </div>
   )
@@ -230,7 +369,7 @@ function TrackInfoBar({ track }) {
   const playGlyph = rgb ? `rgb(${rgb})` : ACCENT
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 12, padding: PAD, borderRadius: 20, flexShrink: 0,
+      display: 'flex', alignItems: 'center', gap: 12, padding: `${PAD} ${PAD_X}px`, borderRadius: 20, flexShrink: 0,
       background,
       boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
     }}>
@@ -393,20 +532,26 @@ function NextUp({ track, nextTrack }) {
   return (
     <div style={{
       flex: '260 1 0', minWidth: 0, height: '100%', minHeight: 0, overflow: 'hidden', boxSizing: 'border-box',
-      borderRadius: 20, padding: PAD,
+      borderRadius: 20, padding: `${PAD} ${PAD_X}px`,
       background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
-      display: 'flex', flexDirection: 'column', gap: GAP,
+      // The padding was ALWAYS symmetric (16/16) — the badges hugged the bottom because the content
+      // overran the tile and `overflow: hidden` clipped it straight through the bottom padding.
+      // Measured: 102px of content in an 88px box, so the badges ended up 2px off the bottom edge
+      // against 16px above the label. The 14px is reclaimed from the internal spacing below (NOT from
+      // the tile's height — this row shares its band with the disc/visualizer, and growing it would
+      // just move the squeeze onto them). `center` then splits whatever slack is left evenly.
+      display: 'flex', flexDirection: 'column', gap: 6, justifyContent: 'center',
     }}>
       <div style={{ fontFamily: FONT, fontSize: 10, fontWeight: 500, color: SUB, letterSpacing: '0.04em' }}>NEXT UP</div>
       {nextTrack ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <Thumb url={nextTrack.album_art_url} size={25} radius={5} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {nextTrack.name ?? 'Unknown'}
               </div>
-              <div style={{ fontFamily: FONT, fontSize: 13, fontWeight: 500, color: SUB, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 4 }}>
+              <div style={{ fontFamily: FONT, fontSize: 13, fontWeight: 500, color: SUB, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
                 {nextTrack.artist ?? ''}
               </div>
             </div>
@@ -418,7 +563,17 @@ function NextUp({ track, nextTrack }) {
         </div>
       ) : (
         // Not in an active set chain — the V1 solo-browse state (Decision Log #66).
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 6, paddingBottom: 4 }}>
+        //
+        // Bottom-anchored (flex-end) to mirror Compatible Keys next door, so BOTH of this tile's rows
+        // land on their neighbour's baselines:
+        //   • the subtitle's last line sits on the content-box floor → level with the key badges
+        //   • "Add to a set" sits one sub-stack above it            → level with "compatible keys"
+        // For the second to hold, everything BELOW the heading (this gap + the 2-line subtitle) must
+        // match the height of Compatible Keys' label→floor stack (its 20px paddingTop + 25.5px badge
+        // row). 12px + a 33px subtitle does that, and 12px is also what lifts the heading off the
+        // subtitle — the pair used to be jammed together at a 3px gap purely because the row was too
+        // short to allow anything else.
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'flex-end', gap: 6 }}>
           <div style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: SUB }}>Add to a set</div>
           <div style={{ fontFamily: FONT, fontSize: 11, color: SUB }}>Chain this song in the Set Builder to see what mixes next.</div>
         </div>
@@ -442,17 +597,44 @@ function CompatibleKeys({ track }) {
 
   return (
     <div style={{
-      flexGrow: 0, flexShrink: 0, width: DISC_W, height: '100%', minHeight: 0, overflow: 'hidden', boxSizing: 'border-box',
-      borderRadius: 20, padding: PAD,
+      // 25px narrower than the disc above it, so NextUp (flex:'260 1 0') absorbs the 25px and grows.
+      // This deliberately breaks the vertical column the tile used to form with PlaybackDisc — both
+      // were exactly DISC_W — so the bento's left edge still lines up but its right edge no longer does.
+      //
+      // The 147px floor is load-bearing, not defensive padding. DISC_W is an 11.3vw clamp, so on a
+      // narrow window it shrinks faster than the key badges can: the widest possible key set (three
+      // 3-char Camelot codes, e.g. 10A/12A/11B) needs ~117px, and with 30px of tile padding that means
+      // the tile can never go below ~147 without clipping them. Below ~1550px the floor takes over and
+      // the tile simply stops shrinking — NextUp gets whatever is left, which is less than the full
+      // 25px there, but nothing is ever cut off. (The old DISC_W width already clipped those tracks on
+      // narrow windows; this fixes that too.)
+      flexGrow: 0, flexShrink: 0, width: `max(147px, calc(${DISC_W} - 25px))`, height: '100%', minHeight: 0, overflow: 'hidden', boxSizing: 'border-box',
+      borderRadius: 20, padding: `${PAD} ${PAD_X}px`,
       background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
       display: 'flex', flexDirection: 'column',
     }}>
       {wheel ? (
         <>
           <div style={{ fontFamily: FONT, fontSize: F_COUNT, fontWeight: 500, color: '#fff', lineHeight: 1 }}>{keys.length}</div>
-          <div style={{ fontFamily: FONT, fontSize: F_TILE_LABEL, fontWeight: 500, color: SUB, marginTop: 3 }}>compatible keys</div>
-          <div style={{ display: 'flex', gap: 5, marginTop: 'auto', paddingTop: 10, flexWrap: 'nowrap' }}>
-            {keys.map((k) => <KeyBadge key={k.text} text={k.text} color={k.color} big />)}
+          {/* Label + badges are ONE bottom-anchored group (marginTop:auto on the group, not on the
+              badge row). That's what lets this tile line up with NextUp next door in both of its
+              states, and it's structural rather than a tuned number:
+                • the badge row sits on the content-box floor  → same baseline as NextUp's badges
+                • the label sits one badge-row above the floor → same baseline as "Add to a set"
+              Anchoring from the BOTTOM is the point. The label used to be positioned from the top,
+              trailing the big count — whose size is a vh clamp (F_COUNT) — so its baseline slid with
+              the viewport while NextUp's heading, pinned from the floor, stayed put. They could only
+              ever agree at one window size. Now neither depends on the count's height; the slack
+              collects above the label instead, between it and the number. */}
+          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ fontFamily: FONT, fontSize: F_TILE_LABEL, fontWeight: 500, color: SUB }}>compatible keys</div>
+            {/* This 20px is what LIFTS the label: the badges are pinned to the floor, so the space
+                between them and the label is the only thing that decides how high the label sits.
+                It was 4px, which is why the label sat almost on top of the badges. NextUp's matching
+                heading→subtitle gap is set to keep the two headings on one line — see there. */}
+            <div style={{ display: 'flex', gap: 4, paddingTop: 13, flexWrap: 'nowrap' }}>
+              {keys.map((k) => <KeyBadge key={k.text} text={k.text} color={k.color} big />)}
+            </div>
           </div>
         </>
       ) : (
@@ -466,15 +648,74 @@ function CompatibleKeys({ track }) {
   )
 }
 
-// —— Energy + Mood sliders (Decision Log #67) — read-only display ——————————————————————
-function ReadonlySlider({ value, color, leftLabel, rightLabel }) {
+// —— Axis sliders (Decision Log #67) — read-only display ————————————————————————————————
+// This tile sits in an `auto` row of the deck's non-scrolling grid, so ANY height it gains is taken
+// straight out of the visualizer's 1fr and pushes the disc/BPM band (BENTO1) toward its 108px floor.
+// The spacing below is therefore height-NEUTRAL by construction: SLIDER_PAD*2 + SLIDER_GAP sums to
+// exactly what the old (asymmetric) top+bottom+gap summed to, at the clamp floor, the vh midpoint,
+// and the ceiling alike:
+//     old  top 20/2.6vh/28  +  bottom 13/1.6vh/16  +  gap 20/2.8vh/26  =  53 / 7.0vh / 70
+//     new  pad 17/2.1vh/22  x2                     +  gap 19/2.8vh/26  =  53 / 7.0vh / 70
+// The bug was that the old tile padded ~24px on top (sized to clear the floating value numbers) but
+// only PAD (~14px) on the bottom, so the lower slider sat visibly nearer its edge than the upper one
+// did to its. Equal padding puts both tracks the same distance from their respective edges — and the
+// budget is reclaimed from the gap, not borrowed from neighbouring tiles.
+// The gap gives up 5px and the padding absorbs it (2.5px per side), so the two sliders pull toward
+// the tile's centre while its TOTAL height is unchanged — 2*PAD + GAP still sums to 53 / 7.0vh / 70,
+// exactly as before. That matters because this tile sits in an `auto` grid row: growing it steals
+// height from the visualizer's 1fr and squeezes the disc/BPM band, and shrinking it just leaves a
+// hole. Height-neutral is the only way to move these two without disturbing anything else.
+//
+// The gap's floor can't follow all the way down: the lower slider's value number floats UP into the
+// gap, so anything below its headroom (4px lead + line box, ~16px at small type) would collide with
+// the upper slider's track. Hence the 16px floor — the full 5px shift lands from ~1080px up and
+// tapers to 3px at a 600px window, where the number itself is the binding constraint.
+const SLIDER_PAD = 'clamp(18.5px, 2.35vh, 24.5px)'
+const SLIDER_GAP = 'clamp(16px, 2.3vh, 21px)'
+
+// Every pole word that can ever land on each side of a track — low poles left, high poles right —
+// across all four presets AND any custom axis pairing. "Electronic" and "Instrumental" are the
+// current long poles, but nothing here hardcodes that.
+const LOW_POLES = [...new Set(Object.values(FEATURE_POLES).map((p) => p.low))]
+const HIGH_POLES = [...new Set(Object.values(FEATURE_POLES).map((p) => p.high))]
+
+// Zero-height invisible twins of every pole word, rendered inside each label cell. A grid `auto`
+// column sizes to the widest content across all its cells, so this locks each label column to the
+// widest word in the vocabulary — measured with REAL font metrics — and the slider track ends up the
+// same length on every preset. Previously the columns sized to whatever the ACTIVE preset's words
+// were, so "Electronic/Acoustic" produced a visibly shorter track than "Chill/Intense".
+//
+// Done this way rather than as a hardcoded px min-width so it can't silently clip: change the type
+// or add a feature to the vocabulary and the column re-measures itself.
+function PoleSizer({ words }) {
+  return (
+    <span aria-hidden="true" style={{ display: 'block', height: 0, overflow: 'hidden', visibility: 'hidden' }}>
+      {words.map((w) => <span key={w} style={{ display: 'block' }}>{w}</span>)}
+    </span>
+  )
+}
+
+// `value` positions the knob on a 0–100 scale; `display` is the number rendered above it. They
+// differ for BPM, where the knob is normalised but the readout stays raw — see AxisSliders.
+function ReadonlySlider({ value, display, color, leftLabel, rightLabel }) {
   const has = value != null && !Number.isNaN(value)
   const pct = has ? Math.max(0, Math.min(100, value)) : 0
-  const shown = has ? Math.round(value) : '—'
+  const shown = has ? Math.round(display ?? value) : '—'
+  // Three grid cells rather than a self-contained row: the parent is a 3-column grid, so both
+  // sliders share one auto-sized label column and their tracks stay flush with each other. A fixed
+  // label width can't survive preset-driven labels — "Instrumental" and "Electronic" are far wider
+  // than "Chill", and sizing the column for the longest would starve the track on every other preset.
+  // Labels anchor to the OUTER edges (left cell left-aligned, right cell right-aligned) so a word's
+  // starting edge is the same on every preset and the text doesn't shift when you switch presets.
+  // The columns are a fixed width either way, so the track never changes length; this only decides
+  // which side of the label column the ragged edge falls on.
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-      <span style={{ ...labelStyle, width: 46, textAlign: 'right', flexShrink: 0 }}>{leftLabel}</span>
-      <div style={{ flex: 1, position: 'relative', height: 17 }}>
+    <>
+      <span style={{ ...labelStyle, textAlign: 'left', whiteSpace: 'nowrap' }}>
+        {leftLabel}
+        <PoleSizer words={LOW_POLES} />
+      </span>
+      <div style={{ position: 'relative', height: 17 }}>
         {/* Recessed track well */}
         <div style={{ position: 'absolute', top: 3, bottom: 3, left: 0, right: 0, borderRadius: 100, background: '#060606', boxShadow: INSET }} />
         {/* Filled portion */}
@@ -482,27 +723,54 @@ function ReadonlySlider({ value, color, leftLabel, rightLabel }) {
         {/* Knob */}
         <div style={{ position: 'absolute', top: '50%', left: `${pct}%`, transform: 'translate(-50%,-50%)', width: 20, height: 20, borderRadius: '50%', background: color, border: `2px solid ${C.border}`, boxShadow: 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px #000000' }} />
         {/* Value above the knob — its centre is clamped ~16px inside the track so the number never
-            pokes past the tile's padding at the extremes (0 / 100). */}
-        <div style={{ position: 'absolute', bottom: 'calc(100% + 4px)', left: `clamp(16px, ${pct}%, calc(100% - 16px))`, transform: 'translateX(-50%)', fontFamily: FONT, fontSize: F_SLIDER_VAL, fontWeight: 700, color, whiteSpace: 'nowrap' }}>{shown}</div>
+            pokes past the tile's padding at the extremes (0 / 100). `lineHeight: 1` is load-bearing:
+            it's a single line, so the default ~1.3 line box is pure slack, and trimming it is what
+            frees the ~4px per number that lets the padding go symmetric without growing the tile. */}
+        <div style={{ position: 'absolute', bottom: 'calc(100% + 4px)', left: `clamp(16px, ${pct}%, calc(100% - 16px))`, transform: 'translateX(-50%)', fontFamily: FONT, fontSize: F_SLIDER_VAL, fontWeight: 700, lineHeight: 1, color, whiteSpace: 'nowrap' }}>{shown}</div>
       </div>
-      <span style={{ ...labelStyle, width: 46, flexShrink: 0 }}>{rightLabel}</span>
-    </div>
+      <span style={{ ...labelStyle, textAlign: 'right', whiteSpace: 'nowrap' }}>
+        {rightLabel}
+        <PoleSizer words={HIGH_POLES} />
+      </span>
+    </>
   )
 }
 
-function MoodEnergySliders({ track }) {
+// The two sliders follow the active Explore By preset rather than hardcoding Energy/Mood (Decision
+// Log #67 — "switchable presets that swap both sliders"). Top slider = the preset's Y axis, bottom =
+// its X axis, matching how the compass and map lay the axes out, so a song's position on the map and
+// its slider readings describe the same two features. `resolvePreset` also covers the 'custom' key,
+// where poles come from whichever features the user picked in the dropdowns.
+function AxisSliders({ track }) {
+  const { activePreset, customXFeature, customYFeature } = usePlaylistStore()
+  const p = resolvePreset(activePreset, customXFeature, customYFeature)
+
+  // getFeatureValue normalises everything to 0–100 (BPM's 60–180 raw range included), which is what
+  // the knob position needs. The readout above the knob shows the RAW value for BPM — a knob at 55%
+  // labelled "55" would be nonsense on a 126 BPM track — and the 0–100 value for every other feature.
+  //
+  // getFeatureValue also substitutes 50 for a missing feature. That's right for placing a song on the
+  // map but wrong here: it would render absent data as a confident mid-scale reading. So check the raw
+  // field first and pass null through, which ReadonlySlider renders as "—" on an empty track.
+  const readout = (feature) => {
+    const raw = track[feature]
+    if (raw == null || Number.isNaN(raw)) return { value: null, display: null }
+    return { value: getFeatureValue(track, feature), display: feature === 'bpm' ? raw : getFeatureValue(track, feature) }
+  }
+
   return (
     <div style={{
-      // Extra top room for the value numbers that sit above each track; sides/bottom + inter-slider
-      // gap use the responsive scale so the module compresses with the rest at short viewports.
-      borderRadius: 20, padding: `clamp(20px, 2.6vh, 28px) ${PAD} ${PAD}`, flexShrink: 0,
+      borderRadius: 20, padding: `${SLIDER_PAD} ${PAD_X}px`, flexShrink: 0,
       background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
-      display: 'flex', flexDirection: 'column', gap: 'clamp(20px, 2.8vh, 26px)',
+      // 3-column grid — [label | track | label] — so both rows share one label column width and the
+      // two tracks line up however long the active preset's pole words are.
+      display: 'grid', gridTemplateColumns: 'auto 1fr auto',
+      alignItems: 'center', columnGap: 12, rowGap: SLIDER_GAP,
     }}>
-      {/* Energy — blue accent, Chill → Intense (Decision Log semantic vocabulary). */}
-      <ReadonlySlider value={track.energy} color={ACCENT2} leftLabel="Chill" rightLabel="Intense" />
-      {/* Mood (valence) — orange accent, Dark → Bright. */}
-      <ReadonlySlider value={track.mood} color={ACCENT} leftLabel="Dark" rightLabel="Bright" />
+      {/* Y axis (vertical on the map) — Chill→Intense on Vibe, Slow→Fast on Dancefloor, etc. */}
+      <ReadonlySlider {...readout(p.yFeature)} color={ACCENT2} leftLabel={p.yLow} rightLabel={p.yHigh} />
+      {/* X axis (horizontal on the map) — Dark→Bright on Vibe, Mellow→Groovy on Dancefloor, etc. */}
+      <ReadonlySlider {...readout(p.xFeature)} color={ACCENT} leftLabel={p.xLow} rightLabel={p.xHigh} />
     </div>
   )
 }
@@ -541,7 +809,7 @@ function DeckContent({ track, nextTrack, open }) {
           <MeterTile track={track} open={open} />
         </div>
       </div>
-      <MoodEnergySliders track={track} />
+      <AxisSliders track={track} />
       {/* Bento row 2: Compatible Keys (left) + Next Up (right). */}
       <div style={{ display: 'flex', gap: GAP, minHeight: 0 }}>
         <CompatibleKeys track={track} />
