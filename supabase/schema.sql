@@ -72,7 +72,8 @@ do $$
 begin
   if exists (select 1 from information_schema.tables
              where table_schema = 'public' and table_name = 'sets') then
-    alter table public.sets add column if not exists playlist_id uuid references public.playlists(id);
+    alter table public.sets add column if not exists playlist_id uuid
+      references public.playlists(id) on delete cascade;
   end if;
 end $$;
 
@@ -104,3 +105,72 @@ create table if not exists public.set_connections (
 );
 
 alter table public.set_connections disable row level security;
+
+-- ---------------------------------------------------------------------------
+-- Foreign-key reconciliation. Run last; safe to re-run.
+--
+-- Every `create table if not exists` above is a NO-OP on a database where the
+-- table already exists — and that includes its foreign keys. So when an
+-- `on delete cascade` is added to a create statement after the fact, it never
+-- reaches an existing database, and re-running this file will not fix it. The
+-- create statements above therefore describe a FRESH database only; they are
+-- not a description of a live one.
+--
+-- This is not hypothetical. Probed against the live DB on 2026-07-14:
+-- playlist_tracks predates the cascades declared on its playlist_id/track_id,
+-- and both were still NO ACTION — so deleting any playlist failed with
+-- `playlist_tracks_playlist_id_fkey`, and deleting any track failed with
+-- `playlist_tracks_track_id_fkey`. Every other FK had cascaded correctly.
+--
+-- The block below is the part that actually converges an existing database on
+-- the intent above: for each FK it adds a missing constraint, repairs one whose
+-- ON DELETE isn't CASCADE, and leaves a correct one untouched.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  fk      record;
+  cname   text;
+  cdel    "char";
+begin
+  for fk in
+    select * from (values
+      ('playlist_tracks', 'playlist_id',     'playlists'),
+      ('playlist_tracks', 'track_id',        'tracks'),
+      ('sets',            'playlist_id',     'playlists'),
+      ('set_tracks',      'set_id',          'sets'),
+      ('set_tracks',      'track_id',        'tracks'),
+      ('set_connections', 'set_id',          'sets'),
+      ('set_connections', 'source_track_id', 'tracks'),
+      ('set_connections', 'target_track_id', 'tracks')
+    ) as t(child, col, parent)
+  loop
+    -- Find the FK currently guarding child.col, if any, and how it behaves on delete.
+    -- confdeltype: 'c' = cascade, 'a' = no action, 'r' = restrict, 'n' = set null.
+    select c.conname, c.confdeltype
+      into cname, cdel
+      from pg_constraint c
+      join pg_class     ch on ch.oid = c.conrelid
+      join pg_namespace n  on n.oid  = ch.relnamespace
+      join pg_attribute a  on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
+     where c.contype = 'f'
+       and n.nspname = 'public'
+       and ch.relname = fk.child
+       and a.attname  = fk.col
+       and array_length(c.conkey, 1) = 1;
+
+    if cname is not null and cdel = 'c' then
+      null;  -- already correct
+    else
+      if cname is not null then
+        execute format('alter table public.%I drop constraint %I', fk.child, cname);
+      end if;
+      execute format(
+        'alter table public.%I add constraint %I foreign key (%I) references public.%I(id) on delete cascade',
+        fk.child, fk.child || '_' || fk.col || '_fkey', fk.col, fk.parent);
+      raise notice 'reconciled %.% -> %.id (on delete cascade)', fk.child, fk.col, fk.parent;
+    end if;
+
+    cname := null;  -- select-into leaves the previous value when no row matches
+    cdel  := null;
+  end loop;
+end $$;

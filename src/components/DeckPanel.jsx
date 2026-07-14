@@ -551,11 +551,16 @@ function NextUp({ track, nextTrack }) {
         <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <Thumb url={nextTrack.album_art_url} size={25} radius={5} />
+            {/* Both lines carry an explicit lineHeight because they'd otherwise inherit the app's
+                base 24px leading — far too loose for 15px/13px type, and it made this block 67px
+                against the empty state's 60px. Since both states are bottom-anchored, that 7px went
+                straight into the top edge: the populated state started 7px higher than the empty one.
+                1.25 brings the block to exactly 60px, so the two states occupy the same band. */}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 700, lineHeight: 1.25, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {nextTrack.name ?? 'Unknown'}
               </div>
-              <div style={{ fontFamily: FONT, fontSize: 13, fontWeight: 500, color: SUB, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
+              <div style={{ fontFamily: FONT, fontSize: 13, fontWeight: 500, lineHeight: 1.25, color: SUB, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
                 {nextTrack.artist ?? ''}
               </div>
             </div>
