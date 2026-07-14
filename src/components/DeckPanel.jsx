@@ -179,6 +179,13 @@ const RELEASE = 0.12
 const MET_COLS = 24
 const MET_ROWS = 3
 const METER_GRADIENT = 'linear-gradient(90deg, #1ED460 0%, #FF9512 52%, red 100%)'
+// Meter geometry. WELL_H is the tile's 48px height minus its 8px top/bottom padding — the well stretches
+// to fill it. The radii are derived from it rather than hand-typed, because a right end of WELL_H/2 is a
+// true semicircle AND is the largest value that won't trip CSS's radius-overlap scaling (see the well).
+const TILE_H = 48
+const TILE_PAD_Y = 8
+const WELL_H = TILE_H - TILE_PAD_Y * 2   // 32
+const WELL_R_LEFT = 5                    // must stay ≤ WELL_H/2, or the left end becomes a pill too
 // A dot per lattice cell, tiled. Stops at 30%/36% of the cell's radius leave a clear gutter between
 // lamps — without the gap they merge and it's just the old continuous bar with dents in it.
 const DOT_MASK = (() => {
@@ -191,9 +198,132 @@ const DOT_MASK = (() => {
   }
 })()
 
+// —— Glass cover. A pane sitting over the lamps, lit by a single source above the panel. Three
+// stacked gradients do the work: a specular highlight across the top third (the reflection), a weak
+// bounce off the bottom edge, and a darkening at the extreme left/right where a real pane is thicker
+// and refracts more. The inset box-shadow is the pane's own edge — a bright top lip and a shadow
+// under the bottom one. The tiny backdrop blur is what actually sells it: the lamps beneath diffuse
+// very slightly through the glass instead of reading as flat CSS dots.
+const GLASS = {
+  position: 'absolute', inset: 0, pointerEvents: 'none', borderRadius: 'inherit',
+  backdropFilter: 'blur(0.5px)', WebkitBackdropFilter: 'blur(0.5px)',
+  background: [
+    'linear-gradient(180deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.09) 34%, rgba(255,255,255,0) 50%)',
+    'linear-gradient(0deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0) 28%)',
+    // Edge darkening lands exactly on the well's rounded left end; at 0.40 it crushed that corner back
+    // into the tile behind it, undoing the contrast the border is there to provide.
+    'linear-gradient(90deg, rgba(0,0,0,0.18) 0%, rgba(0,0,0,0) 7%, rgba(0,0,0,0) 93%, rgba(0,0,0,0.18) 100%)',
+  ].join(','),
+  boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.30), inset 0 -2px 3px rgba(0,0,0,0.55)',
+}
+
+// —— Wear on the pane. A flawless pane is the thing that reads as CG, so the glass gets a few years
+// of use: hairline scratches and a haze of dust/smudge. Both are inline SVG data URIs — procedural,
+// so there's no texture asset to ship, and deterministic, so the wear doesn't crawl between renders.
+//
+// The scratches are hand-placed rather than random: real wear isn't uniform noise. A couple of long
+// shallow passes (a sleeve wiped across the panel), a few short nicks, and two faint arcs — the swirl
+// a cloth leaves. They're drawn in white and screened on, because a scratch isn't a dark mark: it's a
+// facet that catches the light, which is also why the layer is masked to fade toward the bottom. Up
+// in the specular band they glint; down in the shadow they nearly vanish. That correlation with the
+// highlight is what makes them read as damage IN the glass rather than dirt drawn on top of it.
+const SCRATCHES = (() => {
+  const line = (x1, y1, x2, y2, w, o) =>
+    `<line x1='${x1}' y1='${y1}' x2='${x2}' y2='${y2}' stroke='white' stroke-width='${w}' stroke-opacity='${o}' stroke-linecap='round'/>`
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 48' preserveAspectRatio='none'>` +
+    // No single dominant scratch. The wear is carried by a scatter of micro-scratches instead — one
+    // long gouge across the panel pulls the eye and starts to look like a crack, especially over the
+    // lit lamps on the left where there's nothing to hide it. A few of these are a touch brighter
+    // than the rest so the field still has depth rather than reading as uniform texture.
+    line(120, 31, 189, 26, 0.5, 0.5) +     // the one long-ish stroke, kept to the dark right side
+    line(88, 22, 96, 21, 0.6, 0.62) +      // short bright nick in the specular band
+    line(150, 8, 163, 17, 0.45, 0.5) +
+    // Micro-scratches: short, shallow, scattered. Individually almost nothing.
+    line(24, 14, 30, 12, 0.3, 0.34) +
+    line(38, 30, 44, 32, 0.3, 0.26) +
+    line(52, 11, 57, 14, 0.3, 0.3) +
+    line(46, 38, 55, 34, 0.3, 0.26) +
+    line(66, 19, 72, 17, 0.3, 0.32) +
+    line(74, 35, 80, 37, 0.3, 0.24) +
+    line(99, 12, 106, 10, 0.3, 0.3) +
+    line(108, 40, 115, 38, 0.3, 0.24) +
+    line(128, 15, 133, 12, 0.3, 0.3) +
+    line(137, 36, 145, 38, 0.3, 0.22) +
+    line(158, 28, 164, 26, 0.3, 0.28) +
+    line(171, 39, 177, 35, 0.3, 0.26) +
+    line(176, 13, 183, 15, 0.3, 0.28) +
+    line(31, 25, 37, 27, 0.3, 0.26) +
+    line(191, 21, 196, 24, 0.3, 0.24) +
+    line(17, 33, 22, 31, 0.28, 0.24) +
+    line(28, 41, 34, 39, 0.28, 0.2) +
+    line(43, 20, 48, 18, 0.28, 0.28) +
+    line(58, 27, 63, 29, 0.28, 0.24) +
+    line(62, 42, 68, 40, 0.28, 0.2) +
+    line(70, 9, 76, 11, 0.28, 0.26) +
+    line(83, 33, 89, 31, 0.28, 0.22) +
+    line(93, 40, 98, 42, 0.28, 0.2) +
+    line(104, 24, 110, 22, 0.28, 0.26) +
+    line(113, 17, 118, 19, 0.28, 0.24) +
+    line(122, 43, 128, 41, 0.28, 0.2) +
+    line(131, 24, 136, 22, 0.28, 0.26) +
+    line(143, 30, 149, 28, 0.28, 0.22) +
+    line(147, 42, 152, 40, 0.28, 0.2) +
+    line(155, 15, 160, 13, 0.28, 0.26) +
+    line(164, 34, 170, 36, 0.28, 0.22) +
+    line(180, 30, 185, 28, 0.28, 0.24) +
+    line(185, 42, 190, 40, 0.28, 0.2) +
+    line(193, 33, 198, 31, 0.28, 0.22) +
+    line(9, 20, 14, 22, 0.28, 0.22) +
+    // A second, finer pass — thinner and fainter still, so they fill in the gaps between the ones
+    // above without competing with them. Density is what sells wear; brightness is what ruins it.
+    line(14, 27, 18, 26, 0.25, 0.2) +
+    line(21, 37, 26, 38, 0.25, 0.18) +
+    line(33, 9, 38, 8, 0.25, 0.22) +
+    line(35, 17, 39, 19, 0.25, 0.18) +
+    line(50, 24, 55, 23, 0.25, 0.2) +
+    line(54, 43, 59, 42, 0.25, 0.16) +
+    line(64, 33, 69, 32, 0.25, 0.2) +
+    line(67, 13, 71, 15, 0.25, 0.22) +
+    line(78, 26, 83, 25, 0.25, 0.18) +
+    line(80, 15, 85, 14, 0.25, 0.2) +
+    line(91, 34, 96, 36, 0.25, 0.18) +
+    line(97, 30, 101, 29, 0.25, 0.2) +
+    line(102, 17, 107, 16, 0.25, 0.22) +
+    line(111, 28, 116, 27, 0.25, 0.18) +
+    line(116, 9, 121, 11, 0.25, 0.2) +
+    line(124, 35, 129, 34, 0.25, 0.18) +
+    line(134, 43, 139, 42, 0.25, 0.16) +
+    line(139, 19, 144, 18, 0.25, 0.22) +
+    line(152, 36, 157, 35, 0.25, 0.18) +
+    line(160, 42, 165, 41, 0.25, 0.16) +
+    line(167, 22, 172, 21, 0.25, 0.2) +
+    line(174, 27, 179, 29, 0.25, 0.18) +
+    line(182, 19, 187, 18, 0.25, 0.2) +
+    line(188, 37, 193, 36, 0.25, 0.16) +
+    line(196, 13, 199, 15, 0.25, 0.18) +
+    // The swirl a cloth leaves, very faint.
+    `<path d='M60 6 Q104 20 141 10' fill='none' stroke='white' stroke-width='0.35' stroke-opacity='0.14'/>` +
+    `<path d='M24 42 Q70 30 118 41' fill='none' stroke='white' stroke-width='0.3' stroke-opacity='0.1'/>` +
+    `</svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`
+})()
+
+// Dust and smudge: fractal noise, kept very low so it grimes the pane without becoming visible
+// texture. This is the layer that stops the glass looking freshly unwrapped.
+const GRIME = (() => {
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 48'>` +
+    `<filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' seed='7'/>` +
+    `<feColorMatrix type='saturate' values='0'/></filter>` +
+    `<rect width='120' height='48' filter='url(%23g)'/></svg>`
+  return `url("data:image/svg+xml,${encodeURIComponent(svg).replace(/%2523/g, '%23')}")`
+})()
+
 function MeterTile({ track, open }) {
   const { engine } = useAudio()
   const fillRef = useRef(null)
+  const glowRef = useRef(null)
   const stRef = useRef({ level: 0.55, freq: null, prev: 0, fluxMax: 0 })
 
   useEffect(() => {
@@ -257,8 +387,12 @@ function MeterTile({ track, open }) {
         // at its edge and give away that this is a swept bar behind a mask rather than a real panel.
         const lvl = Math.min(1, Math.max(0, st.level))
         const cols = Math.round(lvl * MET_COLS)
-        el.style.clipPath = `inset(0 ${(100 - (cols / MET_COLS) * 100).toFixed(3)}% 0 0)`
+        const clip = `inset(0 ${(100 - (cols / MET_COLS) * 100).toFixed(3)}% 0 0)`
+        el.style.clipPath = clip
         el.style.filter = `brightness(${(0.8 + st.level * 0.55).toFixed(3)})`
+        // The bloom tracks the same lamp columns, so the glow can never lead or lag the lamps it's
+        // supposed to be coming from.
+        if (glowRef.current) glowRef.current.style.clipPath = clip
       }
     }
     raf = requestAnimationFrame(tick)
@@ -271,16 +405,19 @@ function MeterTile({ track, open }) {
     <div style={{
       // Slim accent strip (fixed ~40px), not a full grid row — leaves the BPM/Camelot pill the rest
       // of the column height so the circles fill their pill.
-      flex: '0 0 auto', height: 48, borderRadius: 20, position: 'relative',
+      flex: '0 0 auto', height: TILE_H, borderRadius: TILE_H / 2, position: 'relative',
       background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
-      display: 'flex', alignItems: 'center', padding: '8px 15px',
+      display: 'flex', alignItems: 'center', padding: `${TILE_PAD_Y}px 15px`,
     }}>
-      {/* Recessed well. Left corners are squared off to 5px while the right stays a full pill — the
-          scale reads left→right, so the flat end is where the meter starts and the round end is where
-          it runs out. */}
+      {/* Recessed well. Rounded left end, pill right end — the scale reads left→right.
+          The right radius is WELL_H / 2, NOT the usual 999px pill idiom, and that is load-bearing: when
+          the radii on an edge exceed the box, CSS scales EVERY corner by one common factor. This box is
+          32px tall, so a 999px right end asks for 1998px of radius in 32px of height → factor 0.016 →
+          it drags the left corners down with it (a 14px left end rendered as 0.22px, i.e. square). The
+          left corner was uncroppable for that reason alone; no radius applied to it could ever show. */}
       <div style={{
         position: 'relative', flex: 1, alignSelf: 'stretch', overflow: 'hidden',
-        borderRadius: '5px 100px 100px 5px',
+        borderRadius: `${WELL_R_LEFT}px ${WELL_H / 2}px ${WELL_H / 2}px ${WELL_R_LEFT}px`,
         background: '#000', border: `1px solid ${C.border}`, boxShadow: INSET,
       }}>
         {/* Dot-matrix panel. The mask lives HERE, on a wrapper pinned to the well — not on the fill.
@@ -289,10 +426,6 @@ function MeterTile({ track, open }) {
             Pinned to the well, the lattice is fixed and the fill just sweeps beneath it, which is what
             makes lamps light up in place like a real panel. */}
         <div style={{ position: 'absolute', inset: 3, ...DOT_MASK }}>
-          {/* Unlit lamps: the same gradient, heavily dimmed. A real LED meter shows its scale even
-              when dark — you can make out where the red zone starts before you ever hit it — and that
-              reads far better than a row of dead gray dots. */}
-          <div style={{ position: 'absolute', inset: 0, background: METER_GRADIENT, opacity: 0.13 }} />
           {/* Lit lamps. The gradient spans the FULL well and is revealed by a clip — it is NOT a
               narrow element that grows. That distinction is the difference between a meter and a
               bug: painting the gradient on a width-animated element compresses the whole green→red
@@ -305,6 +438,48 @@ function MeterTile({ track, open }) {
             background: METER_GRADIENT,
             clipPath: 'inset(0 36% 0 0)',
           }} />
+        </div>
+        {/* Cover glass. It covers the LAMPS — but not their bloom, which is painted over it below. */}
+        <div style={GLASS}>
+          {/* Grime first, scratches over it: a scratch is a fresh facet in the glass, so it cuts
+              through the dirt rather than sitting under it. */}
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: 'inherit',
+            backgroundImage: GRIME, backgroundSize: '120px 48px',
+            opacity: 0.045, mixBlendMode: 'screen',
+          }} />
+          <div style={{
+            position: 'absolute', inset: 0, borderRadius: 'inherit',
+            backgroundImage: SCRATCHES, backgroundSize: '100% 100%',
+            mixBlendMode: 'screen', opacity: 0.42,
+            // Scratches only glint where light hits them — strong in the specular band up top,
+            // nearly gone in the shadowed bottom.
+            WebkitMaskImage: 'linear-gradient(180deg, #000 0%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.2) 100%)',
+            maskImage: 'linear-gradient(180deg, #000 0%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.2) 100%)',
+          }} />
+        </div>
+        {/* Bloom — the lamps' light AFTER it has come through the pane, which is why this is painted
+            OVER the glass and not under it. Under the glass the pane's darkening and its reflection sat
+            on top of the glow and held it back; the light a panel throws at you doesn't get dimmed by
+            the very glass it just passed through. Screened over the cover, the glow washes across the
+            reflections and the scratches — light spilling past the pane, exactly like a real one.
+
+            The blur sits on the WRAPPER, one level above the mask and the clip, so it blurs content
+            that is already dotted and already cut to the level. Both orderings matter: blurring the
+            gradient before the mask would just re-dot a soft image (no spill between lamps), and
+            blurring before the clip is what keeps the leading edge soft — put the clip on the blurred
+            element itself and it slices the glow off with a hard vertical edge, which reads as a lit
+            rectangle rather than light. */}
+        <div aria-hidden="true" style={{
+          position: 'absolute', inset: 3, pointerEvents: 'none',
+          filter: 'blur(4px)', opacity: 1, mixBlendMode: 'screen',
+        }}>
+          <div style={{ position: 'absolute', inset: 0, ...DOT_MASK }}>
+            <div ref={glowRef} style={{
+              position: 'absolute', inset: 0,
+              background: METER_GRADIENT, clipPath: 'inset(0 36% 0 0)',
+            }} />
+          </div>
         </div>
       </div>
     </div>
