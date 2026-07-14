@@ -567,7 +567,9 @@ export default function SetBuilderPanel() {
         // Two visual states (Slice 11 polish #5). DISABLED = the Figma gray treatment (frame 748:1774):
         // #141416 fill, extrusion (4/4/5 black drop + inset 1/1.5/3 #373737), #848484 text. ACTIVE (set
         // savable, or mid-save) = the app's orange primary-button treatment: accent border + tinted
-        // fill + white text. A transparent border on the disabled state keeps the two the same size.
+        // fill + ACCENT label — matching PrimaryButton in the import flow, where the orange-outlined
+        // CTA carries an orange label rather than a white one. A transparent border on the disabled
+        // state keeps the two the same size.
         (() => { const accented = canSave || phase === 'saving' || phase === 'saved'; return (
         <button
           onClick={handleSave}
@@ -578,7 +580,7 @@ export default function SetBuilderPanel() {
             background: accented ? ACCENT1_FILL : C.card,
             border: `1.5px solid ${accented ? ACCENT : 'transparent'}`,
             boxShadow: accented ? '4px 4px 5px 0px rgba(0,0,0,0.5)' : EXTRUSION,
-            color: accented ? '#fff' : C.textSecondary,
+            color: accented ? ACCENT : C.textSecondary,
             fontFamily: FONT, fontSize: 16, fontWeight: 500, textAlign: 'center',
             cursor: canSave ? 'pointer' : 'default',
             transition: 'color 160ms ease, background 160ms ease, border-color 160ms ease',
