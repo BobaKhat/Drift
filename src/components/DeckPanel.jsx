@@ -544,7 +544,11 @@ function NextUp({ track, nextTrack }) {
     }}>
       <div style={{ fontFamily: FONT, fontSize: 10, fontWeight: 500, color: SUB, letterSpacing: '0.04em' }}>NEXT UP</div>
       {nextTrack ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        // marginTop:auto bottom-anchors this block against the tile's content floor — the exact same
+        // anchor the empty state uses (flex:1 + justifyContent:flex-end below). Without it the block
+        // floated on the tile's justifyContent:center, so the populated state sat a few px higher than
+        // the empty one and its badge row drifted off the Compatible Keys badge line.
+        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <Thumb url={nextTrack.album_art_url} size={25} radius={5} />
             <div style={{ flex: 1, minWidth: 0 }}>
