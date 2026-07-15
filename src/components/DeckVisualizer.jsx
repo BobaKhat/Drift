@@ -79,8 +79,8 @@ const GLOW = 1.0
 //
 // Threshold stays low (only the brightest cores bloom at all); strength and radius are what got pulled
 // back. Strength gets a small live-audio term on top of this each frame.
-const BLOOM_STRENGTH = 0.38
-const BLOOM_RADIUS = 0.35
+const BLOOM_STRENGTH = 0.228
+const BLOOM_RADIUS = 0.04375
 const BLOOM_THRESHOLD = 0.67
 
 // —— THE BASS PULSE. Two terms, fired off the same decaying transient that already drives the hop, so a
@@ -91,8 +91,8 @@ const BLOOM_THRESHOLD = 0.67
 // full-frame luminance swing straight into the viewer's eyes for half an hour. Anything that reads as
 // impressive in a five-second demo is the wrong answer here.
 //
-// BLOOM_PULSE lifts the strength 0.38 → 0.50 at the peak of a kick (+32%), decaying out over ~0.37s. It
-// stays close to the baseline on purpose: 0.38 is not an arbitrary number but the level tuned to leave
+// BLOOM_PULSE lifts the strength 0.228 → 0.288 at the peak of a kick (+26%), decaying out over ~0.37s. It
+// stays close to the baseline on purpose: 0.228 is not an arbitrary number but the level tuned to leave
 // the gaps between the nodal lines EMPTY (see BLOOM_STRENGTH), and a bloom that closes those gaps does
 // not merely look bright, it erases the figure. This brushes past that line for a moment rather than
 // vaulting over it.
@@ -100,13 +100,8 @@ const BLOOM_THRESHOLD = 0.67
 // BASS_FLASH is the same event on the grains themselves. It emits the ALBUM'S colour, not white — see
 // the note where it is applied. It compounds with the bloom by design, and where it actually lands is
 // not where you would expect.
-const BLOOM_PULSE = 0.12
+const BLOOM_PULSE = 0.06
 const BASS_FLASH = 0.08
-
-// How much white the emissive carries at FULL warmth (a red/orange/brown cover). Cool covers get none —
-// the mix is driven by the hue itself, in POINTS_FRAG. See the EMISSIVE note there for why the white is
-// a debt only warm records owe.
-const WARM_WHITE = 0.35
 
 // —— The lighting rig. Three lights, no shadows (65k points cannot afford a shadow map, and sand at
 // this scale self-shadows into the fake AO term rather than casting). Directions are in the point
@@ -884,7 +879,6 @@ uniform float uGlow;        // GLOW — constant across the catalogue; drives em
 uniform float uBassImpulse; // the decaying bass transient, 0..1 — the same one that drives the hop
 
 #define BASS_FLASH ${BASS_FLASH.toFixed(2)}
-#define WARM_WHITE ${WARM_WHITE.toFixed(2)}   // white poured into the emissive at FULL warmth; 0 when cool
 
 uniform vec3 uKeyDir;    uniform vec3 uKeyColor;    uniform float uKeyI;
 uniform vec3 uFillDir;   uniform vec3 uFillColor;   uniform float uFillI;
@@ -972,30 +966,26 @@ void main() {
   vec3 envColor = mix(vec3(0.02), vec3(0.15, 0.14, 0.13), refl.z * 0.5 + 0.5);
   lit = mix(lit, lit + envColor, (1.0 - roughness) * 0.3);
 
-  // —— EMISSIVE. The sand is lit from within, on every record equally (uGlow is a constant now).
+  // —— EMISSIVE. The sand is lit from within, on every record equally (uGlow is a constant now). The
+  // grain emits its OWN hue — no white mixed in — so the record's colour stays pure.
   //
-  // How much WHITE the emitted colour carries is a function of the hue, and it went through two wrong
-  // answers before this one. A flat 0.5 washed the whole catalogue out. A flat 0.25 was better but still
-  // levied the same tax on every record, and the records do not have the same problem.
+  // The one hard requirement is that every song actually glows: the bloom is a luminance high-pass, and
+  // hues carry wildly different luminance weights (red 0.299, green 0.587, blue only 0.114), so a dark
+  // or deep-blue cover can emit its true colour and still sit entirely under the cut, glowing not at all.
+  // Earlier passes tried to fix this per-hue — a warmth-gated white mix for reds, an inverse-luminance
+  // boost for blues — and it was both fiddly and still left the darkest covers under the threshold.
   //
-  // The white is a crutch for ONE failure: a warm hue sits right on top of the grain's own base colour —
-  // which is 75% album over warm sand — so emitting it adds back the colour the grain already is, and a
-  // red pile just gets redder rather than hotter. Reds, oranges and browns genuinely need the lift to
-  // separate from their own substrate. A cool hue has no such problem: it is already in contrast with the
-  // warm sand and the warm key light, so it reads as emitting on its own, and any white poured into it is
-  // pure loss — it is the thing that was turning blues and teals to pale grey.
-  //
-  // So: pay the tax only where the debt is. warmth is how far the hue leans red — that is, how much red
-  // beats whichever of green or blue is running second. It is 1 for reds and browns, 0 for anything cool,
-  // neutral, or magenta (where blue ties red), and it slides smoothly between.
-  //
-  // Note this leaves saturated BLUE albums emitting a pure, low-luminance blue. That is what they want
-  // visually, but see the bloom threshold: blue carries a weight of only 0.114 in the luminosity
-  // high-pass, so a deep blue grain can sit under the bloom cut and never glow at all. That is a
-  // pre-existing problem, not one this introduces — it just no longer papers over it with white.
-  float warmth = smoothstep(0.0, 0.3, albumHue.r - max(albumHue.g, albumHue.b));
-  vec3 hotCenter = mix(albumHue, vec3(1.0), warmth * WARM_WHITE);
-  lit += hotCenter * uGlow * 0.3;
+  // Replace all of it with one guarantee applied to the FINAL emissive: a luminance floor. Anything too
+  // dim to bloom is scaled up until it just clears the threshold, preserving its hue exactly; anything
+  // already bright enough passes through untouched. Red, blue, purple, dark brown — every case, one rule.
+  vec3 emissive = albumHue * uGlow * 0.3;
+
+  float emissiveLuma = dot(emissive, vec3(0.299, 0.587, 0.114));
+  float minLuma = 0.35;   // solidly above the bloom threshold, so dark covers glow clearly
+  if (emissiveLuma < minLuma && emissiveLuma > 0.001) {
+    emissive *= minLuma / emissiveLuma;
+  }
+  lit += emissive;
 
   // —— THE BASS PULSE. The grain is struck, so it brightens and fades — in the ALBUM'S colour, not in
   // white. It was white, on the theory that a struck thing flashes white-hot; but this fires on every
