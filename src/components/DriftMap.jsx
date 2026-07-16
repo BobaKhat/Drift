@@ -7,9 +7,10 @@ import {
   useReactFlow,
   useOnViewportChange,
   useStoreApi,
+  ViewportPortal,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import TrackNode, { ZOOM_PILL, ZOOM_CARD, ZoomTierContext, BuildContext, BloomContext, SongPreviewCard, getTier, getNodeScale } from './TrackNode'
+import TrackNode, { ZOOM_CARD, ZoomTierContext, BuildContext, BloomContext, SongPreviewCard, getTier, getNodeScale } from './TrackNode'
 import WireEdge, { FLOW_STROBE_NAME, FLOW_OFF_START, FLOW_OFF_END, FLOW_SWEEP_S, FLOW_CYCLE_S } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { usePlaylistStore } from '../store/usePlaylistStore'
@@ -25,20 +26,29 @@ import { SELECTED } from './import/tokens'
 // zoom in (Google Maps model, Decision Log #17) — the primary energy×mood mapping only
 // resolves songs to a coarse position, so the extra pixels are what reveals granularity.
 //
-// LANDSCAPE, not square (3:2). The map card is a wide rectangle, so a square canvas can only be
+// LANDSCAPE, not square (~16:9). The map card is a wide rectangle, so a square canvas can only be
 // fit to it by matching its height — which left the whole plot, and the axis cross drawn around it,
 // stranded in a narrow column with dead gutters either side. Matching the canvas to the card's
-// rough aspect lets the coordinate system fill the space it's drawn in. The consequence is that
-// mood gets more pixels per unit than energy: flow space is anisotropic, which is fine because
-// nothing reads distance ACROSS the two axes — this is a vibe map, not a metric space. (Wire
-// lengths, the one canvas-space distance we do measure, only pace the strobe along a single path,
-// and on-screen path length still scales uniformly with zoom.)
-const W = 9000
+// rough aspect lets the coordinate system fill the space it's drawn in. 10667×6000 ≈ 1.778:1, so on
+// a widescreen (16:9 / 16:10) display the horizontal axis line reaches the viewport edges at the
+// default fit, not just the vertical one. The consequence is that mood gets more pixels per unit than
+// energy: flow space is anisotropic, which is fine because nothing reads distance ACROSS the two axes
+// — this is a vibe map, not a metric space. (Wire lengths, the one canvas-space distance we do
+// measure, only pace the strobe along a single path, and on-screen path length still scales uniformly
+// with zoom.)
 const H = 6000
 
-// Map the 0–100 feature range into the inner 5%–95% of the canvas (Decision Log #22),
-// so songs at the extremes sit near the axis terminator pills, not on top of them.
-const PAD = { x: [W * 0.05, W * 0.95], y: [H * 0.05, H * 0.95] }
+// Canvas WIDTH is dynamic — it tracks the card's aspect ratio (W = H * cardW/cardH, recomputed on
+// resize) so the axis box and the card share a shape. That shared shape is what lets minZoom leave
+// equal margins on all four sides at max zoom-out (see makeGeom / computeMinZoom below). H is fixed;
+// nothing reads a module-level W anymore — every W-dependent value comes from the per-render `geom`
+// object so a single W change updates the padding band, axis endpoints, fit box and pan clamp together.
+
+// The 0–100 feature range maps into the inner 5%–95% of the canvas (Decision Log #22) so songs at the
+// extremes sit near the terminator pills, not on top of them. Y is fixed with H; the X band is derived
+// per-W in makeGeom. A song at value 50 always lands at 50% of W whatever W is — positions are purely
+// proportional, so a changing W reshapes the quadrants without disturbing any song's relative place.
+const PAD_Y = [H * 0.05, H * 0.95]
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
@@ -122,7 +132,7 @@ function buildAxisScale(values) {
 // X axis = mood/valence: dark (low) → left, bright (high) → right.
 // Y axis = energy: intense (high) → top (low Y), chill (low) → bottom (high Y).
 // scaleX/scaleY are the density remaps for the active library.
-function toFlowPos(track, scaleX, scaleY, xFeature, yFeature) {
+function toFlowPos(track, scaleX, scaleY, xFeature, yFeature, PAD) {
   const xVal = getFeatureValue(track, xFeature)
   const yVal = getFeatureValue(track, yFeature)
   const { jx, jy } = jitterPair(track)
@@ -140,12 +150,12 @@ function toFlowPos(track, scaleX, scaleY, xFeature, yFeature) {
 // getting rank × 15ms of delay, so songs pop in scattered rather than sweeping across the map.
 const BLOOM_STAGGER_MS = 15
 
-function buildNodes(tracks, presetConfig) {
+function buildNodes(tracks, presetConfig, PAD) {
   const { xFeature = 'mood', yFeature = 'energy' } = presetConfig ?? {}
   const scaleX = buildAxisScale(tracks.map((t) => getFeatureValue(t, xFeature)))
   const scaleY = buildAxisScale(tracks.map((t) => getFeatureValue(t, yFeature)))
   const nodes = tracks.map((track, i) => {
-    const pos = toFlowPos(track, scaleX, scaleY, xFeature, yFeature)
+    const pos = toFlowPos(track, scaleX, scaleY, xFeature, yFeature, PAD)
     return {
       id: track.id ?? `track-${i}`,
       type: 'track',
@@ -179,7 +189,7 @@ const nodeTypes = { track: TrackNode }
 const edgeTypes = { wire: WireEdge }
 
 const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
-const AXIS_COLOR = 'rgba(255,255,255,0.10)'
+const AXIS_COLOR = 'rgba(255,255,255,0.08)' // crosshair lines — present but subtle, never competing with songs
 const ACCENT1 = '#F27F37' // Intense / Chill (energy axis)
 const ACCENT2 = '#4B6AE5' // Dark / Bright (mood axis)
 const MAP_BG = '#141415'
@@ -201,23 +211,35 @@ const EDGE = 16 // inset of the HUD brackets / zone chip from the map card edge
 // extreme songs. At the default fit zoom that inset lands ~16px in from the canvas bounds, which
 // reads the same as the old card-edge pinning while now being anchored to the map, not the viewport.
 const AXIS_INSET = 0.02
-const AXIS_X = [W * AXIS_INSET, W * (1 - AXIS_INSET)]
-const AXIS_Y = [H * AXIS_INSET, H * (1 - AXIS_INSET)]
+const AXIS_Y = [H * AXIS_INSET, H * (1 - AXIS_INSET)] // Y-axis extent is fixed with H
 
-// The axis box is what "fit view" frames — see the fit logic below for why it's this and not the
-// songs' bounding box. It always contains the songs, since the axis (2%–98%) brackets PAD (5%–95%).
-const AXIS_BOUNDS = {
-  x: AXIS_X[0],
-  y: AXIS_Y[0],
-  width: AXIS_X[1] - AXIS_X[0],
-  height: AXIS_Y[1] - AXIS_Y[0],
+// Canvas width from the card's live aspect ratio (H fixed). Guarded so a zero/NaN pre-layout
+// measurement falls back to 16:9 instead of poisoning the geometry.
+const canvasWidthFor = (vw, vh) => (vw > 0 && vh > 0 ? H * (vw / vh) : (H * 16) / 9)
+
+// All W-dependent geometry, derived together from one width so a resize updates it in lock-step. Note
+// AXIS_X, PAD.x, AXIS_BOUNDS.{x,width} and TRANSLATE_EXTENT scale with W while everything Y is fixed.
+// AXIS_BOUNDS is what "fit view" frames — not the songs' bounding box — and always contains the songs,
+// since the axis (2%–98%) brackets PAD (5%–95%).
+function makeGeom(W) {
+  const AXIS_X = [W * AXIS_INSET, W * (1 - AXIS_INSET)]
+  const PAD = { x: [W * 0.05, W * 0.95], y: PAD_Y }
+  const AXIS_BOUNDS = { x: AXIS_X[0], y: AXIS_Y[0], width: AXIS_X[1] - AXIS_X[0], height: AXIS_Y[1] - AXIS_Y[0] }
+  const TRANSLATE_EXTENT = [[AXIS_X[0], AXIS_Y[0]], [AXIS_X[1], AXIS_Y[1]]]
+  return { W, AXIS_X, PAD, AXIS_BOUNDS, TRANSLATE_EXTENT }
 }
 // Breathing room around the axis box when fitting, as a fraction of the card per side. Small: the
 // box already carries a 2% canvas margin, and the terminator pills hang inward from its edges.
 const FIT_PAD_FRAC = 0.04
 
-// Static dot grid (Figma "Backgrind grid") painted on the map card.
+// —— Dot grid ————————————————————————————————————————————————————————————————————————
+// The original subtle dotted grid, as a CSS background on the map card — so it sits BEHIND the songs,
+// and keeps a constant 22px SCREEN size so the dots stay evenly visible at ANY zoom (a canvas-space
+// grid spreads its spacing with zoom and goes invisible once you're zoomed in). To give it motion
+// reference instead of dead wallpaper, its background-position is driven from the viewport pan every
+// frame, so the whole field scrolls 1:1 with the map as you pan.
 const DOT_GRID = 'radial-gradient(circle, rgba(255,255,255,0.055) 1px, transparent 1.3px)'
+const DOT_SIZE = 22 // px — constant on-screen grid spacing
 
 // Axis terminator pill (Figma): pill-shaped, recessed inner glow, accent-colored label.
 const pillBase = {
@@ -290,12 +312,6 @@ function ZoneOption({ label, onSelect, isLast }) {
   )
 }
 
-// Crosshair opacity by zoom: full through the circle tier, fades across the pill tier, gone by
-// the card tier.
-function crosshairOpacityFor(zoom) {
-  return clamp((ZOOM_CARD - zoom) / (ZOOM_CARD - ZOOM_PILL), 0, 1)
-}
-
 // Drive per-frame zoom work (the node counter-scale) WITHOUT a second useOnViewportChange: that
 // hook stores a single `onViewportChange` handler, so a second subscriber would clobber AxisLayer's
 // (which owns it for the crosshair/pills). Instead we subscribe to the ReactFlow store's transform
@@ -330,24 +346,25 @@ function useThrottledZoom(onZoom) {
   }, [store])
 }
 
-// AxisLayer overlay. The crosshair lines mark value 50 on each axis (= canvas centre W/2, H/2) and
-// the pole pills cap the crosshair ends. Both are CANVAS-space furniture, not viewport chrome: they
-// are anchored to the map, so panning away scrolls them off the card edge rather than dragging them
-// along. (They are deliberately NOT sticky at the viewport edge — a song's position relative to the
-// axis is the whole read of this map, and an axis that follows the camera lies about that.) They
-// fade out as you zoom in, since they're only an overview aid, and a zone chip — which IS viewport
-// chrome, along with the corner brackets — fades in to name the quadrant under the viewport centre.
-// Positions/opacities are written imperatively per frame (via useOnViewportChange) so the lines and
-// pills stay locked to the nodes with no batch-cycle lag — no React re-render on pan/zoom.
-function AxisLayer({ preset }) {
+// AxisLayer. Two very different things live here:
+//
+//   1. The crosshair lines + pole pills are pure CANVAS-space furniture, rendered into React Flow's
+//      ViewportPortal so the pane's own pan/zoom transform carries them — exactly like a song node.
+//      There is NO per-frame positioning: each element is placed once at its canvas coordinate (the
+//      lines span AXIS_INSET→1-AXIS_INSET on each axis, crossing at W/2,H/2; the pills cap the four
+//      ends) and the viewport moves them. Only their *size* is counter-scaled — a shared CSS var
+//      (--axis-scale = 1/zoom, written by the map's throttled zoom driver) keeps the lines a 1px
+//      hairline and the pill text a constant readable size at any zoom, the same trick the nodes use.
+//      They carry no opacity fade: they're always fully present at a low alpha, and the viewport
+//      clamp (translateExtent + minZoom) guarantees the full cross with all four pills is always
+//      reachable, so the user simply pans/zooms to whichever region they want.
+//
+//   2. The zone chip IS viewport chrome — pinned to the card corner, naming the quadrant under the
+//      card centre. It's driven imperatively per frame (useOnViewportChange, no React re-render) and
+//      fades in only once the crosshair intersection (canvas W/2,H/2) has scrolled off-card.
+function AxisLayer({ preset, geom }) {
   const rf = useReactFlow()
   const rootRef = useRef(null)
-  const hLineRef = useRef(null)
-  const vLineRef = useRef(null)
-  const intenseRef = useRef(null)
-  const chillRef = useRef(null)
-  const darkRef = useRef(null)
-  const brightRef = useRef(null)
   const chipRef = useRef(null)
   const chipLabelRef = useRef(null)
   const dimsRef = useRef({ w: 0, h: 0 })
@@ -365,53 +382,36 @@ function AxisLayer({ preset }) {
     labelsRef.current = { yHigh: preset.yHigh, yLow: preset.yLow, xHigh: preset.xHigh, xLow: preset.xLow }
   }, [preset])
 
+  // W is dynamic (resizes with the card), so the per-frame handlers read it from a ref rather than
+  // closing over a stale value. JSX below reads geom directly and re-renders when W changes.
+  const geomRef = useRef(geom)
+  useEffect(() => { geomRef.current = geom }, [geom])
+
+  // Zone chip only. The lines/pills are static ViewportPortal geometry now — nothing to position here.
   const applyViewport = useCallback(({ x, y, zoom }) => {
-    const lineOpacity = crosshairOpacityFor(zoom)
-
-    // Every coordinate below is a CANVAS point pushed through the viewport transform, so the
-    // crosshair and its pills are welded to the songs: they pan with the map and clip off the card
-    // edge (the root is overflow:hidden) once you pan away from the centre. Only their *size* is
-    // screen-space — the lines keep a 1px hairline and the pills a fixed type size at any zoom,
-    // the same counter-scale trick the nodes use.
-    const cx = (W / 2) * zoom + x        // crosshair centre = value 50 on each axis
-    const cy = (H / 2) * zoom + y
-    const ax0 = AXIS_X[0] * zoom + x     // axis endpoints (canvas 2% / 98%)
-    const ax1 = AXIS_X[1] * zoom + x
-    const ay0 = AXIS_Y[0] * zoom + y
-    const ay1 = AXIS_Y[1] * zoom + y
-
-    if (hLineRef.current) {
-      const s = hLineRef.current.style
-      s.top = `${cy}px`; s.left = `${ax0}px`; s.width = `${ax1 - ax0}px`; s.opacity = lineOpacity
-    }
-    if (vLineRef.current) {
-      const s = vLineRef.current.style
-      s.left = `${cx}px`; s.top = `${ay0}px`; s.height = `${ay1 - ay0}px`; s.opacity = lineOpacity
-    }
-
-    // Pills cap the four axis ends — Intense/Chill at the top/bottom of the vertical axis (x = cx),
-    // Dark/Bright at the left/right of the horizontal (y = cy) — and fade with the lines.
-    if (intenseRef.current) { const s = intenseRef.current.style; s.left = `${cx}px`; s.top = `${ay0}px`; s.opacity = lineOpacity }
-    if (chillRef.current)   { const s = chillRef.current.style;   s.left = `${cx}px`; s.top = `${ay1}px`; s.opacity = lineOpacity }
-    if (darkRef.current)    { const s = darkRef.current.style;    s.left = `${ax0}px`; s.top = `${cy}px`; s.opacity = lineOpacity }
-    if (brightRef.current)  { const s = brightRef.current.style;  s.left = `${ax1}px`; s.top = `${cy}px`; s.opacity = lineOpacity }
-
-    // Zone chip: quadrant under the viewport centre; fades in as the crosshair fades out.
+    const { W } = geomRef.current
     const { w, h } = dimsRef.current
+    // Canvas coordinate under the card centre — feeds both the quadrant label and the compass store.
+    const cxCanvas = (w / 2 - x) / zoom
+    const cyCanvas = (h / 2 - y) / zoom
+
     if (chipRef.current && chipLabelRef.current) {
       const { yHigh, yLow, xHigh, xLow } = labelsRef.current
-      const cxCanvas = (w / 2 - x) / zoom
-      const cyCanvas = (h / 2 - y) / zoom
       chipLabelRef.current.textContent = `${cyCanvas <= H / 2 ? yHigh : yLow} · ${cxCanvas >= W / 2 ? xHigh : xLow}`
-      chipRef.current.style.opacity = 1 - lineOpacity
+      // Fade the chip in when the crosshair intersection (canvas W/2,H/2) is NOT visible on the card.
+      // Project that point through the viewport transform to screen space and test it against the
+      // card rect inset by a small margin, so the chip appears just as the cross leaves the frame.
+      const sx = (W / 2) * zoom + x
+      const sy = (H / 2) * zoom + y
+      const M = 50
+      const centreVisible = sx >= M && sx <= w - M && sy >= M && sy <= h - M
+      chipRef.current.style.opacity = centreVisible ? 0 : 1
     }
 
-    // Compass quadrant: TR/TL/BR/BL based on canvas centre of the viewport.
-    const qx = (w / 2 - x) / zoom
-    const qy = (h / 2 - y) / zoom
-    const quadrant = qy <= H / 2
-      ? (qx >= W / 2 ? 'TR' : 'TL')
-      : (qx >= W / 2 ? 'BR' : 'BL')
+    // Compass quadrant: TR/TL/BR/BL based on the canvas point under the viewport centre.
+    const quadrant = cyCanvas <= H / 2
+      ? (cxCanvas >= W / 2 ? 'TR' : 'TL')
+      : (cxCanvas >= W / 2 ? 'BR' : 'BL')
     // Only push to the store when it actually changes — this fired every frame before, churning
     // store subscribers (the compass widgets) on every pan even when the quadrant was unchanged.
     if (quadrant !== prevQuadrantRef.current) {
@@ -447,6 +447,7 @@ function AxisLayer({ preset }) {
   useOnViewportChange({ onChange: applyViewport })
 
   const panToZone = useCallback((label) => {
+    const { W } = geomRef.current
     const { yHigh, xHigh } = labelsRef.current
     const isTop = label.startsWith(yHigh)
     const isRight = label.endsWith(xHigh)
@@ -463,20 +464,36 @@ function AxisLayer({ preset }) {
 
   return (
     <div ref={rootRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
-      {/* Crosshair, in canvas space — marks value 50 on each axis. Both ends and the crossing point
-          are set per frame from the viewport transform, so it pans off with the songs. */}
-      <div ref={hLineRef} style={{ position: 'absolute', height: 1, background: AXIS_COLOR, transform: 'translateY(-0.5px)' }} />
-      <div ref={vLineRef} style={{ position: 'absolute', width: 1, background: AXIS_COLOR, transform: 'translateX(-0.5px)' }} />
+      {/* Crosshair + pole pills — static CANVAS geometry rendered inside the pane's ViewportPortal, so
+          React Flow's own transform pans/zooms them with the songs. Nothing here is positioned per
+          frame: only the counter-scale (--axis-scale = 1/zoom) rides along, keeping the lines a 1px
+          hairline (scaleX/Y on the thin axis only, so length still tracks the map) and the pill text a
+          constant screen size (uniform scale about the anchored edge, so each pill stays capped on its
+          axis end and hangs inward). pointerEvents:none so the furniture never eats a pan or a click. */}
+      <ViewportPortal>
+        <div style={{ pointerEvents: 'none' }}>
+          {/* Horizontal line — value 50 on the energy axis (canvas H/2), spanning the mood axis. */}
+          <div style={{
+            position: 'absolute', left: geom.AXIS_X[0], top: H / 2,
+            width: geom.AXIS_X[1] - geom.AXIS_X[0], height: 1, background: AXIS_COLOR,
+            transformOrigin: 'center', transform: 'translateY(-50%) scaleY(var(--axis-scale, 1))',
+          }} />
+          {/* Vertical line — value 50 on the mood axis (canvas W/2), spanning the energy axis. */}
+          <div style={{
+            position: 'absolute', left: geom.W / 2, top: AXIS_Y[0],
+            width: 1, height: AXIS_Y[1] - AXIS_Y[0], background: AXIS_COLOR,
+            transformOrigin: 'center', transform: 'translateX(-50%) scaleX(var(--axis-scale, 1))',
+          }} />
 
+          {/* Pole pills capping the four axis ends, each anchored by its OUTER edge so it hangs inward. */}
+          <span style={{ ...pillBase, left: geom.W / 2, top: AXIS_Y[0], transformOrigin: 'top center',    transform: 'translateX(-50%) scale(var(--axis-scale, 1))',      color: ACCENT1 }}>{preset.yHigh}</span>
+          <span style={{ ...pillBase, left: geom.W / 2, top: AXIS_Y[1], transformOrigin: 'bottom center', transform: 'translate(-50%, -100%) scale(var(--axis-scale, 1))', color: ACCENT1 }}>{preset.yLow}</span>
+          <span style={{ ...pillBase, left: geom.AXIS_X[0], top: H / 2,  transformOrigin: 'left center',   transform: 'translateY(-50%) scale(var(--axis-scale, 1))',      color: ACCENT2 }}>{preset.xLow}</span>
+          <span style={{ ...pillBase, left: geom.AXIS_X[1], top: H / 2,  transformOrigin: 'right center',  transform: 'translate(-100%, -50%) scale(var(--axis-scale, 1))', color: ACCENT2 }}>{preset.xHigh}</span>
+        </div>
+      </ViewportPortal>
 
-      {/* Pole pills, in canvas space — left/top set per frame; each is pinned by its OUTER edge to
-          an axis end, so the pill body hangs inward over the line as it did against the card edge. */}
-      <span ref={intenseRef} style={{ ...pillBase, transform: 'translateX(-50%)', color: ACCENT1 }}>{preset.yHigh}</span>
-      <span ref={chillRef}   style={{ ...pillBase, transform: 'translate(-50%, -100%)', color: ACCENT1 }}>{preset.yLow}</span>
-      <span ref={darkRef}    style={{ ...pillBase, transform: 'translateY(-50%)', color: ACCENT2 }}>{preset.xLow}</span>
-      <span ref={brightRef}  style={{ ...pillBase, transform: 'translate(-100%, -50%)', color: ACCENT2 }}>{preset.xHigh}</span>
-
-      {/* Zone chip — fades in when zoomed in, replacing the crosshair as orientation aid.
+      {/* Zone chip — fades in when the crosshair centre scrolls off-card, naming the current quadrant.
           Opacity is managed imperatively; clicking opens a 4-quadrant pan shortcut. */}
       <div
         ref={chipRef}
@@ -823,15 +840,15 @@ function ToolButton({ icon: Icon, onClick }) {
 }
 
 // Top-right toolbar: active preset label + zoom controls + compass dropdown.
-function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
+function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
   const stroke = ICON_PRIMARY
   const [compassOpen, setCompassOpen] = useState(false)
 
   // Fit the axis box, not the nodes — same framing the map opens with, so this button always
   // returns you to the full crosshair with its four poles in view.
   const handleFitView = useCallback(() => {
-    rf.fitBounds(AXIS_BOUNDS, { padding: FIT_PAD_FRAC, duration: 600 })
-  }, [rf])
+    rf.fitBounds(geom.AXIS_BOUNDS, { padding: FIT_PAD_FRAC, duration: 600 })
+  }, [rf, geom])
 
   const handleZoomIn  = useCallback(() => rf.zoomIn({ duration: 200 }), [rf])
   const handleZoomOut = useCallback(() => rf.zoomOut({ duration: 200 }), [rf])
@@ -908,9 +925,15 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
   )
 }
 
-// 3000px of overflow on each side of the canvas — songs at the edges can be centered without
-// hitting a hard wall.
-const TRANSLATE_EXTENT = [[-3000, -3000], [W + 3000, H + 3000]]
+// Pan is clamped to the axis box (the 2%–98% crosshair bounds, = geom.AXIS_BOUNDS / geom.TRANSLATE_EXTENT):
+// the user can never scroll past the axis endpoints into empty canvas. Combined with a minZoom that makes
+// AXIS_BOUNDS fill the viewport at full zoom-out (see computeMinZoom), this guarantees the complete cross
+// with all four pills is always in reach and there's no void to get lost in.
+
+// minZoom = the zoom at which AXIS_BOUNDS fills the viewport. Recomputed from the card's live size on
+// resize. Now that the canvas shares the card's aspect ratio, the width and height terms coincide, so the
+// 30px reserved on height (15px top + 15px bottom) yields ~15px on all four sides at max zoom-out.
+const computeMinZoom = (vw, vh, bounds) => Math.min(vw / bounds.width, (vh - 30) / bounds.height)
 
 // Manual zoom ceiling. Cards grow only slowly with zoom (dampened counter-scale — see NODE_PIN /
 // NODE_PIN_EXP in TrackNode) while the canvas spreads at full zoom, so zooming deeper mostly
@@ -942,7 +965,12 @@ function DriftMapInner({ tracks }) {
   const [bloom, setBloom] = useState({ gen: 0, active: true })
   const [previewNodeId, setPreviewNodeId] = useState(null) // hover-preview node (raised z-index)
 
-  const initialNodes = useMemo(() => buildNodes(stagedTracks, presetConfig), [stagedTracks, presetConfig])
+  // Canvas width tracks the card's aspect ratio (set in the resize effect below); all W-dependent
+  // geometry is derived from it in one memo so every consumer reads a consistent snapshot per render.
+  const [W, setW] = useState(() => (H * 16) / 9) // provisional 16:9 until the card is measured on mount
+  const geom = useMemo(() => makeGeom(W), [W])
+
+  const initialNodes = useMemo(() => buildNodes(stagedTracks, presetConfig, geom.PAD), [stagedTracks, presetConfig, geom.PAD])
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [minZoom, setMinZoom] = useState(0.01)
   const rf = useReactFlow()
@@ -1117,19 +1145,23 @@ function DriftMapInner({ tracks }) {
   const [tier, setTier] = useState('circle')
   const tierRef = useRef('circle')
 
-  // Rebuild on a staged-tracks or preset change. A TRACK change re-fits (new library → the bloom +
-  // fitView run). A PRESET-only change instead SLIDES the songs to their new positions (Slice 11.5,
-  // Feature 3): add the reposition class for 500ms so React Flow's per-node translate transitions, and
-  // DON'T re-fit — keeping the viewport still is what makes the slide visible instead of a jump-cut.
-  const prevBuildRef = useRef({ tracks: stagedTracks, preset: presetConfig })
+  // Rebuild on a staged-tracks, preset, or canvas-width change. A TRACK change re-fits (new library →
+  // the bloom + fitView run). A WIDTH change (resize) also re-fits, since the axis box has reshaped and
+  // must be re-framed with the new aspect. A PRESET-only change instead SLIDES the songs to their new
+  // positions (Slice 11.5, Feature 3): add the reposition class for 500ms so React Flow's per-node
+  // translate transitions, and DON'T re-fit — keeping the viewport still is what makes the slide visible
+  // instead of a jump-cut. Positions come from toFlowPos with the current PAD, so a wider/narrower W just
+  // rescales every X proportionally (value 50 stays at 50% of W).
+  const prevBuildRef = useRef({ tracks: stagedTracks, preset: presetConfig, pad: geom.PAD })
   const repositionTimer = useRef(null)
   useEffect(() => {
     const prev = prevBuildRef.current
     const tracksChanged = prev.tracks !== stagedTracks
     const presetChanged = prev.preset !== presetConfig
-    prevBuildRef.current = { tracks: stagedTracks, preset: presetConfig }
-    setNodes(buildNodes(stagedTracks, presetConfig))
-    if (tracksChanged) {
+    const widthChanged = prev.pad !== geom.PAD
+    prevBuildRef.current = { tracks: stagedTracks, preset: presetConfig, pad: geom.PAD }
+    setNodes(buildNodes(stagedTracks, presetConfig, geom.PAD))
+    if (tracksChanged || widthChanged) {
       hasFit.current = false
     } else if (presetChanged) {
       const el = wrapperRef.current
@@ -1137,7 +1169,7 @@ function DriftMapInner({ tracks }) {
       clearTimeout(repositionTimer.current)
       repositionTimer.current = setTimeout(() => el?.classList.remove('drift-repositioning'), 520)
     }
-  }, [stagedTracks, presetConfig, setNodes])
+  }, [stagedTracks, presetConfig, geom.PAD, setNodes])
 
   const handleWheel = useCallback((e) => {
     // ctrlKey is true for pinch-to-zoom and ctrl+scroll — the zoom gesture
@@ -1151,9 +1183,14 @@ function DriftMapInner({ tracks }) {
 
   // Counter-scale + tier driver (throttled to ~30fps). Writes the scale factor into the
   // --node-scale CSS var so every node rescales via CSS with no React re-render, and flips tier
-  // state only when a threshold is crossed.
+  // state only when a threshold is crossed. --axis-scale (a true 1/zoom) rides the same frame: the
+  // crosshair furniture in the ViewportPortal reads it to hold a constant screen size at any zoom.
   const applyZoom = useCallback((zoom) => {
-    wrapperRef.current?.style.setProperty('--node-scale', String(getNodeScale(zoom)))
+    const el = wrapperRef.current
+    if (el) {
+      el.style.setProperty('--node-scale', String(getNodeScale(zoom)))
+      el.style.setProperty('--axis-scale', String(1 / zoom))
+    }
     const next = getTier(zoom)
     if (next !== tierRef.current) {
       tierRef.current = next
@@ -1161,6 +1198,24 @@ function DriftMapInner({ tracks }) {
     }
   }, [])
   useThrottledZoom(applyZoom)
+
+  // Scroll the dot grid with the map. The grid is a fixed 22px CSS background (constant density, so it's
+  // visible at any zoom), so to give it motion reference we write the viewport PAN into the card's
+  // background-position on every transform change — panning by N screen px shifts the translate by N at
+  // any zoom, so the grid tracks the map 1:1. Guarded to skip no-op frames; a background-position write
+  // is a cheap paint with no React re-render, so this can ride every transform update.
+  const store = useStoreApi()
+  useEffect(() => {
+    let px = null, py = null
+    const apply = () => {
+      const [x, y] = store.getState().transform
+      if (x === px && y === py) return
+      px = x; py = y
+      if (wrapperRef.current) wrapperRef.current.style.backgroundPosition = `${x}px ${y}px`
+    }
+    apply()
+    return store.subscribe(apply)
+  }, [store])
 
   // Seed the var + tier from the current viewport before first paint (the watcher only fires on a
   // change), so nodes mount at the right scale/tier instead of flashing the default.
@@ -1183,24 +1238,45 @@ function DriftMapInner({ tracks }) {
     const vw = rect?.width ?? window.innerWidth - MAP_LEFT - PAGE_INSET
     const vh = rect?.height ?? window.innerHeight - 2 * PAGE_INSET
 
-    const zoom = Math.min(
-      (vw * (1 - 2 * FIT_PAD_FRAC)) / AXIS_BOUNDS.width,
-      (vh * (1 - 2 * FIT_PAD_FRAC)) / AXIS_BOUNDS.height,
+    // minZoom is the zoom at which AXIS_BOUNDS exactly fills the card — the hard floor the viewport
+    // clamps to. The default fit adds a little breathing room (FIT_PAD_FRAC) but can never zoom out
+    // past that floor, so it's clamped up to minZoom for a very large box. Fit still frames the axis
+    // cross, just tighter when the padded fit would fall below the floor.
+    const floor = computeMinZoom(vw, vh, geom.AXIS_BOUNDS)
+    const zoom = Math.max(floor, Math.min(
+      (vw * (1 - 2 * FIT_PAD_FRAC)) / geom.AXIS_BOUNDS.width,
+      (vh * (1 - 2 * FIT_PAD_FRAC)) / geom.AXIS_BOUNDS.height,
       FIT_MAX_ZOOM,
-    )
+    ))
     // The axis box is centred on the canvas, so its midpoint is the crosshair itself.
-    const x = vw / 2 - (W / 2) * zoom
+    const x = vw / 2 - (geom.W / 2) * zoom
     const y = vh / 2 - (H / 2) * zoom
 
-    // Let users still zoom out past the default to take in the full canvas.
-    const canvasFitZoom = Math.min(vw / W, vh / H)
-
-    console.log(`[drift] viewport: zoom=${zoom.toFixed(4)} x=${x.toFixed(1)} y=${y.toFixed(1)} (map ${Math.round(vw)}×${Math.round(vh)})`)
-
+    setMinZoom(floor)
     rf.setViewport({ x, y, zoom })
-    setMinZoom(Math.min(zoom, canvasFitZoom) * 0.8)
     hasFit.current = true
-  }, [nodes, rf])
+  }, [nodes, rf, geom])
+
+  // Canvas width + framing track the card's live aspect ratio. Measure immediately on mount (so the very
+  // first fit frames the axis with the right shape), then on every resize — debounced 200ms so a window
+  // drag doesn't rebuild positions on every pixel. Setting W reshapes the geometry, which re-fits via the
+  // rebuild effect above (widthChanged → hasFit=false); minZoom is set here too so the pan clamp stays
+  // right even for an aspect-preserving resize that leaves W unchanged.
+  useEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    let t = 0
+    const measure = () => {
+      const vw = el.clientWidth, vh = el.clientHeight
+      if (vw <= 0 || vh <= 0) return
+      setW(canvasWidthFor(vw, vh))
+      setMinZoom(computeMinZoom(vw, vh, makeGeom(canvasWidthFor(vw, vh)).AXIS_BOUNDS))
+    }
+    measure() // immediate, no debounce — the mount measurement
+    const ro = new ResizeObserver(() => { clearTimeout(t); t = setTimeout(measure, 200) })
+    ro.observe(el)
+    return () => { clearTimeout(t); ro.disconnect() }
+  }, [])
 
   // Apply a 2-second orange highlight ring to the searched song, then clear it.
   const handleHighlight = useCallback((trackId) => {
@@ -1316,7 +1392,7 @@ function DriftMapInner({ tracks }) {
         bottom: PAGE_INSET,
         background: MAP_BG,
         backgroundImage: DOT_GRID,
-        backgroundSize: '22px 22px',
+        backgroundSize: `${DOT_SIZE}px ${DOT_SIZE}px`,
         border: `1px solid ${BORDER}`,
         borderRadius: 20,
         overflow: 'hidden',
@@ -1349,7 +1425,7 @@ function DriftMapInner({ tracks }) {
             zoomOnPinch
             minZoom={minZoom}
             maxZoom={MAX_ZOOM}
-            translateExtent={TRANSLATE_EXTENT}
+            translateExtent={geom.TRANSLATE_EXTENT}
             // Cull off-screen nodes during pan/zoom — only mount the ones inside the viewport.
             // Big win with 150+ songs. Culling uses each node's measured layout box (not its CSS
             // counter-scale transform), so edge nodes may mount/unmount a few px late while panning.
@@ -1372,9 +1448,9 @@ function DriftMapInner({ tracks }) {
       {buildMode && flowMode && flowTiming && (
         <style>{flowTiming.map((w, i) => `@keyframes ${FLOW_STROBE_NAME}-${i}{0%{stroke-dashoffset:${FLOW_OFF_START}}${w.activePct.toFixed(3)}%{stroke-dashoffset:${FLOW_OFF_END}}100%{stroke-dashoffset:${FLOW_OFF_END}}}`).join('')}</style>
       )}
-      <AxisLayer preset={presetConfig} />
+      <AxisLayer preset={presetConfig} geom={geom} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
-      <ToolBar rf={rf} presetName={presetConfig.label} activePreset={activePreset} />
+      <ToolBar rf={rf} presetName={presetConfig.label} activePreset={activePreset} geom={geom} />
       {/* Compatibility card — fixed bottom-right, shown while a wire is selected (Decision Log #31). */}
       {selectedTracks && (
         <CompatibilityCard sourceTrack={selectedTracks.s} targetTrack={selectedTracks.t} />
