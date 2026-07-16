@@ -1,4 +1,8 @@
-import { C, FONT, ACCENT1_FILL, INSET, CARD_DROP, PANEL_LIP, RADIUS } from './tokens'
+import { useState } from 'react'
+import {
+  C, FONT, INSET, CARD_DROP, PANEL_LIP, RADIUS, SELECTED,
+  NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER,
+} from './tokens'
 
 // Shared presentational primitives for the import flow — keep the bento aesthetic in one place.
 
@@ -38,21 +42,31 @@ const basePill = {
   border: 'none',
   padding: '0 30px',
   whiteSpace: 'nowrap',
-  transition: 'opacity 150ms ease',
+  transition: 'opacity 150ms ease, background 150ms ease, box-shadow 150ms ease',
 }
 
 // Orange-outlined hero CTA (Explore the demo library / Map my music / Done).
 export function PrimaryButton({ children, onClick, disabled, style }) {
+  const [hover, setHover] = useState(false)
+  const lift = hover && !disabled
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
       style={{
         ...basePill,
-        background: ACCENT1_FILL,
-        border: `1px solid ${C.accent1}`,
+        // The Explore By row's ACTIVE state: the selected glass chip. Accent ring + accent label over
+        // dark glass — the same treatment the rail, the Flow knob and the search icon carry. Hover lifts
+        // the glass (brighter sheen, longer drop); disabled sits it back down, since the 0.4 opacity
+        // already says the click won't land.
+        background: `${lift ? SELECTED.hoverSheen : SELECTED.sheen}, ${SELECTED.fill}`,
+        border: `1px solid ${SELECTED.border}`,
         color: C.accent1,
-        boxShadow: '4px 4px 5px 0px #000000',
+        boxShadow: `${lift ? SELECTED.hoverDrop : SELECTED.drop}, ${SELECTED.rim}`,
+        backdropFilter: SELECTED.blur,
+        WebkitBackdropFilter: SELECTED.blur,
         opacity: disabled ? 0.4 : 1,
         cursor: disabled ? 'not-allowed' : 'pointer',
         ...style,
@@ -63,21 +77,24 @@ export function PrimaryButton({ children, onClick, disabled, style }) {
   )
 }
 
-// Secondary button (Paste your tracklist / Back). Styled to match the Explore By preset rows at
-// rest (ExploreByPanel): card fill, #848484 label, pill, 16px/500 — all of which already lined up —
-// plus the outer drop-shadow those rows carry. Without it the button read as purely recessed (inset
-// lip only); the drop-shadow is what makes it sit proud of the panel the way the preset rows do.
+// Secondary button (Paste your tracklist / Back). Still tracks the Explore By preset rows at rest, which
+// are now raised slabs off the neomorphic system — same fill, same outer pair, same rim. The rim rides in
+// the element's own box-shadow rather than an overlay div (as the rows use): nothing here overlaps the
+// 1px it occupies, so the extra node would buy nothing.
 export function SecondaryButton({ children, onClick, disabled, style }) {
+  const [hover, setHover] = useState(false)
+  const lift = hover && !disabled
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
       style={{
         ...basePill,
-        background: C.card,
+        background: lift ? NEO_BAR_HOVER_BG : NEO_BAR_BG,
         color: C.textSecondary,
-        boxShadow: PANEL_LIP,
-        filter: 'drop-shadow(4px 4px 2.5px black)',
+        boxShadow: `${lift ? NEO_BAR_HOVER : NEO_BAR_SHADOW}, ${NEO_BAR_EDGE}`,
         opacity: disabled ? 0.4 : 1,
         ...style,
       }}

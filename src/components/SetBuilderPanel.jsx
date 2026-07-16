@@ -1,6 +1,10 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { C, FONT, INSET, EXTRUSION, ACCENT1_FILL } from './import/tokens'
+import {
+  C, FONT, INSET, ACCENT1_FILL, SELECTED,
+  NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER,
+  NEO_BTN_BG, NEO_BTN_HOVER_BG, NEO_CHEV_RAISED, NEO_CHEV_HOVER,
+} from './import/tokens'
 import { camelotColor } from '../lib/camelot'
 import { formatSetMeta } from '../lib/setChain'
 
@@ -12,7 +16,14 @@ import { formatSetMeta } from '../lib/setChain'
 
 const ACCENT = C.accent1
 const ACCENT2 = C.accent2 // #4B6AE5 — the Disconnected section's accent (matches Figma)
-const HEAD_BG = 'rgba(242,127,55,0.2)'
+// The one deliberate exception to the neutral-fill rule (see SELECTED in import/tokens): the chain head
+// is tinted accent-orange @ 20% rather than dark glass. Everywhere else "selected" is a state a surface
+// enters and leaves, so a neutral fill is what lets one shader cover the rail, the rows and the knobs
+// without each reading as a different material. The head isn't a state — it's a permanent role, exactly
+// one row in the list, and it's read against its own sibling: ORPHAN_BG below is accent-2 blue @ 20% on
+// the same row geometry. Neutralising the head while the orphan groups stayed blue is what broke the
+// pair. Head = orange @ 20%, orphans = blue @ 20%, both tinted, both meaning "this row has a role".
+const HEAD_BG = 'rgba(242,127,55,0.2)' // C.accent1 @ 20%
 const ORPHAN_BG = 'rgba(75,106,229,0.2)' // Figma group container fill
 
 // Compact row metrics (Slice 9 #8) — smaller art + tighter padding than Slice 8 so more songs fit.
@@ -239,6 +250,8 @@ export default function SetBuilderPanel() {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [minHover, setMinHover] = useState(false)   // minimize chevron
+  const [saveHover, setSaveHover] = useState(false) // Save & Complete
   // The Disconnected section is ALWAYS present but starts COLLAPSED (r4 #4) — it never auto-expands
   // to steal panel space; the user clicks its header to reveal the orphan groups.
   const [disconnectedOpen, setDisconnectedOpen] = useState(false)
@@ -415,10 +428,23 @@ export default function SetBuilderPanel() {
           visibility while staying in build mode. */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 18 }}>
         <h2 style={{ margin: 0, fontSize: 27, fontWeight: 600, color: '#fff', lineHeight: 1.05 }}>Set Builder</h2>
+        {/* Same construction as the toolbar's chevron: a raised button sitting directly on a slab (the
+            panel), so it takes the outer-glow recipe rather than the tray buttons' inner bevel — there's
+            no trench floor next to it for the outer light to wash out. See the rule atop the NEO_* block.
+            Was recessed (INSET + a border), which read as a hole in the panel rather than a control. */}
         <button
           onClick={toggleSetBuilderMinimized}
+          onPointerEnter={() => setMinHover(true)}
+          onPointerLeave={() => setMinHover(false)}
           title="Minimize panel"
-          style={{ marginTop: 6, width: 32, height: 32, flexShrink: 0, borderRadius: '50%', background: C.card, border: `1px solid ${C.border}`, boxShadow: INSET, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+          style={{
+            marginTop: 6, width: 32, height: 32, flexShrink: 0, borderRadius: '50%',
+            border: 'none', padding: 0,
+            background: minHover ? NEO_BTN_HOVER_BG : NEO_BTN_BG,
+            boxShadow: minHover ? NEO_CHEV_HOVER : NEO_CHEV_RAISED,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+            transition: 'box-shadow 120ms ease, background 120ms ease',
+          }}
         >
           {/* chevron down = minimize */}
           <svg width="12" height="8" viewBox="0 0 12 8" fill="none">
@@ -563,26 +589,36 @@ export default function SetBuilderPanel() {
           </button>
         </div>
       ) : (
-        // Two visual states (Slice 11 polish #5). DISABLED = the Figma gray treatment (frame 748:1774):
-        // #141416 fill, extrusion (4/4/5 black drop + inset 1/1.5/3 #373737), #848484 text. ACTIVE (set
-        // savable, or mid-save) = the app's orange primary-button treatment: accent border + tinted
-        // fill + ACCENT label — matching PrimaryButton in the import flow, where the orange-outlined
-        // CTA carries an orange label rather than a white one. A transparent border on the disabled
-        // state keeps the two the same size.
-        (() => { const accented = canSave || phase === 'saving' || phase === 'saved'; return (
+        // Two visual states (Slice 11 polish #5), and they're the Explore By row's two states exactly.
+        // DISABLED = a raised slab off the neomorphic system, gray label — the row at rest. ACTIVE (set
+        // savable, or mid-save) = the selected glass chip, accent ring + accent label — the row lit. A
+        // transparent border on the disabled state keeps the two the same size.
+        // Hover is a lift in whichever state the button is wearing — glass sheen + longer drop when
+        // accented, the slab's own lift when not. It's gated on canSave rather than `accented`: mid-save
+        // and post-save the button still looks accented but is disabled, and a control that lifts under
+        // the cursor while refusing the click is worse than one that sits still.
+        (() => { const accented = canSave || phase === 'saving' || phase === 'saved'; const lift = saveHover && canSave; return (
         <button
           onClick={handleSave}
           disabled={!canSave}
+          onPointerEnter={() => setSaveHover(true)}
+          onPointerLeave={() => setSaveHover(false)}
           style={{
             marginTop: 16, flexShrink: 0, borderRadius: 100, boxSizing: 'border-box',
             padding: '15px 15px 15px 30px',
-            background: accented ? ACCENT1_FILL : C.card,
-            border: `1.5px solid ${accented ? ACCENT : 'transparent'}`,
-            boxShadow: accented ? '4px 4px 5px 0px rgba(0,0,0,0.5)' : EXTRUSION,
+            background: accented
+              ? `${lift ? SELECTED.hoverSheen : SELECTED.sheen}, ${SELECTED.fill}`
+              : (lift ? NEO_BAR_HOVER_BG : NEO_BAR_BG),
+            border: `1px solid ${accented ? SELECTED.border : 'transparent'}`,
+            boxShadow: accented
+              ? `${lift ? SELECTED.hoverDrop : SELECTED.drop}, ${SELECTED.rim}`
+              : `${lift ? NEO_BAR_HOVER : NEO_BAR_SHADOW}, ${NEO_BAR_EDGE}`,
+            backdropFilter: accented ? SELECTED.blur : undefined,
+            WebkitBackdropFilter: accented ? SELECTED.blur : undefined,
             color: accented ? ACCENT : C.textSecondary,
             fontFamily: FONT, fontSize: 16, fontWeight: 500, textAlign: 'center',
             cursor: canSave ? 'pointer' : 'default',
-            transition: 'color 160ms ease, background 160ms ease, border-color 160ms ease',
+            transition: 'color 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease',
           }}
         >
           {phase === 'saving' ? 'Saving…' : phase === 'saved' ? 'Saved!' : 'Save and Complete'}

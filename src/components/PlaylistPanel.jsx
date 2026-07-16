@@ -1,10 +1,12 @@
+import { useState } from 'react'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { C, FONT, PANEL_LIP, RADIUS } from './import/tokens'
+import { C, FONT, RADIUS, NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER } from './import/tokens'
 
 // Playlists panel body (replaces the Slice-4 placeholder). Shows playlist NAMES + song counts,
 // not song lists — the map is the song list. Active playlist gets the orange accent indicator.
 export default function PlaylistPanel() {
   const { playlists, activePlaylistId, setActivePlaylist, openImport } = usePlaylistStore()
+  const [importHover, setImportHover] = useState(false)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, fontFamily: FONT }}>
@@ -64,32 +66,34 @@ export default function PlaylistPanel() {
         })}
       </div>
 
-      {/* Matches the Explore By preset rows' resting style (ExploreByPanel: 58px pill, card fill,
-          outer drop-shadow + inset lip overlay, 16px/500 label). Those rows are a radio group with
-          an indicator knob and an active state; this is a one-shot action, so it takes the shell
-          only — no knob, label centred — and keeps the accent-orange label that marks it as the
-          panel's CTA. */}
+      {/* Matches the Explore By preset rows' resting style (ExploreByPanel: 58px pill, raised slab off
+          the neomorphic system, 16px/500 label). Those rows are a radio group with an indicator knob and
+          an active state; this is a one-shot action, so it takes the shell only — no knob, label centred
+          — and keeps the accent-orange label that marks it as the panel's CTA. */}
       <button
         onClick={() => openImport('welcome')}
+        onPointerEnter={() => setImportHover(true)}
+        onPointerLeave={() => setImportHover(false)}
         style={{
           position: 'relative',
           marginTop: 16,
           height: 58,
           borderRadius: RADIUS.pill,
-          background: C.card,
+          background: importHover ? NEO_BAR_HOVER_BG : NEO_BAR_BG,
           border: 'none',
-          filter: 'drop-shadow(4px 4px 2.5px black)',
+          boxShadow: importHover ? NEO_BAR_HOVER : NEO_BAR_SHADOW,
           color: C.accent1,
           fontFamily: FONT,
           fontSize: 16,
           fontWeight: 500,
           cursor: 'pointer',
           flexShrink: 0,
+          transition: 'box-shadow 150ms ease, background 150ms ease',
         }}
       >
         <div style={{
           position: 'absolute', inset: 0, borderRadius: 'inherit',
-          boxShadow: PANEL_LIP,
+          boxShadow: NEO_BAR_EDGE,
           pointerEvents: 'none',
         }} />
         <span style={{ position: 'relative' }}>Import more</span>

@@ -20,7 +20,15 @@ import { scoreCompatibility } from '../lib/compatibility'
 import CompassPreview from './CompassPreview'
 import CompatibilityCard from './CompatibilityCard'
 import FlowToggle from './FlowToggle'
-import { SELECTED } from './import/tokens'
+import {
+  SELECTED,
+  NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE,
+  NEO_BTN_BG, NEO_BTN_HOVER_BG, NEO_BTN_PRESS_BG,
+  NEO_BTN_RAISED, NEO_BTN_HOVER, NEO_BTN_PRESS,
+  NEO_CHEV_RAISED, NEO_CHEV_HOVER,
+  NEO_TRAY_BG, NEO_TRAY_INSET,
+  NEO_PANEL_SHADOW, NEO_PANEL_EDGE,
+} from './import/tokens'
 
 // Flow-space canvas dimensions. A large canvas gives songs room to separate as you
 // zoom in (Google Maps model, Decision Log #17) — the primary energy×mood mapping only
@@ -540,33 +548,6 @@ function AxisLayer({ preset, geom }) {
 
 // —— Map chrome ————————————————————————————————————————————————————————————————
 
-// The two Figma surface tokens this chrome is built from: "extrusion" (a raised slab, lit from the
-// top-left) and "Inset" (a recess cut into one, lit from the bottom-right so it reads as carved in).
-const barShadow = '4px 4px 2.5px 0px rgba(0,0,0,0.9), inset 1px 1.5px 3px 0px #373737'
-const insetShadow = 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px rgba(0,0,0,0.7)'
-
-// —— Neomorphic shadow system (reference component: the top-right toolbar) ————————
-// Single light source, top-left, on the map surface (MAP_BG #141415). Raised surfaces cast a light
-// shadow up-left (negative offsets) + a dark shadow down-right (positive offsets); on press a button
-// flips to the inverse *inside* (dark up-left, light down-right) so it sinks into the surface. No
-// borders — the paired shadows are the edge. Blur ≈ 2× the offset so surfaces read as physical, not
-// outlined. Backgrounds step lighter for raised slabs/buttons and darker when pressed in. These are the
-// toolbar's own tokens (barShadow/insetShadow stay as-is for the unrelated search bar). Tuned by eye.
-const NEO_BAR_BG      = '#1b1b1d'  // toolbar pill — a step up from the map surface (raised slab)
-const NEO_BAR_SHADOW  = '-4px -4px 8px 0px rgba(255,255,255,0.03), 4px 4px 8px 0px rgba(0,0,0,0.6)'
-const NEO_BAR_EDGE    = 'inset 1px 1px 1px 0px rgba(255,255,255,0.05), inset -1px -1px 2px 0px rgba(0,0,0,0.35)'
-// Icon buttons (Recenter / Zoom / chevron) — raised at rest, lifted on hover, sunk (inset) on press.
-// Same paired-shadow recipe as the pill at a smaller scale; the accent ring rides on top when active.
-const NEO_BTN_BG       = '#222224'  // raised button — a clear step above the pill surface
-const NEO_BTN_PRESS_BG = '#151517'  // pressed/active — drops below the pill surface
-// Rest shadow leads with a zero-offset/zero-blur 1px inset rim — a full-perimeter edge catch that
-// defines the button against the pill from every side (not a border, so it never changes sizing) —
-// followed by the directional light/dark pair.
-const NEO_BTN_RAISED = 'inset 0 0 0 1px rgba(255,255,255,0.03), -3px -3px 6px 0px rgba(255,255,255,0.03), 3px 3px 6px 0px rgba(0,0,0,0.6)'
-const NEO_BTN_HOVER  = '-4px -4px 8px 0px rgba(255,255,255,0.03), 4px 4px 8px 0px rgba(0,0,0,0.6)'  // +1px offset, +2px blur
-const NEO_BTN_PRESS  = 'inset 3px 3px 6px 0px rgba(0,0,0,0.6), inset -3px -3px 6px 0px rgba(255,255,255,0.03)'
-const NEO_PANEL_SHADOW = 'drop-shadow(-6px -6px 12px rgba(255,255,255,0.025)) drop-shadow(6px 6px 14px rgba(0,0,0,0.65))'
-const NEO_PANEL_EDGE  = 'inset 1px 1px 1px 0px rgba(255,255,255,0.05), inset -1px -1px 2px 0px rgba(0,0,0,0.35)'
 
 // Search glyph (Figma) — a filled outline, not a stroked circle+line, so the ring keeps its taper
 // and the handle its rounded join. Figma exports this as two paths behind an outside-mask (its way
@@ -670,15 +651,17 @@ function SearchBar({ tracks, rf, onHighlight }) {
     <div ref={wrapperRef} style={{ position: 'absolute', left: 20, top: 20, width: 350, zIndex: 4 }}>
       {/* Extruded outer slab (Figma 925:49, 350×70) with the input field recessed into it — the 7px
           gutter is what lets the inset field read as carved out of the slab rather than sat on it.
-          6px padding + the 1px border makes that 7px, and keeps the slab exactly 350×70 (matching the
-          toolbar's height) since the height is content-driven and so escapes border-box. */}
+          Padding carries the whole gutter now. It used to be 6px padding + a 1px border, but the system
+          is borderless (the shadows are the edge), so the border's 1px moved into the padding — same
+          7px gutter, and the slab still lands at exactly 350×70 (matching the toolbar's height), since
+          the height is content-driven and so escapes border-box: 56 + 7 + 7. */}
       <div
         style={{
-          padding: 6,
-          background: CARD,
+          padding: 7,
+          background: NEO_BAR_BG,
           borderRadius: 100,
-          border: '1px solid #000000',
-          boxShadow: barShadow,
+          boxShadow: NEO_BAR_SHADOW,
+          position: 'relative',
         }}
       >
         <div
@@ -688,9 +671,9 @@ function SearchBar({ tracks, rf, onHighlight }) {
             gap: 8,
             height: 56,
             padding: '0 6px 0 20px',
-            background: CARD,
+            background: NEO_TRAY_BG,
             borderRadius: 100,
-            boxShadow: insetShadow,
+            boxShadow: NEO_TRAY_INSET,
           }}
         >
           <input
@@ -720,9 +703,14 @@ function SearchBar({ tracks, rf, onHighlight }) {
               width: 45,
               height: 45,
               borderRadius: '50%',
-              // Orange ring + dark tinted fill + orange glyph — the Flow toggle's ON knob treatment.
-              border: `1.5px solid ${ACCENT1}`,
-              background: 'rgba(20,20,22,0.2)',
+              // The selected shader (Figma 748:2210), same treatment as the Flow toggle's ON knob: a 1px
+              // accent ring over a translucent dark glass fill, frosted, with a solid-black drop. NOT the
+              // neomorphic button recipe and no hover lift — this reads as a persistent accent chip, not
+              // a raised button you can push.
+              border: `1px solid ${SELECTED.border}`,
+              background: `${SELECTED.sheen}, ${SELECTED.fill}`,
+              boxShadow: `${SELECTED.drop}, ${SELECTED.rim}`,
+              backdropFilter: SELECTED.blur, WebkitBackdropFilter: SELECTED.blur,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -740,6 +728,14 @@ function SearchBar({ tracks, rf, onHighlight }) {
             <MagnifierIcon color={ACCENT1} />
           </div>
         </div>
+        {/* Raised-slab inner rim — a faint top-left highlight + bottom-right inner shade (no border).
+            Same overlay the toolbar pill uses: it rides above the children so the rim is never clipped
+            by them, and pointerEvents:none keeps it off the input and the icon underneath. */}
+        <div style={{
+          position: 'absolute', inset: 0, borderRadius: 'inherit',
+          boxShadow: NEO_BAR_EDGE,
+          pointerEvents: 'none',
+        }} />
       </div>
 
       {/* Results dropdown */}
@@ -807,10 +803,14 @@ function ZoomOutIcon({ color }) {
 // gone before the eye caught it. Hold the accent on for a floor of ~180ms after press instead.
 const PRESS_MIN_MS = 180
 
-// Raised circular icon button (Figma 748:2975 et al). 50px against the 20px glyph keeps everything on
-// whole pixels — (50 - 20) / 2 = 15 — so the icons stay crisp; see MagnifierIcon on why that matters.
+// Raised icon button (Figma 916:36 / 1067:103 / 1067:105) — a 60x40 rounded rect, not a circle. The
+// glyph still lands on whole pixels at this size — (60 - 20) / 2 = 20 across, (40 - 20) / 2 = 10 down —
+// so the icons stay crisp; see MagnifierIcon on why that matters. `radius` is positional rather than
+// decorative: the tray's two end buttons round their OUTER corners to 20, which is the tray's own 27
+// radius minus its 7px padding, so those caps sit concentric inside the trench's ends instead of
+// cutting across them. Every inner corner stays 10.
 // Owns its icon rather than taking children so the pressed state can recolour the glyph.
-function ToolButton({ icon: Icon, onClick }) {
+function ToolButton({ icon: Icon, onClick, radius = 10 }) {
   const [pressed, setPressed] = useState(false)
   const [hover, setHover] = useState(false)
   const downAt = useRef(0)
@@ -839,9 +839,9 @@ function ToolButton({ icon: Icon, onClick }) {
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => { setHover(false); if (pressed) release() }}
       style={{
-        width: 50,
-        height: 50,
-        borderRadius: '50%',
+        width: 60,
+        height: 40,
+        borderRadius: radius,
         flexShrink: 0,
         display: 'flex',
         alignItems: 'center',
@@ -851,7 +851,7 @@ function ToolButton({ icon: Icon, onClick }) {
         // on top. The ring stays an INSET shadow, not a border: a border would shrink the content box to
         // 47px and drop the 20px glyph onto a half-pixel (13.5), blurring it — a shadow doesn't touch
         // layout, so the glyph stays put at 15px.
-        background: pressed ? NEO_BTN_PRESS_BG : NEO_BTN_BG,
+        background: pressed ? NEO_BTN_PRESS_BG : (hover ? NEO_BTN_HOVER_BG : NEO_BTN_BG),
         boxShadow: pressed
           ? `inset 0 0 0 1.5px ${SELECTED.border}, ${NEO_BTN_PRESS}`
           : (hover ? NEO_BTN_HOVER : NEO_BTN_RAISED),
@@ -888,27 +888,43 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
           Figma 748-1804) + the toolbar pill, right-anchored so the pill never shifts. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
       <FlowToggle />
-      {/* Toolbar pill (Figma 748:2968). Height falls out of the design rather than being forced:
-          10px padding + the 50px icon wells = 70, which is exactly the search bar and Flow toggle
-          height, so all three sit as an even row. */}
+      {/* Toolbar pill (Figma 748:2968). Height is the design's 70, and with 40px buttons the math closes
+          on Figma's own numbers: 8px pill padding + 7px tray padding + the 40px buttons = 70, which is
+          exactly the search bar and Flow toggle height, so all three sit as an even row. The 3px this
+          padding briefly carried was only headroom for 50px buttons — at 40 the tray fits at Figma's 8. */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 14,
         height: 70, boxSizing: 'border-box',
-        padding: '10px 30px', background: NEO_BAR_BG, borderRadius: 100, boxShadow: NEO_BAR_SHADOW,
+        padding: '8px 30px', background: NEO_BAR_BG, borderRadius: 100, boxShadow: NEO_BAR_SHADOW,
         position: 'relative',
       }}>
+        {/* Label rides directly on the pill surface — no tray behind it. The split between the label (on
+            the slab) and the buttons (in the trench) is the point: it separates readout from control. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
           <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 500, color: TEXT_SECONDARY }}>Preset</span>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1 }} />
           <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: '#fff' }}>{presetName}</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <ToolButton icon={RecenterIcon} onClick={handleFitView} />
+        {/* Recessed tray (Figma 916:31) holding the three map controls. The chevron stays OUT of it —
+            in the mockup the tray ends before the chevron, which reads right: the tray groups the map
+            controls, and the dropdown affordance stays distinct. 7px padding on the 40px buttons makes
+            the tray 54 tall, so its pill radius resolves to 27 — and the end buttons' 20px outer caps
+            are exactly that minus the padding, which is what lets them nest concentrically in the ends.
+            The end radii are positional: whichever button sits at an end gets the cap. */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: 7, borderRadius: 100,
+          background: NEO_TRAY_BG, boxShadow: NEO_TRAY_INSET,
+        }}>
+          <ToolButton icon={RecenterIcon} onClick={handleFitView} radius="20px 10px 10px 20px" />
           <ToolButton icon={ZoomInIcon} onClick={handleZoomIn} />
-          <ToolButton icon={ZoomOutIcon} onClick={handleZoomOut} />
+          <ToolButton icon={ZoomOutIcon} onClick={handleZoomOut} radius="10px 20px 20px 10px" />
         </div>
-        {/* Chevron toggle — a raised icon button (same recipe as the wells); the glyph rotates when the
-            compass is open while the button surface stays put, and the open state sinks it inset. */}
+        {/* Chevron toggle — raised, but on the PILL rather than in the tray, so it takes the outer-glow
+            recipe (NEO_CHEV_*) instead of the wells' inner bevel. There's no trench floor beside it for
+            an outer light shadow to wash out, which is the whole reason the tray buttons can't have one;
+            see the rule at the top of the NEO_* block. The glyph rotates when the compass is open while
+            the button surface stays put, and the open state sinks it inset. */}
         <button
           onClick={() => setCompassOpen((o) => !o)}
           onPointerEnter={() => setChevHover(true)}
@@ -917,8 +933,8 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
             width: 34, height: 34, borderRadius: '50%', flexShrink: 0, padding: 0,
             border: 'none', cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: compassOpen ? NEO_BTN_PRESS_BG : NEO_BTN_BG,
-            boxShadow: compassOpen ? NEO_BTN_PRESS : (chevHover ? NEO_BTN_HOVER : NEO_BTN_RAISED),
+            background: compassOpen ? NEO_BTN_PRESS_BG : (chevHover ? NEO_BTN_HOVER_BG : NEO_BTN_BG),
+            boxShadow: compassOpen ? NEO_BTN_PRESS : (chevHover ? NEO_CHEV_HOVER : NEO_CHEV_RAISED),
             transition: 'box-shadow 120ms ease, background 120ms ease',
           }}
         >

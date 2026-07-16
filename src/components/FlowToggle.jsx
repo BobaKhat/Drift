@@ -1,39 +1,46 @@
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { C, FONT, INSET, SELECTED } from './import/tokens'
+import {
+  C, FONT, SELECTED,
+  NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE,
+  NEO_BTN_BG, NEO_BTN_RAISED,
+  NEO_TRAY_BG, NEO_TRAY_INSET,
+} from './import/tokens'
 import { SetCreationIcon } from './LeftNav'
-import knobOff from '../assets/flow-off.png'
 
 // The Flow toggle (Decision Log #48–52). Functional as of Slice 10: it flips the map between the
 // build view (Flow OFF) and the present view (Flow ON — only the chain lit, uniform dark wires with a
 // traveling strobe). It appears in the toolbar area once the chain has a head, and slides a knob
 // inside a recessed track between the two states.
 //
-// Two knob states, cross-faded as the knob slides. OFF (default) = the original pre-rendered bitmap
-// (assets/flow-off.png) — a dark disc with a gray glyph and baked bevel/shadow. ON = the live selected
-// chip (Figma node 913-12) — a 0.5px accent ring + translucent dark glass fill + frosted blur +
-// drop shadow + a flat accent glyph. Slides RIGHT (Off) → LEFT (Flow); both labels stay gray.
+// The pill and track are the same two levels as the toolbar and the search bar: a raised slab with a
+// well cut into it (see the NEO_* block in import/tokens).
+//
+// Two knob states, cross-faded as the knob slides. OFF = a raised knob in that well, shaded like the
+// toolbar's buttons. ON = the selected shader (Figma node 913-12) — a 0.5px accent ring + translucent
+// dark glass fill + frosted blur + drop shadow + a flat accent glyph. The ON state deliberately does NOT
+// use the neomorphic recipe: it's the app-wide active/selected treatment, shared with the icon rail and
+// the Explore By rows, and the knob has to keep reading as a member of that set when it's lit.
+// Slides RIGHT (Off) → LEFT (Flow). "Off" stays gray; "Flow" lights accent alongside the knob's ring and
+// glyph, so everything naming the live state is accent and everything naming the idle one is gray.
 
 const W = 136
 const H = 70
 const EDGE = 9   // gap between the disc and the pill edge it rests against (Figma: knob inset 9)
 const DISC = 52  // knob diameter (Figma node 913-12)
+const TRACK = 8  // the well's inset from the pill edge — also what the labels centre against
 
 const KNOB_TOP = (H - DISC) / 2         // disc vertically centered (equal top/bottom gap)
 const KNOB_LEFT_ON = EDGE                // disc EDGE px from the left
 const KNOB_LEFT_OFF = W - EDGE - DISC    // disc EDGE px from the right
 
-// OFF bitmap alignment. The PNG (124px canvas) bakes a bottom-right shadow, so its solid disc sits at
-// px [2,107] (Ø105) with all padding bottom-right. Scale the 105px disc onto the DISC-sized chip and
-// pull the image back so its disc — not the padded canvas — lands exactly on the live chip's box.
-const OFF_SCALE = DISC / 105
-const OFF_BOX = 124 * OFF_SCALE   // rendered PNG box (≈61.4)
-const OFF_SHIFT = -2 * OFF_SCALE  // disc starts ~2px into the canvas (≈-0.99)
-
-// Each label is centered in the empty half — between the knob's disc and the opposite pill edge.
-// OFF: knob on the right, so "Off" centers between the left edge (0) and the disc's left side.
-// ON:  knob on the left,  so "Flow" centers between the disc's right side and the right edge (W).
-const LABEL_OFF_X = (W - EDGE - DISC) / 2   // midpoint of [0, disc-left]
-const LABEL_FLOW_X = (EDGE + DISC + W) / 2  // midpoint of [disc-right, W]
+// Each label is centered in the empty half of the TRACK — between the knob's disc and the far end of the
+// well. The well, not the pill: the track is inset TRACK px, so centering against the pill's outer edge
+// (as this used to) measured 8px of slab the label can't occupy and pushed it that much toward the outer
+// curve. Both land 26.5px either side of the toggle's midline, so the pair reads symmetric.
+// OFF: knob on the right, so "Off" centers between the track's left end and the disc's left side.
+// ON:  knob on the left,  so "Flow" centers between the disc's right side and the track's right end.
+const LABEL_OFF_X = (TRACK + (W - EDGE - DISC)) / 2     // midpoint of [track-left, disc-left]
+const LABEL_FLOW_X = ((EDGE + DISC) + (W - TRACK)) / 2  // midpoint of [disc-right, track-right]
 
 export default function FlowToggle() {
   const { buildMode, chain, flowMode, toggleFlowMode } = usePlaylistStore()
@@ -50,21 +57,23 @@ export default function FlowToggle() {
       title={on ? 'Flow on' : 'Flow off'}
       style={{
         position: 'relative', width: W, height: H, flexShrink: 0, overflow: 'hidden',
-        borderRadius: 100, background: C.card,
-        boxShadow: '4px 4px 5px 0px #000000, inset 1px 1.5px 3px 0px #373737',
+        borderRadius: 100, background: NEO_BAR_BG,
+        boxShadow: NEO_BAR_SHADOW,
         cursor: 'pointer', userSelect: 'none',
       }}
     >
-      {/* Recessed track/well the knob rides in. */}
+      {/* Recessed track/well the knob rides in — the toolbar's tray at a smaller scale. The knob's own
+          9px EDGE inset gives it the same kind of gutter the tray buttons get from their 7px padding. */}
       <div style={{
-        position: 'absolute', inset: 8, borderRadius: 100,
-        background: C.card, boxShadow: INSET,
+        position: 'absolute', inset: TRACK, borderRadius: 100,
+        background: NEO_TRAY_BG, boxShadow: NEO_TRAY_INSET,
       }} />
 
       {/* Labels — both mounted and cross-faded so "Off"/"Flow" dissolve into each other rather than
-          snapping. Each stays pinned opposite the knob's resting side. */}
+          snapping. Each stays pinned opposite the knob's resting side. "Flow" carries the accent so the
+          lit state reads as one unit (ring + glyph + label); "Off" stays gray, like the knob it names. */}
       <span style={{ ...LABEL_BASE, left: LABEL_OFF_X, opacity: on ? 0 : 1, transition: FADE }}>Off</span>
-      <span style={{ ...LABEL_BASE, left: LABEL_FLOW_X, opacity: on ? 1 : 0, transition: FADE }}>Flow</span>
+      <span style={{ ...LABEL_BASE, left: LABEL_FLOW_X, color: C.accent1, opacity: on ? 1 : 0, transition: FADE }}>Flow</span>
 
       {/* Knob — one box that SLIDES right (Off) ↔ left (Flow) with a springy ease-out, holding both
           states stacked so the OFF (original bitmap, gray glyph) and ON (selected chip, accent glyph)
@@ -74,12 +83,15 @@ export default function FlowToggle() {
         width: DISC, height: DISC, pointerEvents: 'none',
         transition: 'left 320ms cubic-bezier(0.34,1.3,0.64,1)',
       }}>
-        {/* OFF — the original pre-rendered bitmap, its disc aligned onto the DISC-sized chip box. */}
-        <img src={knobOff} alt="" draggable={false} style={{
-          position: 'absolute', left: OFF_SHIFT, top: OFF_SHIFT,
-          width: OFF_BOX, height: OFF_BOX, maxWidth: 'none', objectFit: 'contain', display: 'block',
+        {/* OFF — a raised knob riding in the well, shaded like the toolbar's buttons. */}
+        <div style={{
+          ...KNOB_BASE,
+          background: NEO_BTN_BG,
+          boxShadow: NEO_BTN_RAISED,
           opacity: on ? 0 : 1, transition: FADE,
-        }} />
+        }}>
+          <span style={GLYPH_BOX}><SetCreationIcon color={C.iconPrimary} /></span>
+        </div>
         {/* ON — selected shader (Figma node 913-12): 0.5px accent ring + translucent dark glass fill +
             glass sheen + solid-black drop + a flat accent glyph (no inner shadow). */}
         <div style={{
@@ -93,6 +105,13 @@ export default function FlowToggle() {
           <span style={GLYPH_BOX}><SetCreationIcon color={C.accent1} /></span>
         </div>
       </div>
+
+      {/* Raised-slab inner rim — same overlay the toolbar pill and search bar carry. */}
+      <div style={{
+        position: 'absolute', inset: 0, borderRadius: 'inherit',
+        boxShadow: NEO_BAR_EDGE,
+        pointerEvents: 'none',
+      }} />
     </div>
   )
 }
