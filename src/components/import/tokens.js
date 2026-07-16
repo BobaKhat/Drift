@@ -32,6 +32,17 @@ export const ORPHAN_INACTIVE = '#363636'
 // dark tinted background. Inactive/default states stay gray with no ring.
 export const ACCENT1_FILL = 'rgba(20,20,22,0.2)'
 
+// "Selected" shader (Figma node 748-2339) — the unified active/selected treatment across the icon
+// rail, the Explore By rows, and the Flow toggle: a 20%-accent glass-tinted fill, a thin accent
+// ring, a 4px backdrop blur (Figma GLASS radius 4) so the chip reads as frosted glass, and the
+// signature drop shadow. The glyph/label itself is painted accent-orange by each surface.
+export const SELECTED = {
+  fill: 'rgba(242,127,55,0.2)',           // accent/1 @ 20%
+  border: '#F27F37',                      // accent/1 ring
+  blur: 'blur(4px)',                      // GLASS radius 4
+  drop: '4px 4px 5px 0px rgba(0,0,0,0.5)',
+}
+
 export const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 
 // Effect styles (Figma): raised modules vs recessed wells.

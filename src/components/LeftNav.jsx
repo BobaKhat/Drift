@@ -3,7 +3,7 @@ import PlaylistPanel from './PlaylistPanel'
 import ExploreByPanel from './ExploreByPanel'
 import SetBuilderPanel from './SetBuilderPanel'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { ACCENT1_FILL, C } from './import/tokens'
+import { SELECTED, C } from './import/tokens'
 import brandmark from '../assets/brandmark.png'
 import logo from '../assets/Logo.png'
 
@@ -268,11 +268,13 @@ function RailButton({ label, Icon, isActive, onClick, media }) {
   style.background = CARD
   style.boxShadow = WELL_SHADOW
   if (isActive) {
-    // Active-state design system (source of truth: Flow toggle ON knob) — orange glyph fill (below)
-    // + orange ring + dark tinted background.
-    style.background = ACCENT1_FILL
-    style.border = `1.5px solid ${ACCENT}`
-    style.boxShadow = '4px 4px 5px 0px rgba(0,0,0,0.5)'
+    // Selected shader (Figma node 748-2339) — accent glyph (below) + accent ring + 20%-accent glass
+    // fill + frosted backdrop blur + drop shadow. Shared with the Explore By rows and Flow toggle.
+    style.background = SELECTED.fill
+    style.border = `1.5px solid ${SELECTED.border}`
+    style.boxShadow = SELECTED.drop
+    style.backdropFilter = SELECTED.blur
+    style.WebkitBackdropFilter = SELECTED.blur
     style.color = '#FFFFFF'
   } else if (hover && onClick) {
     style.color = '#CFCFCF'
@@ -394,6 +396,8 @@ export default function LeftNav() {
           <ExploreByPanel />
         ) : panel && panel.id === 'sets' ? (
           <SetBuilderPanel />
+        ) : panel && panel.id === 'playlists' ? (
+          <PlaylistPanel />
         ) : panel ? (
           <>
             <div
@@ -408,20 +412,16 @@ export default function LeftNav() {
             >
               {panel.label}
             </div>
-            {panel.id === 'playlists' ? (
-              <PlaylistPanel />
-            ) : (
-              <div
-                style={{
-                  fontFamily: FONT,
-                  fontSize: 10,
-                  letterSpacing: '0.06em',
-                  color: C.textSecondary,
-                }}
-              >
-                Coming soon
-              </div>
-            )}
+            <div
+              style={{
+                fontFamily: FONT,
+                fontSize: 10,
+                letterSpacing: '0.06em',
+                color: C.textSecondary,
+              }}
+            >
+              Coming soon
+            </div>
           </>
         ) : null}
       </div>

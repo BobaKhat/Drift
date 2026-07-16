@@ -1,5 +1,6 @@
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { PRESETS, PRESET_KEYS } from '../lib/presets'
+import { SELECTED } from './import/tokens'
 import CompassPreview from './CompassPreview'
 
 const FONT    = "'DM Sans', system-ui, -apple-system, sans-serif"
@@ -17,13 +18,11 @@ export default function ExploreByPanel() {
       <div style={{ marginBottom: 18 }}>
         <h2 style={{
           margin: 0,
-          fontFamily: FONT, fontSize: 36, fontWeight: 600,
+          fontFamily: FONT, fontSize: 24, fontWeight: 600,
           color: '#fff', lineHeight: 1.1,
         }}>
           Explore By
         </h2>
-        {/* Divider */}
-        <div style={{ marginTop: 18, height: 1, background: 'rgba(255,255,255,0.08)' }} />
       </div>
 
       {/* ——— Scrollable body ——— */}
@@ -44,11 +43,12 @@ export default function ExploreByPanel() {
                   padding: '15px 15px 15px 30px',
                   height: 58,
                   borderRadius: 1000,
-                  // Active-state design system (source of truth: Figma node 748-2481) — thin orange
-                  // ring + glass-tinted background + orange label; the indicator knob is an empty ring.
-                  border: active ? `0.5px solid ${ACCENT1}` : 'none',
-                  background: active ? 'rgba(20,20,22,0.2)' : CARD,
-                  backdropFilter: active ? 'blur(4px)' : undefined,
+                  // Selected shader (Figma node 748-2339) — accent ring + 20%-accent glass fill +
+                  // frosted backdrop blur + accent label; the indicator knob is an empty accent ring.
+                  border: active ? `1px solid ${SELECTED.border}` : 'none',
+                  background: active ? SELECTED.fill : CARD,
+                  backdropFilter: active ? SELECTED.blur : undefined,
+                  WebkitBackdropFilter: active ? SELECTED.blur : undefined,
                   filter: active ? undefined : 'drop-shadow(4px 4px 2.5px black)',
                   boxShadow: active ? '4px 4px 5px 0px black' : undefined,
                   cursor: 'pointer',
@@ -77,9 +77,11 @@ export default function ExploreByPanel() {
                 {active ? (
                   <div style={{
                     width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
-                    border: `1px solid ${ACCENT1}`,
-                    background: 'rgba(20,20,22,0.2)',
-                    boxShadow: '4px 4px 5px 0px black',
+                    border: `1px solid ${SELECTED.border}`,
+                    background: SELECTED.fill,
+                    backdropFilter: SELECTED.blur,
+                    WebkitBackdropFilter: SELECTED.blur,
+                    boxShadow: SELECTED.drop,
                   }} />
                 ) : (
                   <div style={{

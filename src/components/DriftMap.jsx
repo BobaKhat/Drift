@@ -19,6 +19,7 @@ import { scoreCompatibility } from '../lib/compatibility'
 import CompassPreview from './CompassPreview'
 import CompatibilityCard from './CompatibilityCard'
 import FlowToggle from './FlowToggle'
+import { SELECTED } from './import/tokens'
 
 // Flow-space canvas dimensions. A large canvas gives songs room to separate as you
 // zoom in (Google Maps model, Decision Log #17) — the primary energy×mood mapping only
@@ -234,21 +235,6 @@ const pillBase = {
   letterSpacing: '0.01em',
   whiteSpace: 'nowrap',
   zIndex: 3,
-}
-
-// L-shaped HUD corner bracket at the map card's inner corners.
-function Bracket({ pos }) {
-  const c = 'rgba(255,255,255,0.22)'
-  const w = '1.5px solid ' + c
-  const size = 22
-  const r = 8 // elbow radius — the L bends into a soft arc rather than a hard right angle
-  const variants = {
-    tl: { top: EDGE, left: EDGE, borderTop: w, borderLeft: w, borderTopLeftRadius: r },
-    tr: { top: EDGE, right: EDGE, borderTop: w, borderRight: w, borderTopRightRadius: r },
-    bl: { bottom: EDGE, left: EDGE, borderBottom: w, borderLeft: w, borderBottomLeftRadius: r },
-    br: { bottom: EDGE, right: EDGE, borderBottom: w, borderRight: w, borderBottomRightRadius: r },
-  }
-  return <div style={{ position: 'absolute', width: size, height: size, ...variants[pos] }} />
 }
 
 // Small HUD chip naming the quadrant under the viewport centre once you're zoomed in.
@@ -482,10 +468,6 @@ function AxisLayer({ preset }) {
       <div ref={hLineRef} style={{ position: 'absolute', height: 1, background: AXIS_COLOR, transform: 'translateY(-0.5px)' }} />
       <div ref={vLineRef} style={{ position: 'absolute', width: 1, background: AXIS_COLOR, transform: 'translateX(-0.5px)' }} />
 
-      <Bracket pos="tl" />
-      <Bracket pos="tr" />
-      <Bracket pos="bl" />
-      <Bracket pos="br" />
 
       {/* Pole pills, in canvas space — left/top set per frame; each is pinned by its OUTER edge to
           an axis end, so the pill body hangs inward over the line as it did against the card edge. */}
@@ -645,7 +627,7 @@ function SearchBar({ tracks, rf, onHighlight }) {
   const showDropdown = open && query.length >= 2
 
   return (
-    <div ref={wrapperRef} style={{ position: 'absolute', left: 39, top: 19, width: 350, zIndex: 4 }}>
+    <div ref={wrapperRef} style={{ position: 'absolute', left: 20, top: 20, width: 350, zIndex: 4 }}>
       {/* Extruded outer slab (Figma 925:49, 350×70) with the input field recessed into it — the 7px
           gutter is what lets the inset field read as carved out of the slab rather than sat on it.
           6px padding + the 1px border makes that 7px, and keeps the slab exactly 350×70 (matching the
@@ -822,12 +804,16 @@ function ToolButton({ icon: Icon, onClick }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: CARD,
-        // The accent ring is an INSET shadow, not a border: a border would shrink the content box to
-        // 47px and drop the 20px glyph onto a half-pixel (13.5), so it would blur on every press.
-        // A shadow paints over the well without touching layout, so the glyph stays put at 15px.
-        boxShadow: pressed ? `inset 0 0 0 1.5px ${ACCENT1}, ${insetShadow}` : insetShadow,
-        transition: 'box-shadow 120ms ease',
+        // Pressed = the app-wide selected shader: 20%-accent glass fill + frosted blur + accent glyph.
+        // The accent ring stays an INSET shadow, not a border: a border would shrink the content box to
+        // 47px and drop the 20px glyph onto a half-pixel (13.5), so it would blur on every press. A
+        // shadow paints over the well without touching layout, so the glyph stays put at 15px. At rest
+        // the well is recessed (insetShadow); pressed it lifts to the selected drop shadow.
+        background: pressed ? SELECTED.fill : CARD,
+        boxShadow: pressed ? `inset 0 0 0 1.5px ${SELECTED.border}, ${SELECTED.drop}` : insetShadow,
+        backdropFilter: pressed ? SELECTED.blur : undefined,
+        WebkitBackdropFilter: pressed ? SELECTED.blur : undefined,
+        transition: 'box-shadow 120ms ease, background 120ms ease',
         cursor: onClick ? 'pointer' : 'default',
       }}
     >
@@ -852,7 +838,7 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset }) {
 
   return (
     <div style={{
-      position: 'absolute', right: 39, top: 19, zIndex: 4,
+      position: 'absolute', right: 20, top: 20, zIndex: 4,
       display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10,
     }}>
       {/* Top row: Flow toggle (build mode only, sits LEFT of the toolbar — Decision Log #48–50,

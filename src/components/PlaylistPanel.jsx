@@ -8,6 +8,13 @@ export default function PlaylistPanel() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, fontFamily: FONT }}>
+      {/* Title — matches the Explore By / Set Builder panel headings. */}
+      <div style={{ marginBottom: 18 }}>
+        <h2 style={{ margin: 0, fontFamily: FONT, fontSize: 24, fontWeight: 600, color: '#fff', lineHeight: 1.1 }}>
+          Playlists
+        </h2>
+      </div>
+
       <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto' }}>
         {playlists.length === 0 && (
           <div style={{ fontSize: 12, color: C.textSecondary, opacity: 0.6 }}>No playlists yet</div>

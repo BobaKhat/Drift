@@ -413,8 +413,8 @@ export default function SetBuilderPanel() {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, fontFamily: FONT }}>
       {/* Title + minimize (Slice 9 final #5) — collapse the panel to a thin bottom tab for full map
           visibility while staying in build mode. */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 40, fontWeight: 600, color: '#fff', lineHeight: 1.05 }}>Set Builder</h2>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 18 }}>
+        <h2 style={{ margin: 0, fontSize: 27, fontWeight: 600, color: '#fff', lineHeight: 1.05 }}>Set Builder</h2>
         <button
           onClick={toggleSetBuilderMinimized}
           title="Minimize panel"
@@ -426,7 +426,6 @@ export default function SetBuilderPanel() {
           </svg>
         </button>
       </div>
-      <div style={{ marginTop: 16, marginBottom: 18, height: 1, background: 'rgba(255,255,255,0.08)' }} />
 
       {/* Library-scoped search */}
       <div ref={searchRef} style={{ position: 'relative', flexShrink: 0 }}>
