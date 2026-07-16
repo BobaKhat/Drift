@@ -268,11 +268,11 @@ function RailButton({ label, Icon, isActive, onClick, media }) {
   style.background = CARD
   style.boxShadow = WELL_SHADOW
   if (isActive) {
-    // Selected shader (Figma node 748-2339) — accent glyph (below) + accent ring + 20%-accent glass
-    // fill + frosted backdrop blur + drop shadow. Shared with the Explore By rows and Flow toggle.
-    style.background = SELECTED.fill
-    style.border = `1.5px solid ${SELECTED.border}`
-    style.boxShadow = SELECTED.drop
+    // Selected shader (Figma node 748-2354) — accent glyph (below) + 1px accent ring + translucent
+    // dark glass fill + glass sheen + drop shadow. Shared with the Explore By rows and Flow toggle.
+    style.background = `${SELECTED.sheen}, ${SELECTED.fill}`
+    style.border = `1px solid ${SELECTED.border}`
+    style.boxShadow = `${SELECTED.drop}, ${SELECTED.rim}`
     style.backdropFilter = SELECTED.blur
     style.WebkitBackdropFilter = SELECTED.blur
     style.color = '#FFFFFF'

@@ -43,14 +43,14 @@ export default function ExploreByPanel() {
                   padding: '15px 15px 15px 30px',
                   height: 58,
                   borderRadius: 1000,
-                  // Selected shader (Figma node 748-2339) — accent ring + 20%-accent glass fill +
-                  // frosted backdrop blur + accent label; the indicator knob is an empty accent ring.
+                  // Selected shader (Figma node 913-12) — accent ring + translucent dark glass fill +
+                  // glass sheen + accent label; the indicator knob mirrors the same chip.
                   border: active ? `1px solid ${SELECTED.border}` : 'none',
-                  background: active ? SELECTED.fill : CARD,
+                  background: active ? `${SELECTED.sheen}, ${SELECTED.fill}` : CARD,
                   backdropFilter: active ? SELECTED.blur : undefined,
                   WebkitBackdropFilter: active ? SELECTED.blur : undefined,
                   filter: active ? undefined : 'drop-shadow(4px 4px 2.5px black)',
-                  boxShadow: active ? '4px 4px 5px 0px black' : undefined,
+                  boxShadow: active ? `${SELECTED.drop}, ${SELECTED.rim}` : undefined,
                   cursor: 'pointer',
                   transition: 'border-color 180ms ease, filter 180ms ease, box-shadow 180ms ease, background 180ms ease, backdrop-filter 180ms ease',
                   width: '100%',
@@ -72,16 +72,17 @@ export default function ExploreByPanel() {
                 }}>
                   {p.label}
                 </span>
-                {/* Indicator — empty orange ring when active (Figma 748-2481); recessed circle when
-                    inactive (was a now-expired Figma asset image → drawn with an inset shadow instead). */}
+                {/* Indicator — active dot (Figma node 748-2483): a 1px accent ring + an ORANGE 20%
+                    glass fill (accent @ 20%, unlike the dark-glass row/rail) + the shared sheen + drop.
+                    Inactive = recessed circle (was a now-expired Figma asset → drawn with inset shadow). */}
                 {active ? (
                   <div style={{
                     width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
                     border: `1px solid ${SELECTED.border}`,
-                    background: SELECTED.fill,
+                    background: `${SELECTED.sheen}, rgba(242,127,55,0.2)`,
                     backdropFilter: SELECTED.blur,
                     WebkitBackdropFilter: SELECTED.blur,
-                    boxShadow: SELECTED.drop,
+                    boxShadow: `${SELECTED.drop}, ${SELECTED.rim}`,
                   }} />
                 ) : (
                   <div style={{

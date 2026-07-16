@@ -32,15 +32,23 @@ export const ORPHAN_INACTIVE = '#363636'
 // dark tinted background. Inactive/default states stay gray with no ring.
 export const ACCENT1_FILL = 'rgba(20,20,22,0.2)'
 
-// "Selected" shader (Figma node 748-2339) — the unified active/selected treatment across the icon
-// rail, the Explore By rows, and the Flow toggle: a 20%-accent glass-tinted fill, a thin accent
-// ring, a 4px backdrop blur (Figma GLASS radius 4) so the chip reads as frosted glass, and the
-// signature drop shadow. The glyph/label itself is painted accent-orange by each surface.
+// "Selected" shader (Figma node 913-12) — the unified active/selected treatment across the icon
+// rail, the Explore By rows, and the Flow toggle. Decoded from the source SVG: a translucent DARK
+// glass fill (#141416 @ 20%, i.e. ACCENT1_FILL) over a 4px backdrop blur so the chip reads as frosted
+// dark glass, a thin accent-orange ring, and a solid-black drop shadow (dx/dy 4, blur 5). No gloss or
+// sheen — the disc is flat glass. Only the ring and the glyph/label are orange; each surface paints
+// its own glyph/label accent-orange.
 export const SELECTED = {
-  fill: 'rgba(242,127,55,0.2)',           // accent/1 @ 20%
+  fill: ACCENT1_FILL,                     // #141416 @ 20% — translucent dark glass
   border: '#F27F37',                      // accent/1 ring
-  blur: 'blur(4px)',                      // GLASS radius 4
-  drop: '4px 4px 5px 0px rgba(0,0,0,0.5)',
+  blur: 'blur(4px)',                      // GLASS radius 4 — frosts whatever is behind the fill
+  drop: '4px 4px 5px 0px #000000',        // dx/dy 4, blur 5, solid black
+  // Glass sheen. The raw SVG export is flat, which reads as dull on our near-black rail (the 20% dark
+  // fill has no lighter backdrop to frost). These two layers re-create the frosted-glass shine in CSS:
+  // `sheen` is a soft top-edge highlight layered OVER the fill (`background: SELECTED.sheen, .fill`);
+  // `rim` adds a 1px top light line + a gentle bottom inner shade (append to the element's boxShadow).
+  sheen: 'linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0) 42%)',
+  rim: 'inset 0 1px 1.5px 0 rgba(255,255,255,0.22), inset 0 -7px 11px -7px rgba(0,0,0,0.55)',
 }
 
 export const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"

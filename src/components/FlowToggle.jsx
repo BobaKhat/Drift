@@ -10,7 +10,7 @@ import knobOff from '../assets/flow-off.png'
 //
 // Two knob states, cross-faded as the knob slides. OFF (default) = the original pre-rendered bitmap
 // (assets/flow-off.png) — a dark disc with a gray glyph and baked bevel/shadow. ON = the live selected
-// chip (exact spec: Figma node 913-9) — a 0.5px accent ring + 20%-accent glass fill + frosted blur +
+// chip (Figma node 913-12) — a 0.5px accent ring + translucent dark glass fill + frosted blur +
 // drop shadow + a flat accent glyph. Slides RIGHT (Off) → LEFT (Flow); both labels stay gray.
 
 const W = 136
@@ -80,13 +80,13 @@ export default function FlowToggle() {
           width: OFF_BOX, height: OFF_BOX, maxWidth: 'none', objectFit: 'contain', display: 'block',
           opacity: on ? 0 : 1, transition: FADE,
         }} />
-        {/* ON — selected shader (Figma node 913-12): 0.5px accent ring + 20%-accent glass fill +
-            frosted blur + solid-black drop + a flat accent glyph (no inner shadow). */}
+        {/* ON — selected shader (Figma node 913-12): 0.5px accent ring + translucent dark glass fill +
+            glass sheen + solid-black drop + a flat accent glyph (no inner shadow). */}
         <div style={{
           ...KNOB_BASE,
-          background: SELECTED.fill,
+          background: `${SELECTED.sheen}, ${SELECTED.fill}`,
           border: `0.5px solid ${SELECTED.border}`,
-          boxShadow: '4px 4px 5px 0px #000000',
+          boxShadow: `${SELECTED.drop}, ${SELECTED.rim}`,
           backdropFilter: SELECTED.blur, WebkitBackdropFilter: SELECTED.blur,
           opacity: on ? 1 : 0, transition: FADE,
         }}>
