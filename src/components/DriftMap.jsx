@@ -545,6 +545,29 @@ function AxisLayer({ preset, geom }) {
 const barShadow = '4px 4px 2.5px 0px rgba(0,0,0,0.9), inset 1px 1.5px 3px 0px #373737'
 const insetShadow = 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px rgba(0,0,0,0.7)'
 
+// —— Neomorphic shadow system (reference component: the top-right toolbar) ————————
+// Single light source, top-left, on the map surface (MAP_BG #141415). Raised surfaces cast a light
+// shadow up-left (negative offsets) + a dark shadow down-right (positive offsets); on press a button
+// flips to the inverse *inside* (dark up-left, light down-right) so it sinks into the surface. No
+// borders — the paired shadows are the edge. Blur ≈ 2× the offset so surfaces read as physical, not
+// outlined. Backgrounds step lighter for raised slabs/buttons and darker when pressed in. These are the
+// toolbar's own tokens (barShadow/insetShadow stay as-is for the unrelated search bar). Tuned by eye.
+const NEO_BAR_BG      = '#1b1b1d'  // toolbar pill — a step up from the map surface (raised slab)
+const NEO_BAR_SHADOW  = '-4px -4px 8px 0px rgba(255,255,255,0.03), 4px 4px 8px 0px rgba(0,0,0,0.6)'
+const NEO_BAR_EDGE    = 'inset 1px 1px 1px 0px rgba(255,255,255,0.05), inset -1px -1px 2px 0px rgba(0,0,0,0.35)'
+// Icon buttons (Recenter / Zoom / chevron) — raised at rest, lifted on hover, sunk (inset) on press.
+// Same paired-shadow recipe as the pill at a smaller scale; the accent ring rides on top when active.
+const NEO_BTN_BG       = '#222224'  // raised button — a clear step above the pill surface
+const NEO_BTN_PRESS_BG = '#151517'  // pressed/active — drops below the pill surface
+// Rest shadow leads with a zero-offset/zero-blur 1px inset rim — a full-perimeter edge catch that
+// defines the button against the pill from every side (not a border, so it never changes sizing) —
+// followed by the directional light/dark pair.
+const NEO_BTN_RAISED = 'inset 0 0 0 1px rgba(255,255,255,0.03), -3px -3px 6px 0px rgba(255,255,255,0.03), 3px 3px 6px 0px rgba(0,0,0,0.6)'
+const NEO_BTN_HOVER  = '-4px -4px 8px 0px rgba(255,255,255,0.03), 4px 4px 8px 0px rgba(0,0,0,0.6)'  // +1px offset, +2px blur
+const NEO_BTN_PRESS  = 'inset 3px 3px 6px 0px rgba(0,0,0,0.6), inset -3px -3px 6px 0px rgba(255,255,255,0.03)'
+const NEO_PANEL_SHADOW = 'drop-shadow(-6px -6px 12px rgba(255,255,255,0.025)) drop-shadow(6px 6px 14px rgba(0,0,0,0.65))'
+const NEO_PANEL_EDGE  = 'inset 1px 1px 1px 0px rgba(255,255,255,0.05), inset -1px -1px 2px 0px rgba(0,0,0,0.35)'
+
 // Search glyph (Figma) — a filled outline, not a stroked circle+line, so the ring keeps its taper
 // and the handle its rounded join. Figma exports this as two paths behind an outside-mask (its way
 // of faking an outward stroke), but a mask forces the browser to rasterize the glyph through an
@@ -784,11 +807,12 @@ function ZoomOutIcon({ color }) {
 // gone before the eye caught it. Hold the accent on for a floor of ~180ms after press instead.
 const PRESS_MIN_MS = 180
 
-// Recessed circular icon well (Figma 748:2975 et al). 50px against the 20px glyph keeps the inset
-// on whole pixels — (50 - 20) / 2 = 15 — so the icons stay crisp; see MagnifierIcon on why that
-// matters. Owns its icon rather than taking children so the pressed state can recolour the glyph.
+// Raised circular icon button (Figma 748:2975 et al). 50px against the 20px glyph keeps everything on
+// whole pixels — (50 - 20) / 2 = 15 — so the icons stay crisp; see MagnifierIcon on why that matters.
+// Owns its icon rather than taking children so the pressed state can recolour the glyph.
 function ToolButton({ icon: Icon, onClick }) {
   const [pressed, setPressed] = useState(false)
+  const [hover, setHover] = useState(false)
   const downAt = useRef(0)
   const timer = useRef(0)
 
@@ -812,7 +836,8 @@ function ToolButton({ icon: Icon, onClick }) {
       onClick={onClick}
       onPointerDown={press}
       onPointerUp={release}
-      onPointerLeave={() => { if (pressed) release() }}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => { setHover(false); if (pressed) release() }}
       style={{
         width: 50,
         height: 50,
@@ -821,15 +846,15 @@ function ToolButton({ icon: Icon, onClick }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        // Pressed = the app-wide selected shader: 20%-accent glass fill + frosted blur + accent glyph.
-        // The accent ring stays an INSET shadow, not a border: a border would shrink the content box to
-        // 47px and drop the 20px glyph onto a half-pixel (13.5), so it would blur on every press. A
-        // shadow paints over the well without touching layout, so the glyph stays put at 15px. At rest
-        // the well is recessed (insetShadow); pressed it lifts to the selected drop shadow.
-        background: pressed ? SELECTED.fill : CARD,
-        boxShadow: pressed ? `inset 0 0 0 1.5px ${SELECTED.border}, ${SELECTED.drop}` : insetShadow,
-        backdropFilter: pressed ? SELECTED.blur : undefined,
-        WebkitBackdropFilter: pressed ? SELECTED.blur : undefined,
+        // Raised at rest (extruded, lit top-left); floats a touch higher on hover (larger offset/blur);
+        // sinks to an inset well on press, dropping to the darker press background with the accent ring
+        // on top. The ring stays an INSET shadow, not a border: a border would shrink the content box to
+        // 47px and drop the 20px glyph onto a half-pixel (13.5), blurring it — a shadow doesn't touch
+        // layout, so the glyph stays put at 15px.
+        background: pressed ? NEO_BTN_PRESS_BG : NEO_BTN_BG,
+        boxShadow: pressed
+          ? `inset 0 0 0 1.5px ${SELECTED.border}, ${NEO_BTN_PRESS}`
+          : (hover ? NEO_BTN_HOVER : NEO_BTN_RAISED),
         transition: 'box-shadow 120ms ease, background 120ms ease',
         cursor: onClick ? 'pointer' : 'default',
       }}
@@ -843,6 +868,7 @@ function ToolButton({ icon: Icon, onClick }) {
 function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
   const stroke = ICON_PRIMARY
   const [compassOpen, setCompassOpen] = useState(false)
+  const [chevHover, setChevHover] = useState(false)
 
   // Fit the axis box, not the nodes — same framing the map opens with, so this button always
   // returns you to the full crosshair with its four poles in view.
@@ -868,7 +894,7 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
       <div style={{
         display: 'flex', alignItems: 'center', gap: 14,
         height: 70, boxSizing: 'border-box',
-        padding: '10px 30px', background: CARD, borderRadius: 100, boxShadow: barShadow,
+        padding: '10px 30px', background: NEO_BAR_BG, borderRadius: 100, boxShadow: NEO_BAR_SHADOW,
         position: 'relative',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -881,24 +907,32 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
           <ToolButton icon={ZoomInIcon} onClick={handleZoomIn} />
           <ToolButton icon={ZoomOutIcon} onClick={handleZoomOut} />
         </div>
-        {/* Chevron toggle — rotates when compass is open */}
+        {/* Chevron toggle — a raised icon button (same recipe as the wells); the glyph rotates when the
+            compass is open while the button surface stays put, and the open state sinks it inset. */}
         <button
           onClick={() => setCompassOpen((o) => !o)}
+          onPointerEnter={() => setChevHover(true)}
+          onPointerLeave={() => setChevHover(false)}
           style={{
-            background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+            width: 34, height: 34, borderRadius: '50%', flexShrink: 0, padding: 0,
+            border: 'none', cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'transform 220ms ease',
-            transform: compassOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+            background: compassOpen ? NEO_BTN_PRESS_BG : NEO_BTN_BG,
+            boxShadow: compassOpen ? NEO_BTN_PRESS : (chevHover ? NEO_BTN_HOVER : NEO_BTN_RAISED),
+            transition: 'box-shadow 120ms ease, background 120ms ease',
           }}
         >
-          <svg width="13" height="8" viewBox="0 0 13 8" fill="none">
+          <svg width="13" height="8" viewBox="0 0 13 8" fill="none" style={{
+            transition: 'transform 220ms ease',
+            transform: compassOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+          }}>
             <path d="M1 1.5L6.5 6.5L12 1.5" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
-        {/* Inset shadow overlay */}
+        {/* Raised-slab inner rim — a faint top-left highlight + bottom-right inner shade (no border) */}
         <div style={{
           position: 'absolute', inset: 0, borderRadius: 'inherit',
-          boxShadow: 'inset 1px 1.5px 3px 0px #373737',
+          boxShadow: NEO_BAR_EDGE,
           pointerEvents: 'none',
         }} />
       </div>
@@ -908,15 +942,15 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
       {compassOpen && (
         <div style={{
           width: 373, padding: 15, borderRadius: 20,
-          background: CARD,
-          filter: 'drop-shadow(4px 4px 2.5px black)',
+          background: NEO_BAR_BG,
+          filter: NEO_PANEL_SHADOW,
           position: 'relative',
         }}>
           <CompassPreview presetKey={activePreset} />
-          {/* Inset shadow on card */}
+          {/* Raised-panel inner rim — top-left highlight + bottom-right inner shade (no border) */}
           <div style={{
             position: 'absolute', inset: 0, borderRadius: 'inherit',
-            boxShadow: 'inset 1px 1.5px 3px 0px #373737',
+            boxShadow: NEO_PANEL_EDGE,
             pointerEvents: 'none',
           }} />
         </div>
