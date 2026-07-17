@@ -105,3 +105,30 @@ html, body, #root {
 @keyframes driftDiscSpin {
   to { transform: rotate(360deg); }
 }
+
+/* —— Nebula breath (Slice 14) —————————————————————————————————————————————————————————
+   The density cloud drifts between 50% and full strength on a 10s cycle, so the gas reads as alive
+   rather than as a static wash printed on the card. Pure compositor work: NebulaLayer never redraws
+   the bitmap for this, the browser just re-blends the layer it already has.
+
+   This rides its OWN element, wedged between the nebula's zoom-fade wrapper and its canvas, and the
+   nesting is load-bearing rather than tidiness. CSS animations outrank inline styles in the cascade,
+   and NebulaLayer drives BOTH of those elements' opacity imperatively — so an animation on either
+   would seize the property out from under it. On the canvas it would break the preset crossfade (the
+   fade-to-0 is what hides the redraw, and the animation would hold the layer visible right through
+   it); on the wrapper it would override the zoom fade and keep the cloud lit past the fade band where
+   it's meant to be gone. Three nested elements, one opacity each, multiplied by the browser:
+   zoom × breath × crossfade.
+
+   Gated on no-preference rather than switched off under reduce, so the fallback is the ABSENCE of a
+   rule: with no animation the element just sits at its natural opacity 1 and reduced-motion users get
+   the identical cloud, held still. Nothing to undo, and no way for the two paths to disagree. */
+@keyframes driftNebulaBreathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .drift-nebula-breath {
+    animation: driftNebulaBreathe 10s ease-in-out infinite;
+  }
+}

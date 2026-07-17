@@ -17,6 +17,7 @@ import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
 import { computeBuildGraph } from '../lib/setChain'
 import { scoreCompatibility } from '../lib/compatibility'
+import NebulaLayer from './NebulaLayer'
 import CompassPreview from './CompassPreview'
 import CompatibilityCard from './CompatibilityCard'
 import FlowToggle from './FlowToggle'
@@ -52,11 +53,93 @@ const H = 6000
 // nothing reads a module-level W anymore — every W-dependent value comes from the per-render `geom`
 // object so a single W change updates the padding band, axis endpoints, fit box and pan clamp together.
 
-// The 0–100 feature range maps into the inner 5%–95% of the canvas (Decision Log #22) so songs at the
-// extremes sit near the terminator pills, not on top of them. Y is fixed with H; the X band is derived
-// per-W in makeGeom. A song at value 50 always lands at 50% of W whatever W is — positions are purely
-// proportional, so a changing W reshapes the quadrants without disturbing any song's relative place.
-const PAD_Y = [H * 0.05, H * 0.95]
+// Axis extent in CANVAS space. The crosshair runs to 2% from each canvas edge and the four terminator
+// pills cap those ends. At the default fit zoom this inset lands ~16px in from the canvas bounds, which
+// reads the same as the old card-edge pinning while now being anchored to the map, not the viewport.
+// Declared here rather than with the rest of the layout because the song band below is derived FROM it.
+const AXIS_INSET = 0.02
+const AXIS_Y = [H * AXIS_INSET, H * (1 - AXIS_INSET)] // Y-axis extent is fixed with H
+
+// The 0–100 feature range maps into an inner band of the canvas (Decision Log #22) so songs at the
+// extremes sit clear of the terminator pills instead of on top of them. Y is fixed with H; the X band
+// is derived per-W in makeGeom. A song at value 50 always lands at 50% of W whatever W is — positions
+// are purely proportional, so a changing W reshapes the quadrants without disturbing any song's
+// relative place.
+//
+// —— The band is SOLVED, not chosen ——————————————————————————————————————————————————————————
+// The target is an even MARGIN: the song field sits the same number of screen px in from the axis end
+// on all four poles, so the cloud reads as centred in the card rather than stretched top-to-bottom.
+//
+// A pill is anchored at the axis end and hangs INWARD at a constant SCREEN size (AxisLayer counter-
+// scales it by 1/zoom), so in canvas units it reaches pillPx/zoom past that end — which is why the pad
+// must clear the pill's FOOTPRINT and not merely the axis inset. Walking inward from an axis end, the
+// margin a pole needs, in screen px:
+//
+//     pill inner edge  pillPx      <- the pill's WIDTH on the X poles, its HEIGHT on the Y poles
+//     song boundary    + PILL_GAP  <- clearance between the song's edge and the pill
+//     song centre      + SONG_R    <- PAD lands the song's CENTRE, hence this last term
+//
+// Solve that ONCE on the binding pole — X, whose pills are far the widest — then spend the same margin
+// on both axes. Converting a screen margin back to a fraction just divides by that axis's px-per-frac:
+//
+//     MARGIN_PX = PILL_W + PILL_GAP + SONG_R
+//     PAD_FRAC  = AXIS_INSET + MARGIN_PX / (dimension × zoom)
+//
+// The fractions come out UNEQUAL precisely because the margin is equal: Y is the shorter axis in screen
+// px (885 vs 1325), so the same margin costs it a bigger fraction. Canvas units are the wrong currency
+// here — nothing on screen is a canvas unit; it is always fraction × (dimension × zoom).
+//
+// To re-derive, edit the measured inputs below and the fractions follow. Every input is a SCREEN
+// measurement taken at the fit zoom, so all of them move if the pills are restyled or the card resizes.
+const PILL_W = 95.5 // widest SIDE pill across ALL presets ("Melodic" on Vocal) — governs X
+const PILL_H = 37.5 // pill height, identical on every preset — governs Y
+const SONG_R = 9    // circle-tier song radius at fit zoom = (CIRCLE_SIZE/2) × zoom^CIRCLE_ZOOM_DAMP
+const PILL_GAP = 7  // clearance on the BINDING pole (X). Y inherits the same margin and so runs looser.
+
+// Screen px held clear between the axis box (i.e. the pole pills, which sit on it) and the card edge.
+// ONE constant drives both halves of that promise, and it has to: computeMinZoom reserves 2× this on
+// height so the pills clear the edge at the FIT, and EXPANDED_EXTENT below expands by this ÷ zoom so
+// they still clear it at every PAN limit. Split the two and they contradict — see EXPANDED_EXTENT.
+const EDGE_MARGIN_PX = 20
+
+// The reference card the band is solved for — a 1440x900 window, which after the rail and page insets
+// leaves a 1317x880 card. computeMinZoom is height-bound on any card at least as wide as it is tall, so
+// the fit zoom reduces to this: 0.1458 here. Must track computeMinZoom's own formula exactly.
+const REF_CARD_W = 1317
+const REF_CARD_H = 880
+const FIT_ZOOM = (REF_CARD_H - 2 * EDGE_MARGIN_PX) / (H * (1 - 2 * AXIS_INSET))
+
+// Screen px spanned by a full 1.0 of each fraction at that zoom — the `dimension × zoom` denominator
+// above. Both collapse to the card's own pixel size over AXIS_SPAN, since the fit maps exactly that
+// much canvas onto the card: 1325px across, 885px down. X gets 1.5× more px per unit of pad than Y.
+const X_PX_PER_FRAC = (H * (REF_CARD_W / REF_CARD_H)) * FIT_ZOOM // = W × minZoom
+const Y_PX_PER_FRAC = H * FIT_ZOOM                               // = H × minZoom
+
+// Set by X's pill, then spent on both axes. 111.5px on the reference card.
+const MARGIN_PX = PILL_W + PILL_GAP + SONG_R
+
+const PAD_X_FRAC = AXIS_INSET + MARGIN_PX / X_PX_PER_FRAC // ≈ 0.1041
+const PAD_Y_FRAC = AXIS_INSET + MARGIN_PX / Y_PX_PER_FRAC // ≈ 0.1459
+const PAD_Y = [H * PAD_Y_FRAC, H * (1 - PAD_Y_FRAC)]
+
+// What this fixes and what it forfeits: the MARGIN is even — 111.5px on all four poles — and CLEARANCE
+// is not, 7px on X against 65px on Y. Those two can never both be even: the margin is pill + gap, and
+// the side pills are 2.5× wider than the top pills are tall while X only buys 1.5× more screen px per
+// unit of pad. Fixing either forces the other apart. This is the even-margin branch; the even-clearance
+// branch (10px on every pole) is one edit away — swap both fractions back to the per-axis form,
+// AXIS_INSET + (pillPx + PILL_GAP + SONG_R) / pxPerFrac, which gives ≈ 0.1064 / 0.0838.
+//
+// Note PILL_GAP now means X's clearance ONLY, and X is the whole map's floor: it has no headroom, by
+// construction. Raising PILL_GAP raises the shared margin and pushes both axes in together.
+//
+// Two traps that survive the derivation:
+//  - PILL_W must be measured across ALL FOUR presets, never the default one. They swap which label sits
+//    on which axis (Texture puts "Intense" on X, Vocal "Melodic"), so tuning against Vibe alone reads an
+//    83px pill and silently starves X — it went to ~1.5px that way once already.
+//  - This is a SCREEN target met with CANVAS constants, so it is exact only on the reference card. A
+//    bigger card has margin to spare; a much smaller one (~1024x768) eats into the gap. And verifying
+//    against the demo library proves nothing: no demo song reaches the band edge on most presets, so the
+//    pills read hundreds of px clear even at a pad that would overlap badly. Check the band edge itself.
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
@@ -214,27 +297,47 @@ const RAIL_GAP = 10
 const MAP_LEFT = PAGE_INSET + RAIL_W + RAIL_GAP // 113
 const EDGE = 16 // inset of the HUD brackets / zone chip from the map card edge
 
-// Axis extent in CANVAS space. The crosshair runs to 2% from each canvas edge — just outside the
-// 5%–95% band the songs occupy (PAD) — so the terminator pills cap the axis right past the most
-// extreme songs. At the default fit zoom that inset lands ~16px in from the canvas bounds, which
-// reads the same as the old card-edge pinning while now being anchored to the map, not the viewport.
-const AXIS_INSET = 0.02
-const AXIS_Y = [H * AXIS_INSET, H * (1 - AXIS_INSET)] // Y-axis extent is fixed with H
+// AXIS_INSET / AXIS_Y are declared up with the PAD derivation — the song band is solved from them, so
+// they have to precede it. The band the songs occupy (PAD, ~10.4% on X / ~14.6% on Y) sits inside these
+// ends, and the space between the two is not slack: it is exactly what the pills consume as they hang
+// inward at constant screen size, plus PILL_GAP.
 
 // Canvas width from the card's live aspect ratio (H fixed). Guarded so a zero/NaN pre-layout
 // measurement falls back to 16:9 instead of poisoning the geometry.
 const canvasWidthFor = (vw, vh) => (vw > 0 && vh > 0 ? H * (vw / vh) : (H * 16) / 9)
 
 // All W-dependent geometry, derived together from one width so a resize updates it in lock-step. Note
-// AXIS_X, PAD.x, AXIS_BOUNDS.{x,width} and TRANSLATE_EXTENT scale with W while everything Y is fixed.
+// AXIS_X, PAD.x and AXIS_BOUNDS.{x,width} scale with W while everything Y is fixed.
 // AXIS_BOUNDS is what "fit view" frames — not the songs' bounding box — and always contains the songs,
-// since the axis (2%–98%) brackets PAD (5%–95%).
+// since the axis (2%–98%) brackets PAD (~10.5%–89.5% on X, ~14.7%–85.3% on Y).
+//
+// The pan clamp is NOT here any more: it is the only piece of geometry that depends on zoom (its margin
+// is EDGE_MARGIN_PX ÷ zoom in canvas units), and geom feeds the node-rebuild effect via geom.PAD — so a
+// zoom-dependent geom would rebuild every node and crossfade the nebula on every zoom step. See
+// EXPANDED_EXTENT / the translateExtent driver in DriftMapInner.
 function makeGeom(W) {
   const AXIS_X = [W * AXIS_INSET, W * (1 - AXIS_INSET)]
-  const PAD = { x: [W * 0.05, W * 0.95], y: PAD_Y }
+  const PAD = { x: [W * PAD_X_FRAC, W * (1 - PAD_X_FRAC)], y: PAD_Y }
   const AXIS_BOUNDS = { x: AXIS_X[0], y: AXIS_Y[0], width: AXIS_X[1] - AXIS_X[0], height: AXIS_Y[1] - AXIS_Y[0] }
-  const TRANSLATE_EXTENT = [[AXIS_X[0], AXIS_Y[0]], [AXIS_X[1], AXIS_Y[1]]]
-  return { W, AXIS_X, PAD, AXIS_BOUNDS, TRANSLATE_EXTENT }
+  return { W, AXIS_X, PAD, AXIS_BOUNDS }
+}
+
+// The pan clamp, at a given zoom. d3-zoom holds the viewport INSIDE this box, so pushing the box OUTward
+// by the margin is what lets the viewport travel far enough to leave the pills that much clear of its
+// edge — insetting it would do the exact opposite, stopping the pan early and pushing the pills off the
+// side. The margin is a screen distance, so it converts at ÷ zoom, and the extent must be rewritten
+// whenever zoom changes.
+//
+// This interlocks with computeMinZoom, and exactly: at the fit, the viewport is 2×EDGE_MARGIN_PX taller
+// (in screen px) than the axis box, i.e. exactly as much as this expansion adds, so the extent lands
+// flush with the viewport and d3 still allows no pan at all. Change one margin without the other and the
+// fit either unlocks and lets a pill drift closer than the promise, or clamps inside the framed view.
+const EXPANDED_EXTENT = (geom, zoom) => {
+  const m = EDGE_MARGIN_PX / zoom
+  return [
+    [geom.AXIS_X[0] - m, AXIS_Y[0] - m],
+    [geom.AXIS_X[1] + m, AXIS_Y[1] + m],
+  ]
 }
 // Breathing room around the axis box when fitting, as a fraction of the card per side. Small: the
 // box already carries a 2% canvas margin, and the terminator pills hang inward from its edges.
@@ -985,7 +1088,7 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
   )
 }
 
-// Pan is clamped to the axis box (the 2%–98% crosshair bounds, = geom.AXIS_BOUNDS / geom.TRANSLATE_EXTENT):
+// Pan is clamped to the axis box (the 2%–98% crosshair bounds = geom.AXIS_BOUNDS), plus EDGE_MARGIN_PX:
 // the user can never scroll past the axis endpoints into empty canvas. Combined with a minZoom that makes
 // AXIS_BOUNDS fill the viewport at full zoom-out (see computeMinZoom), this guarantees the complete cross
 // with all four pills is always in reach and there's no void to get lost in.
@@ -993,7 +1096,8 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
 // minZoom = the zoom at which AXIS_BOUNDS fills the viewport. Recomputed from the card's live size on
 // resize. Now that the canvas shares the card's aspect ratio, the width and height terms coincide, so the
 // 30px reserved on height (15px top + 15px bottom) yields ~15px on all four sides at max zoom-out.
-const computeMinZoom = (vw, vh, bounds) => Math.min(vw / bounds.width, (vh - 30) / bounds.height)
+const computeMinZoom = (vw, vh, bounds) =>
+  Math.min(vw / bounds.width, (vh - 2 * EDGE_MARGIN_PX) / bounds.height)
 
 // Manual zoom ceiling. Cards grow only slowly with zoom (dampened counter-scale — see NODE_PIN /
 // NODE_PIN_EXP in TrackNode) while the canvas spreads at full zoom, so zooming deeper mostly
@@ -1214,6 +1318,26 @@ function DriftMapInner({ tracks }) {
   // rescales every X proportionally (value 50 stays at 50% of W).
   const prevBuildRef = useRef({ tracks: stagedTracks, preset: presetConfig, pad: geom.PAD })
   const repositionTimer = useRef(null)
+
+  // Song centres for the density nebula. Same pure function on the same inputs as the rebuild below,
+  // so the cloud is drawn from exactly the positions the nodes land on and can't drift out of register
+  // with them. Deliberately NOT derived from the `nodes` state: that array is rebuilt for dimming,
+  // glow tiers and selection too, and each new identity would trigger a needless crossfade.
+  //
+  // Flow mode is the present view — only the chain stays lit and everything else drops to FLOW_DIM
+  // (see TrackNode) — so the gas has to follow the same rule, or the atmosphere goes on advertising
+  // the density of songs the presenter has just deliberately pushed into the dark. Emitters narrow to
+  // the chain, leaving the cloud sitting on the set alone. Orphans are excluded with the rest: flow
+  // mode dims them too, since they're cut from the chain even though they were once in it.
+  //
+  // Depending on `chainSet` only while flow mode is ON keeps ordinary set-building (flow OFF) from
+  // churning this memo — otherwise every wire the user connects would crossfade the whole nebula.
+  const litSet = flowMode ? chainSet : null
+  const songPositions = useMemo(() => {
+    const built = buildNodes(stagedTracks, presetConfig, geom.PAD)
+    const lit = litSet ? built.filter((n) => litSet.has(n.id)) : built
+    return lit.map((n) => n.position)
+  }, [stagedTracks, presetConfig, geom.PAD, litSet])
   useEffect(() => {
     const prev = prevBuildRef.current
     const tracksChanged = prev.tracks !== stagedTracks
@@ -1241,6 +1365,24 @@ function DriftMapInner({ tracks }) {
     zoomTimer.current = setTimeout(() => el.classList.remove('is-zooming'), 150)
   }, [])
 
+  const store = useStoreApi()
+
+  // Keep the pan clamp EDGE_MARGIN_PX outside the axis box at the CURRENT zoom, so the pills never
+  // reach the card edge however far you pan (they used to land flush — measured 1px off it at every
+  // limit). The margin is a screen distance and the extent is canvas-space, so this has to be rewritten
+  // as zoom changes; it is pushed straight into the React Flow store rather than passed as a prop
+  // because a prop would put zoom on the render path — ~30 re-renders a second, the exact thing the
+  // rest of this file goes out of its way to avoid. geom rides a ref so the writer stays identity-stable.
+  const geomRef = useRef(geom)
+  const applyExtent = useCallback((zoom) => {
+    store.getState().setTranslateExtent(EXPANDED_EXTENT(geomRef.current, zoom))
+  }, [store])
+  // A resize reshapes the axis box without touching zoom, so re-apply on geom too.
+  useEffect(() => {
+    geomRef.current = geom
+    applyExtent(rf.getViewport().zoom)
+  }, [geom, applyExtent, rf])
+
   // Counter-scale + tier driver (throttled to ~30fps). Writes the scale factor into the
   // --node-scale CSS var so every node rescales via CSS with no React re-render, and flips tier
   // state only when a threshold is crossed. --axis-scale (a true 1/zoom) rides the same frame: the
@@ -1251,12 +1393,13 @@ function DriftMapInner({ tracks }) {
       el.style.setProperty('--node-scale', String(getNodeScale(zoom)))
       el.style.setProperty('--axis-scale', String(1 / zoom))
     }
+    applyExtent(zoom)
     const next = getTier(zoom)
     if (next !== tierRef.current) {
       tierRef.current = next
       setTier(next)
     }
-  }, [])
+  }, [applyExtent])
   useThrottledZoom(applyZoom)
 
   // Scroll the grid with the map. The grid is a fixed 22px CSS background (constant density, so it's
@@ -1264,7 +1407,6 @@ function DriftMapInner({ tracks }) {
   // background-position on every transform change — panning by N screen px shifts the translate by N at
   // any zoom, so the grid tracks the map 1:1. Guarded to skip no-op frames; a background-position write
   // is a cheap paint with no React re-render, so this can ride every transform update.
-  const store = useStoreApi()
   useEffect(() => {
     let px = null, py = null
     const apply = () => {
@@ -1289,14 +1431,19 @@ function DriftMapInner({ tracks }) {
     // Frame the AXIS box, not the songs' bounding box. The crosshair and its terminator pills are
     // canvas-anchored (see AxisLayer), so they only work as a frame of reference if the default view
     // actually contains them — fitting the song cluster alone crops the axis ends, and their pills,
-    // off the card. The axis box always contains the songs (2%–98% brackets PAD's 5%–95%), so this
+    // off the card. The axis box always contains the songs (2%–98% brackets PAD's ~10.4%/~14.6% band), so this
     // still frames the whole library; it just pulls back far enough to show the poles the library is
     // being measured against. Cost, accepted: a tightly-clustered library no longer fills the view.
     // Measure the map card (ReactFlow's container), not the window — the canvas lives inside an
-    // inset card, so centering must use the card's own dimensions.
-    const rect = wrapperRef.current?.getBoundingClientRect()
-    const vw = rect?.width ?? window.innerWidth - MAP_LEFT - PAGE_INSET
-    const vh = rect?.height ?? window.innerHeight - 2 * PAGE_INSET
+    // inset card, so centering must use the card's own dimensions. clientWidth/Height, NOT
+    // getBoundingClientRect: the card carries a 1px border, and the pane ReactFlow actually lays out in
+    // is the CONTENT box. Measuring the border box made the fit centre for 880px inside an 878px pane,
+    // skewing every margin 1px (top pole 20px clear, bottom 18px) and leaving the fit zoom a hair above
+    // the floor the resize path computes from clientHeight — which is what let a "locked" fit still
+    // drift a pixel or two under a hard drag. Same measurement as the resize effect below, on purpose.
+    const el = wrapperRef.current
+    const vw = el?.clientWidth || window.innerWidth - MAP_LEFT - PAGE_INSET - 2
+    const vh = el?.clientHeight || window.innerHeight - 2 * PAGE_INSET - 2
 
     // minZoom is the zoom at which AXIS_BOUNDS exactly fills the card — the hard floor the viewport
     // clamps to. The default fit adds a little breathing room (FIT_PAD_FRAC) but can never zoom out
@@ -1485,7 +1632,9 @@ function DriftMapInner({ tracks }) {
             zoomOnPinch
             minZoom={minZoom}
             maxZoom={MAX_ZOOM}
-            translateExtent={geom.TRANSLATE_EXTENT}
+            // No translateExtent prop: it is zoom-dependent and owned imperatively (see applyExtent).
+            // Passing it here too would let React Flow's prop→store sync clobber the live value on any
+            // re-render that happens to carry a stale one.
             // Cull off-screen nodes during pan/zoom — only mount the ones inside the viewport.
             // Big win with 150+ songs. Culling uses each node's measured layout box (not its CSS
             // counter-scale transform), so edge nodes may mount/unmount a few px late while panning.
@@ -1508,6 +1657,11 @@ function DriftMapInner({ tracks }) {
       {buildMode && flowMode && flowTiming && (
         <style>{flowTiming.map((w, i) => `@keyframes ${FLOW_STROBE_NAME}-${i}{0%{stroke-dashoffset:${FLOW_OFF_START}}${w.activePct.toFixed(3)}%{stroke-dashoffset:${FLOW_OFF_END}}100%{stroke-dashoffset:${FLOW_OFF_END}}}`).join('')}</style>
       )}
+      {/* Density nebula — canvas-space gas under the songs. Rendered before AxisLayer so its portal
+          content is inserted first and the crosshair stays on top of the cloud; both sit below the
+          nodes (ViewportPortal content renders under the node layer) and above the card's line grid,
+          which is a CSS background on the wrapper below everything. */}
+      <NebulaLayer songPositions={songPositions} width={geom.W} height={H} />
       <AxisLayer preset={presetConfig} geom={geom} />
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
       <ToolBar rf={rf} presetName={presetConfig.label} activePreset={activePreset} geom={geom} />
