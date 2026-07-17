@@ -86,7 +86,7 @@ const AXIS_Y = [H * AXIS_INSET, H * (1 - AXIS_INSET)] // Y-axis extent is fixed 
 //     PAD_FRAC  = AXIS_INSET + MARGIN_PX / (dimension × zoom)
 //
 // The fractions come out UNEQUAL precisely because the margin is equal: Y is the shorter axis in screen
-// px (885 vs 1325), so the same margin costs it a bigger fraction. Canvas units are the wrong currency
+// px (875 vs 1310), so the same margin costs it a bigger fraction. Canvas units are the wrong currency
 // here — nothing on screen is a canvas unit; it is always fraction × (dimension × zoom).
 //
 // To re-derive, edit the measured inputs below and the fractions follow. Every input is a SCREEN
@@ -118,8 +118,8 @@ const Y_PX_PER_FRAC = H * FIT_ZOOM                               // = H × minZo
 // Set by X's pill, then spent on both axes. 111.5px on the reference card.
 const MARGIN_PX = PILL_W + PILL_GAP + SONG_R
 
-const PAD_X_FRAC = AXIS_INSET + MARGIN_PX / X_PX_PER_FRAC // ≈ 0.1041
-const PAD_Y_FRAC = AXIS_INSET + MARGIN_PX / Y_PX_PER_FRAC // ≈ 0.1459
+const PAD_X_FRAC = AXIS_INSET + MARGIN_PX / X_PX_PER_FRAC // ≈ 0.10515
+const PAD_Y_FRAC = AXIS_INSET + MARGIN_PX / Y_PX_PER_FRAC // ≈ 0.14743
 const PAD_Y = [H * PAD_Y_FRAC, H * (1 - PAD_Y_FRAC)]
 
 // What this fixes and what it forfeits: the MARGIN is even — 111.5px on all four poles — and CLEARANCE
@@ -127,7 +127,7 @@ const PAD_Y = [H * PAD_Y_FRAC, H * (1 - PAD_Y_FRAC)]
 // the side pills are 2.5× wider than the top pills are tall while X only buys 1.5× more screen px per
 // unit of pad. Fixing either forces the other apart. This is the even-margin branch; the even-clearance
 // branch (10px on every pole) is one edit away — swap both fractions back to the per-axis form,
-// AXIS_INSET + (pillPx + PILL_GAP + SONG_R) / pxPerFrac, which gives ≈ 0.1064 / 0.0838.
+// AXIS_INSET + (pillPx + PILL_GAP + SONG_R) / pxPerFrac, which gives ≈ 0.1074 / 0.0846.
 //
 // Note PILL_GAP now means X's clearance ONLY, and X is the whole map's floor: it has no headroom, by
 // construction. Raising PILL_GAP raises the shared margin and pushes both axes in together.
@@ -281,6 +281,10 @@ const edgeTypes = { wire: WireEdge }
 
 const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 const AXIS_COLOR = 'rgba(255,255,255,0.08)' // crosshair lines — present but subtle, never competing with songs
+const TICK_LEN = 30 // screen px length of the axis endpoint ticks (counter-scaled to hold this at any zoom)
+const TICK_COLOR = 'rgba(242,127,55,0.5)' // Y ticks: ACCENT1 orange at 0.5 — reads as a calibration mark, not a button
+const TICK_COLOR_X = 'rgba(75,106,229,0.5)' // X ticks: ACCENT2 purple at 0.5 — matches the mood-axis pole pills
+const TICK_W_X = 3 // X ticks tripled to 3px thick and pill-capped, so the mood-axis marks read heavier than Y's
 const ACCENT1 = '#F27F37' // Intense / Chill (energy axis)
 const ACCENT2 = '#4B6AE5' // Dark / Bright (mood axis)
 const MAP_BG = '#141415'
@@ -605,6 +609,25 @@ function AxisLayer({ preset, geom }) {
             width: 1, height: AXIS_Y[1] - AXIS_Y[0], background: AXIS_COLOR,
             transformOrigin: 'center', transform: 'translateX(-50%) scaleX(var(--axis-scale, 1))',
           }} />
+
+          {/* Axis endpoint ticks — perpendicular calibration marks at the PAD band edges (where the song
+              field begins) on each axis, so they ride geom.PAD and follow whenever the pad is re-derived.
+              Base size is (thickness × TICK_LEN) canvas px with a uniform 1/zoom counter-scale, so like the
+              pills they hold their screen size at any zoom. X ticks: purple TICK_COLOR_X, tripled to TICK_W_X
+              thick and pill-capped (mood axis). Y ticks: orange TICK_COLOR, 1px (energy axis). Two per axis. */}
+          {geom.PAD.x.map((x) => (
+            <div key={`tick-x-${x}`} style={{
+              position: 'absolute', left: x, top: H / 2, width: TICK_W_X, height: TICK_LEN, background: TICK_COLOR_X,
+              borderRadius: 999,
+              transformOrigin: 'center', transform: 'translate(-50%, -50%) scale(var(--axis-scale, 1))',
+            }} />
+          ))}
+          {geom.PAD.y.map((y) => (
+            <div key={`tick-y-${y}`} style={{
+              position: 'absolute', left: geom.W / 2, top: y, width: TICK_LEN, height: 1, background: TICK_COLOR,
+              transformOrigin: 'center', transform: 'translate(-50%, -50%) scale(var(--axis-scale, 1))',
+            }} />
+          ))}
 
           {/* Pole pills capping the four axis ends, each anchored by its OUTER edge so it hangs inward. */}
           <span style={{ ...pillBase, left: geom.W / 2, top: AXIS_Y[0], transformOrigin: 'top center',    transform: 'translateX(-50%) scale(var(--axis-scale, 1))',      color: ACCENT1 }}>{preset.yHigh}</span>
