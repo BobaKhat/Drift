@@ -140,6 +140,55 @@ export const NEO_BTN_PRESS  = 'inset 3px 3px 3px 0px rgba(0,0,0,0.6), inset -1px
 // sunk is sunk, and by then the outer cast is gone anyway.
 export const NEO_CHEV_RAISED = 'inset 0 0 0 1px rgba(255,255,255,0.05), -4px -4px 8px 0px rgba(255,255,255,0.08), 4px 4px 8px 0px rgba(0,0,0,0.7)'
 export const NEO_CHEV_HOVER  = 'inset 0 0 0 1px rgba(255,255,255,0.05), -5px -5px 10px 0px rgba(255,255,255,0.10), 5px 5px 10px 0px rgba(0,0,0,0.8)'
+// The icon rail's nav buttons — standalone circles sitting directly on the rail (RAIL_BG #0F0F0F). By the
+// rule at the top of this block that makes them the chevron's case, not the tray's: no trench floor for
+// the outer light to wash, so rim + outer light + outer dark. What changes is the surface underneath —
+// the rail sits ~12 points darker than the toolbar slab the chevron rides on, and a cast reads by its
+// contrast against what it lands on, so the outer dark carries more here (0.8 to the chevron's 0.7) to
+// land at the same depth.
+// NOTE: NEO_RAIL_RAISED is no longer rail-only — the deck's play button is the same case (a standalone
+// round button on a dark surface) and shares it verbatim. The name is now narrower than the truth; if a
+// third surface takes it, rename the pair rather than copying the values again. Changing them here moves
+// the deck too, which is intended: they're one recipe.
+export const NEO_RAIL_BG        = '#1a1a1c'
+export const NEO_RAIL_HOVER_BG  = '#222224'
+export const NEO_RAIL_ACTIVE_BG = '#0d0d0f'  // sunk BELOW the rail surface — the only face here that goes darker than its ground
+export const NEO_RAIL_RAISED = 'inset 0 0 0 1px rgba(255,255,255,0.05), -3px -3px 6px 0px rgba(255,255,255,0.06), 3px 3px 6px 0px rgba(0,0,0,0.8)'
+export const NEO_RAIL_HOVER  = 'inset 0 0 0 1px rgba(255,255,255,0.05), -4px -4px 8px 0px rgba(255,255,255,0.08), 4px 4px 8px 0px rgba(0,0,0,0.85)'
+// Active is a held press, not a hover: the button stays sunk for as long as its panel is on screen, which
+// is what separates "you're on this page" from "you're pointing at this". Accent ring over the press, the
+// same composition the toolbar's active buttons use. Its own press numbers rather than NEO_BTN_PRESS —
+// that one's 3px offset is there to bottom out on NEO_TRAY_INSET's contour, and a rail button has no tray
+// under it to bottom out on.
+export const NEO_RAIL_ACTIVE = `inset 0 0 0 1.5px ${SELECTED.border}, inset 2px 2px 4px 0px rgba(0,0,0,0.6), inset -1px -1px 2px 0px rgba(255,255,255,0.03)`
+// —— Deck instrument panel ——————————————————————————————————————————————————————————————
+// Deck bento tiles — content modules, not controls: machined modules mounted on the deck panel, so they
+// extrude and then hold still. No hover, no press; a tile that lifts under the cursor is claiming to be a
+// button. Structurally these are NEO_BTN_RAISED at tile scale — outer dark only, thickness from an inner
+// bevel — and they land on the tray side of the rule at the top of this block even though the deck panel
+// isn't literally a trench: tiles are packed a GAP (8–12px) apart, so an outer light has no open ground to
+// fall on and would just wash the neighbour it reaches. Two departures from the button, both from scale: a
+// 250px face needs a longer cast than a 30px one to sit the same distance off its ground (10px of blur to
+// the button's 8, at 0.8 for the darker panel), while the bevel does NOT scale with it — 1.5px is a
+// machined chamfer at any size, and widening it in proportion would turn the edge to moulded rubber.
+export const NEO_TILE_BG     = '#1a1a1c'  // one step down from NEO_BAR_BG: the deck panel is darker ground than the map
+export const NEO_TILE_SHADOW = '4px 4px 10px 0px rgba(0,0,0,0.8), inset 1.5px 1.5px 2px 0px rgba(255,255,255,0.08), inset -1.5px -1.5px 2px 0px rgba(0,0,0,0.5)'
+// Readout screens recessed INTO a tile — the disc platter and the BPM/Camelot circles. This is the DAW
+// move the tiles exist to set up: a dark screen sunk into a lit panel, so the panel reads as machined
+// around it. Same face as a held-down rail button (NEO_RAIL_ACTIVE_BG) because it's the same physical
+// claim — a surface below its ground — and the deck is where that claim is at rest rather than momentary.
+export const NEO_SCREEN_BG    = '#0d0d0f'
+export const NEO_SCREEN_INSET = 'inset 2px 2px 4px 0px rgba(0,0,0,0.7), inset -1px -1px 2px 0px rgba(255,255,255,0.04)'
+// Wells that hold a moving part — slider tracks, the VU meter. Shallower than a screen (0.6/0.03 to the
+// screen's 0.7/0.04): a screen is read THROUGH and wants its own depth, a well only has to seat the thing
+// riding in it, and out-darkening the knob it carries inverts which of the two is on top. Numerically this
+// is NEO_RAIL_ACTIVE's press half — the same "sunk below the ground" surface — but kept as its own
+// constant on the precedent NEO_BTN_PRESS/NEO_TRAY_INSET set just below: they share numbers today because
+// the physics agree, not because a change to a slider track should travel to the icon rail.
+export const NEO_WELL_INSET = 'inset 2px 2px 4px 0px rgba(0,0,0,0.6), inset -1px -1px 2px 0px rgba(255,255,255,0.03)'
+// NOTE: the deck's visualizer tile is deliberately NOT in this system — it's a screen, not a gauge, so it
+// carries no shadow at all and draws its edge with a plain border. It has no token here on purpose; see
+// DeckVisualizer.jsx. Don't add one for it.
 // The well a button sits in — recessed INTO the slab, so the button reads as a knob poking out of a
 // trench instead of off a flat surface. Background steps DOWN from the slab (#1b1b1d → #111113) where a
 // raised surface would step up, and that floor is what the buttons' #222224 faces are read against: the

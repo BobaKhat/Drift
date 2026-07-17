@@ -3,13 +3,17 @@ import PlaylistPanel from './PlaylistPanel'
 import ExploreByPanel from './ExploreByPanel'
 import SetBuilderPanel from './SetBuilderPanel'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { SELECTED, C } from './import/tokens'
+import {
+  C, NEO_BAR_SHADOW,
+  NEO_RAIL_BG, NEO_RAIL_HOVER_BG, NEO_RAIL_ACTIVE_BG,
+  NEO_RAIL_RAISED, NEO_RAIL_HOVER, NEO_RAIL_ACTIVE,
+} from './import/tokens'
 import brandmark from '../assets/brandmark.png'
 import logo from '../assets/Logo.png'
 
 // Icon rail — floating rounded card (Figma node 799-4821): brand pinned top, nav icons
-// centered, profile pinned bottom. Icons are recessed circles; the active one gets an
-// orange ring.
+// centered, profile pinned bottom. The nav icons are raised circles standing off the rail
+// surface (NEO_RAIL_*); the active one sinks in and gets an orange ring.
 const RAIL_INSET = 10
 const RAIL_W = 93
 const RAIL_GAP = 10
@@ -27,8 +31,8 @@ const ACCENT = '#F27F37'
 const ICON_REST = '#808080'
 const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 
-// Recessed well — the three nav icons (pressed-in look). The top (logo) and bottom (profile)
-// buttons instead use pre-rendered glass-button PNGs (see imageButton below).
+// Recessed well — now only the Set Builder mini-bar's chevron, which lives on the panel rather than the
+// rail and so keeps the older pressed-in look. The rail's own buttons moved to the NEO_RAIL_* recipe.
 const WELL_SHADOW = 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px rgba(0,0,0,0.7)'
 
 // The logo/profile PNGs bake the whole button (well + glyph + shadow) onto a canvas with the
@@ -260,23 +264,25 @@ function RailButton({ label, Icon, isActive, onClick, media }) {
     justifyContent: 'center',
     flexShrink: 0,
     cursor: onClick ? 'pointer' : 'default',
+    // Vestigial — the ring and every edge are box-shadows now ("the shadows are the edge"). Inert rather
+    // than load-bearing: box-sizing is border-box, so this sits inside the 60px and dropping it resizes
+    // nothing. All it does is hold the inset rim and accent ring 1px in from the circle's edge.
     border: '1px solid transparent',
     color: ICON_REST,
-    transition: 'color 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease',
+    transition: 'color 150ms ease, background 150ms ease, box-shadow 150ms ease',
   }
 
-  style.background = CARD
-  style.boxShadow = WELL_SHADOW
+  // Raised at rest, lifted on hover, sunk while its panel is open (NEO_RAIL_* — the chevron's recipe
+  // retuned for the rail's darker surface). The accent ring rides on top of the sunk state.
+  style.background = NEO_RAIL_BG
+  style.boxShadow = NEO_RAIL_RAISED
   if (isActive) {
-    // Selected shader (Figma node 748-2354) — accent glyph (below) + 1px accent ring + translucent
-    // dark glass fill + glass sheen + drop shadow. Shared with the Explore By rows and Flow toggle.
-    style.background = `${SELECTED.sheen}, ${SELECTED.fill}`
-    style.border = `1px solid ${SELECTED.border}`
-    style.boxShadow = `${SELECTED.drop}, ${SELECTED.rim}`
-    style.backdropFilter = SELECTED.blur
-    style.WebkitBackdropFilter = SELECTED.blur
+    style.background = NEO_RAIL_ACTIVE_BG
+    style.boxShadow = NEO_RAIL_ACTIVE
     style.color = '#FFFFFF'
   } else if (hover && onClick) {
+    style.background = NEO_RAIL_HOVER_BG
+    style.boxShadow = NEO_RAIL_HOVER
     style.color = '#CFCFCF'
   }
 
@@ -326,7 +332,12 @@ export default function LeftNav() {
 
   return (
     <>
-      {/* Floating icon rail */}
+      {/* Floating icon rail — a raised slab on the map surface, so it takes the toolbar pill's recipe
+          (NEO_BAR_SHADOW): outer light up-left, outer dark down-right, from the one top-left source. It
+          used to carry an inset #373737 highlight down its left side, which is the top-left light drawn
+          on the wrong axis — it lit the edge nearest the viewer's light as if the rail were hollow. The
+          slab keeps RAIL_BG rather than the toolbar's lighter NEO_BAR_BG: it sits over the map's own
+          edge, and that's the same darker ground the buttons' NEO_RAIL_* recipe is tuned against. */}
       <div
         style={{
           position: 'fixed',
@@ -337,7 +348,7 @@ export default function LeftNav() {
           background: RAIL_BG,
           border: `1px solid ${BORDER}`,
           borderRadius: 999, // fully rounded (capsule) ends
-          boxShadow: '4px 4px 5px 0px rgba(0,0,0,0.6), inset 3px 2px 5px 0px #373737',
+          boxShadow: NEO_BAR_SHADOW,
           zIndex: 20,
           display: 'flex',
           flexDirection: 'column',

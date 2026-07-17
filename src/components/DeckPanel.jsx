@@ -4,7 +4,11 @@ import { useAudio } from '../store/useAudioStore'
 import DeckVisualizer from './DeckVisualizer'
 import { resolvePreview } from '../lib/preview'
 import { FEATURE_POLES, getFeatureValue, resolvePreset } from '../lib/presets'
-import { C, FONT, INSET, PANEL_LIP } from './import/tokens'
+import {
+  C, FONT,
+  NEO_TILE_BG, NEO_TILE_SHADOW, NEO_SCREEN_BG, NEO_SCREEN_INSET, NEO_WELL_INSET,
+  NEO_BTN_BG, NEO_RAIL_RAISED, NEO_TRAY_BG,
+} from './import/tokens'
 import { CAMELOT_WHEEL, WIRE_COLORS, scoreCompatibility } from '../lib/compatibility'
 import { camelotColor } from '../lib/camelot'
 import { useAlbumColor } from './useAlbumColor'
@@ -24,12 +28,14 @@ const PAGE_INSET = 10        // matches the map's inset so the deck lines up wit
 
 const ACCENT = C.accent1     // orange — BPM ring, progress ring
 const ACCENT2 = C.accent2    // blue — Camelot ring, Energy slider
-const CARD = C.card          // #141416 tile
+const CARD = C.card          // #141416 — now only the vinyl label on the disc; tiles use TILE_BG
 const SUB = C.textSecondary  // #848484
 
 const labelStyle = { fontFamily: FONT, fontSize: 12, fontWeight: 500, color: SUB }
-const TILE_SHADOW = '4px 4px 5px 0px rgba(0,0,0,0.8)'
-const TILE_LIP = PANEL_LIP // inset 1px 1.5px 3px #373737 — the recessed module lip
+// Every bento tile's face + cast (NEO_TILE_SHADOW): a machined module, cast down-right onto the panel
+// with a chamfer catching the light up-left. No borders — the bevel is the edge.
+const TILE_BG = NEO_TILE_BG
+const TILE_SHADOW = NEO_TILE_SHADOW
 
 // —— Responsive spacing + type ————————————————————————————————————————————————————————
 // The visualizer holds an aspect-ratio floor (never a thin strip) that tracks the responsive width;
@@ -406,7 +412,7 @@ function MeterTile({ track, open }) {
       // Slim accent strip (fixed ~40px), not a full grid row — leaves the BPM/Camelot pill the rest
       // of the column height so the circles fill their pill.
       flex: '0 0 auto', height: TILE_H, borderRadius: TILE_H / 2, position: 'relative',
-      background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
+      background: TILE_BG, boxShadow: TILE_SHADOW,
       display: 'flex', alignItems: 'center', padding: `${TILE_PAD_Y}px 15px`,
     }}>
       {/* Recessed well. Rounded left end, pill right end — the scale reads left→right.
@@ -415,10 +421,14 @@ function MeterTile({ track, open }) {
           32px tall, so a 999px right end asks for 1998px of radius in 32px of height → factor 0.016 →
           it drags the left corners down with it (a 14px left end rendered as 0.22px, i.e. square). The
           left corner was uncroppable for that reason alone; no radius applied to it could ever show. */}
+      {/* The well recipe carries the recess; the border is gone with it (shadows are the edge). The floor
+          stays #000 rather than taking a well's usual face: it isn't a surface here, it's the unlit-lamp
+          field the gradient, glass, grime and bloom below are all tuned against, and lifting it toward the
+          screens' #0d0d0f would light every dead lamp on the panel. */}
       <div style={{
         position: 'relative', flex: 1, alignSelf: 'stretch', overflow: 'hidden',
         borderRadius: `${WELL_R_LEFT}px ${WELL_H / 2}px ${WELL_H / 2}px ${WELL_R_LEFT}px`,
-        background: '#000', border: `1px solid ${C.border}`, boxShadow: INSET,
+        background: '#000', boxShadow: NEO_WELL_INSET,
       }}>
         {/* Dot-matrix panel. The mask lives HERE, on a wrapper pinned to the well — not on the fill.
             That's the load-bearing detail: mask-size is relative to the element it's on, so masking
@@ -539,14 +549,17 @@ function TrackInfoBar({ track }) {
   const previewStatus = usePreviewStatus(track)
   const playing = isPlaying && currentTrackId === track.id
   const disabled = previewStatus === 'none'
-  const background = rgb ? `linear-gradient(90deg, rgba(${rgb}, 0.38) 0%, #141414 72%)` : '#141416'
+  // Album-colour wash over the standard tile face: the tint is the tile's own accent and stays, only the
+  // surface it fades into follows the other tiles up to TILE_BG. Left as a gradient rather than flattened
+  // to TILE_BG — the wash is this tile's content, not its shadow treatment.
+  const background = rgb ? `linear-gradient(90deg, rgba(${rgb}, 0.38) 0%, ${TILE_BG} 72%)` : TILE_BG
   // Play glyph is tinted with the album colour; the button itself is a recessed dark well (design-system inset).
   const playGlyph = rgb ? `rgb(${rgb})` : ACCENT
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 12, padding: `${PAD} ${PAD_X}px`, borderRadius: 20, flexShrink: 0,
       background,
-      boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
+      boxShadow: TILE_SHADOW,
     }}>
       <Thumb url={track.album_art_url} size={'clamp(52px, 8vh, 70px)'} radius={15} />
       {/* Text truncates with ellipsis; the 60px play button (flex-shrink 0) reserves the right side. */}
@@ -558,7 +571,11 @@ function TrackInfoBar({ track }) {
           {track.artist ?? ''}
         </div>
       </div>
-      {/* Play/pause button (Slice 13). Recessed dark well filled with the album-color glyph; toggles
+      {/* Play/pause button (Slice 13). A standalone round button on a dark surface — the same case as the
+          icon rail's, so it shares that recipe outright (the token's name says RAIL; the case is general).
+          Rim + outer light + outer dark, not the tiles' bevel: this one is meant to be pressed, and the
+          tiles around it are not. Its face stays NEO_BTN_BG, a step ABOVE the tile it sits on, which is
+          the same gap the rail's buttons hold over the rail. Filled with the album-color glyph; toggles
           this track's 30-second preview. Dimmed + disabled when the track has no available preview. */}
       <button
         type="button"
@@ -568,8 +585,8 @@ function TrackInfoBar({ track }) {
         aria-label={disabled ? 'No preview available' : playing ? 'Pause' : 'Play'}
         style={{
           width: 60, height: 60, borderRadius: '50%', flexShrink: 0, marginLeft: 12, // 12px gap + 12 = 24 (doubled)
-          background: CARD, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: INSET, border: 'none', padding: 0,
+          background: NEO_BTN_BG, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: NEO_RAIL_RAISED, border: 'none', padding: 0,
           opacity: disabled ? 0.4 : 1, cursor: disabled ? 'default' : 'pointer',
         }}
       >
@@ -610,11 +627,18 @@ function PlaybackDisc({ track }) {
   return (
     <div style={{
       aspectRatio: '1 / 1', alignSelf: 'stretch', flexShrink: 0, borderRadius: 20, position: 'relative',
-      background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
+      background: TILE_BG, boxShadow: TILE_SHADOW,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
-      {/* Ring group — 74% of the disc, square. */}
-      <div style={{ position: 'relative', width: '74%', aspectRatio: '1 / 1' }}>
+      {/* Ring group — 74% of the disc, square. Also the disc's recessed platter: the well is this circle
+          rather than the whole tile (the tile is the raised module the platter is machined into) and
+          rather than the art itself (the art is opaque and would hide it). What shows is the ring of
+          floor between the art's edge and the platter rim, which is exactly where a real spindle well
+          would read. */}
+      <div style={{
+        position: 'relative', width: '74%', aspectRatio: '1 / 1',
+        borderRadius: '50%', background: NEO_SCREEN_BG, boxShadow: NEO_SCREEN_INSET,
+      }}>
         {/* Progress ring: full faint track + an orange arc that fills clockwise with playback. */}
         <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
           <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="2.6" />
@@ -660,13 +684,16 @@ function PlaybackDisc({ track }) {
 const CIRCLE_MAX = 84 // px — caps the circles at their regular-window size so they don't keep growing
                       // (and overflowing the narrower pill) at very wide/tall viewports
 
+// A dark readout screen sunk into the raised pill, not a module sitting on it — so the shadow is purely
+// inset and the face drops below the tile rather than stepping above it. The accent ring stays a border:
+// it's the Camelot/BPM colour coding, not part of the shader.
 function StatCircle({ value, label, ringColor, ringWidth, valueColor }) {
   return (
     <div style={{
       height: '100%', maxHeight: CIRCLE_MAX, aspectRatio: '1 / 1', flexShrink: 0, borderRadius: '50%',
-      border: `${ringWidth}px solid ${ringColor}`, background: C.panel, boxSizing: 'border-box',
+      border: `${ringWidth}px solid ${ringColor}`, background: NEO_SCREEN_BG, boxSizing: 'border-box',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      boxShadow: `4px 4px 5px 0px rgba(0,0,0,0.7), inset 4px 4px 5px 0px rgba(55,55,55,0.35)`,
+      boxShadow: NEO_SCREEN_INSET,
     }}>
       <div style={{ fontFamily: FONT, fontSize: F_NUM, fontWeight: 600, color: valueColor, lineHeight: 1 }}>{value}</div>
       <div style={{ fontFamily: FONT, fontSize: F_TILE_LABEL, fontWeight: 500, color: SUB, marginTop: 2 }}>{label}</div>
@@ -684,7 +711,7 @@ function BpmCamelot({ track }) {
       flex: '1.6 1 0', minHeight: 0,
       display: 'flex', gap: 16, alignItems: 'center', justifyContent: 'center',
       padding: PAD_PILL, borderRadius: 1000, boxSizing: 'border-box',
-      background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
+      background: TILE_BG, boxShadow: TILE_SHADOW,
     }}>
       <StatCircle value={bpm} label="BPM" ringColor={ACCENT} ringWidth={1} valueColor="#fff" />
       {/* Key value colored by the Slice 11 Camelot hue system (A/B variants share a hue); '—' → gray. */}
@@ -708,7 +735,7 @@ function NextUp({ track, nextTrack }) {
     <div style={{
       flex: '260 1 0', minWidth: 0, height: '100%', minHeight: 0, overflow: 'hidden', boxSizing: 'border-box',
       borderRadius: 20, padding: `${PAD} ${PAD_X}px`,
-      background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
+      background: TILE_BG, boxShadow: TILE_SHADOW,
       // The padding was ALWAYS symmetric (16/16) — the badges hugged the bottom because the content
       // overran the tile and `overflow: hidden` clipped it straight through the bottom padding.
       // Measured: 102px of content in an 88px box, so the badges ended up 2px off the bottom edge
@@ -794,7 +821,7 @@ function CompatibleKeys({ track }) {
       // narrow windows; this fixes that too.)
       flexGrow: 0, flexShrink: 0, width: `max(147px, calc(${DISC_W} - 25px))`, height: '100%', minHeight: 0, overflow: 'hidden', boxSizing: 'border-box',
       borderRadius: 20, padding: `${PAD} ${PAD_X}px`,
-      background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
+      background: TILE_BG, boxShadow: TILE_SHADOW,
       display: 'flex', flexDirection: 'column',
     }}>
       {wheel ? (
@@ -900,8 +927,9 @@ function ReadonlySlider({ value, display, color, leftLabel, rightLabel }) {
         <PoleSizer words={LOW_POLES} />
       </span>
       <div style={{ position: 'relative', height: 17 }}>
-        {/* Recessed track well */}
-        <div style={{ position: 'absolute', top: 3, bottom: 3, left: 0, right: 0, borderRadius: 100, background: '#060606', boxShadow: INSET }} />
+        {/* Recessed track well — the shallower well recipe, since the knob rides in it. The fill and knob
+            keep their own bevels: they're the preset's accent colour, not a neomorphic surface. */}
+        <div style={{ position: 'absolute', top: 3, bottom: 3, left: 0, right: 0, borderRadius: 100, background: NEO_TRAY_BG, boxShadow: NEO_WELL_INSET }} />
         {/* Filled portion */}
         <div style={{ position: 'absolute', top: 3, bottom: 3, left: 0, width: `${pct}%`, borderRadius: 100, background: color, boxShadow: 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px #000000' }} />
         {/* Knob */}
@@ -945,7 +973,7 @@ function AxisSliders({ track }) {
   return (
     <div style={{
       borderRadius: 20, padding: `${SLIDER_PAD} ${PAD_X}px`, flexShrink: 0,
-      background: CARD, boxShadow: `${TILE_SHADOW}, ${TILE_LIP}`,
+      background: TILE_BG, boxShadow: TILE_SHADOW,
       // 3-column grid — [label | track | label] — so both rows share one label column width and the
       // two tracks line up however long the active preset's pole words are.
       display: 'grid', gridTemplateColumns: 'auto 1fr auto',

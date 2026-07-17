@@ -6,7 +6,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { useAudio } from '../store/useAudioStore'
 import { useAlbumColor } from './useAlbumColor'
-import { C, INSET } from './import/tokens'
+import { C } from './import/tokens'
 
 // Deck View hero visualizer (Slice 14, V8 — Chladni cymatics). 65,536 grains of sand on a
 // vibrating plate. The plate's resonant modes are driven by the music's frequency peaks; grains
@@ -1620,8 +1620,16 @@ export default function DeckVisualizer({ track, open }) {
     <div
       ref={hostRef}
       style={{
+        // Deliberately OUTSIDE the neomorphic system. This tile is a screen, not a mounted gauge: no cast,
+        // no bevel, no shadow of any kind — it sits flush in the panel and its edge is a plain 1px border.
+        // That makes it the one place in the deck where a border rather than a shadow draws the edge, and
+        // that is the point: a shadow would put it in the room with the gauges, and a screen is a hole in
+        // the panel. Do not "fix" the inconsistency by giving this a tile recipe.
+        // The face stays #0A0A0A rather than the tiles' TILE_BG: the canvas hides it whenever there IS a
+        // canvas, so the only moments it paints are the frame before mount and the no-WebGL fallback
+        // below — both of which want the dark void this tile reads as, not a lit grey slab.
         position: 'relative', height: '100%', minHeight: 0, borderRadius: 20, overflow: 'hidden',
-        background: '#0A0A0A', border: `1px solid ${C.border}`, boxShadow: INSET,
+        background: '#0A0A0A', border: `1px solid ${C.border}`,
       }}
     />
   )

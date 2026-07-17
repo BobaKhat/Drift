@@ -241,13 +241,23 @@ function makeGeom(W) {
 const FIT_PAD_FRAC = 0.04
 
 // —— Dot grid ————————————————————————————————————————————————————————————————————————
-// The original subtle dotted grid, as a CSS background on the map card — so it sits BEHIND the songs,
-// and keeps a constant 22px SCREEN size so the dots stay evenly visible at ANY zoom (a canvas-space
-// grid spreads its spacing with zoom and goes invisible once you're zoomed in). To give it motion
-// reference instead of dead wallpaper, its background-position is driven from the viewport pan every
-// frame, so the whole field scrolls 1:1 with the map as you pan.
-const DOT_GRID = 'radial-gradient(circle, rgba(255,255,255,0.055) 1px, transparent 1.3px)'
-const DOT_SIZE = 22 // px — constant on-screen grid spacing
+// The original subtle grid, as a CSS background on the map card — so it sits BEHIND the songs, and keeps
+// a constant 22px SCREEN size so the ruling stays evenly visible at ANY zoom (a canvas-space grid spreads
+// its spacing with zoom and goes invisible once you're zoomed in). To give it motion reference instead of
+// dead wallpaper, its background-position is driven from the viewport pan every frame, so the whole field
+// scrolls 1:1 with the map as you pan. Zoom deliberately does NOT touch it: a grid that resizes with zoom
+// was tried and it reads as terrain sliding under the songs rather than a steady rule behind them, so the
+// pan driver below stays pan-only on purpose — don't wire the scale into it.
+//
+// Lines, not dots (two layers: verticals + horizontals) — both inherit the one background-position and
+// background-size, which is why the pan code needs no per-layer math. GRID_LINE is far weaker than the
+// dots it replaced (0.035 to their 0.055) and that is not a taste call: a 1px ruling in both axes inks
+// ~9% of every 22px cell where a dot inked ~0.7%, so holding the old alpha would have put >10x the light
+// on the map and turned the backdrop into the subject. The ceiling is AXIS_COLOR (0.08): the crosshair is
+// the map's one piece of real information, and a grid that reaches it competes with the axes.
+const GRID_LINE = 'rgba(255,255,255,0.035)'
+const LINE_GRID = `linear-gradient(to right, ${GRID_LINE} 1px, transparent 1px), linear-gradient(to bottom, ${GRID_LINE} 1px, transparent 1px)`
+const GRID_SIZE = 22 // px — constant on-screen grid spacing
 
 // Axis terminator pill (Figma): pill-shaped, recessed inner glow, accent-colored label.
 const pillBase = {
@@ -1249,7 +1259,7 @@ function DriftMapInner({ tracks }) {
   }, [])
   useThrottledZoom(applyZoom)
 
-  // Scroll the dot grid with the map. The grid is a fixed 22px CSS background (constant density, so it's
+  // Scroll the grid with the map. The grid is a fixed 22px CSS background (constant density, so it's
   // visible at any zoom), so to give it motion reference we write the viewport PAN into the card's
   // background-position on every transform change — panning by N screen px shifts the translate by N at
   // any zoom, so the grid tracks the map 1:1. Guarded to skip no-op frames; a background-position write
@@ -1441,8 +1451,8 @@ function DriftMapInner({ tracks }) {
         right: PAGE_INSET,
         bottom: PAGE_INSET,
         background: MAP_BG,
-        backgroundImage: DOT_GRID,
-        backgroundSize: `${DOT_SIZE}px ${DOT_SIZE}px`,
+        backgroundImage: LINE_GRID,
+        backgroundSize: `${GRID_SIZE}px ${GRID_SIZE}px`,
         border: `1px solid ${BORDER}`,
         borderRadius: 20,
         overflow: 'hidden',
