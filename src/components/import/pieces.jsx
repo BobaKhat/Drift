@@ -2,14 +2,15 @@ import { useState } from 'react'
 import {
   C, FONT, RADIUS, SELECTED,
   NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER,
-  NEO_BTN_RAISED, NEO_SCREEN_BG,
+  NEO_BTN_RAISED, NEO_SCREEN_BG, NEO_RAIL_SURFACE,
 } from './tokens'
 
 // Shared presentational primitives for the import flow — keep the bento aesthetic in one place.
 
-// Floating modal shell over the map. A raised slab off the neomorphic system, matching the toolbar: the
-// NEO_BAR_BG surface a step up from the map, the canonical raised recipe (NEO_BTN_RAISED — outer dark
-// cast + inner bevel), and a 1px top-light rim so the edge reads against the map behind it.
+// Floating modal shell over the map. A raised slab off the neomorphic system, in the icon rail's CONTAINER
+// colour (NEO_RAIL_SURFACE #0F0F0F — the rail floor, not its raised buttons) so every import pop-up matches
+// the rail, with the canonical raised recipe (NEO_BTN_RAISED — outer dark cast + inner bevel) and a 1px
+// top-light rim so the edge reads against the map.
 export function ModalCard({ width, children, style }) {
   return (
     <div
@@ -17,7 +18,7 @@ export function ModalCard({ width, children, style }) {
         position: 'relative',
         width,
         maxWidth: 'calc(100vw - 140px)',
-        background: NEO_BAR_BG,
+        background: NEO_RAIL_SURFACE,
         border: '1px solid rgba(255,255,255,0.06)',
         borderRadius: RADIUS.card,
         padding: 30,

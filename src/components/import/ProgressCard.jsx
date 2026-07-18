@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePlaylistStore } from '../../store/usePlaylistStore'
+import { demoTrackRows } from '../../data/demoLibrary'
 import { C, FONT, INSET, RADIUS } from './tokens'
 import { ModalCard } from './pieces'
 import MiniMapLoader from './MiniMapLoader'
@@ -71,9 +72,20 @@ function RotatingCopy() {
 // The mini-map is a purely decorative "your map is being built" animation — no connection to the
 // actual tracks or progress.
 export default function ProgressCard() {
-  const { progress } = usePlaylistStore()
+  const { progress, activeTracks } = usePlaylistStore()
   const { current, total, name } = progress
   const pct = total > 0 ? Math.round((current / total) * 100) : 0
+
+  // Cover pool for the decorative mini-map: prefer the user's own library art, fall back to the demo
+  // covers so there are always ≥20 real album covers to scatter — even on a first-ever import.
+  const artUrls = useMemo(() => {
+    const seen = new Set()
+    const out = []
+    const push = (u) => { if (u && !seen.has(u)) { seen.add(u); out.push(u) } }
+    for (const t of activeTracks ?? []) push(t.album_art_url)
+    for (const t of demoTrackRows()) push(t.album_art_url)
+    return out.slice(0, 30)
+  }, [activeTracks])
 
   return (
     <ModalCard width={520} style={{ gap: 20, alignItems: 'flex-start' }}>
@@ -81,7 +93,7 @@ export default function ProgressCard() {
         Mapping your music
       </h1>
 
-      <MiniMapLoader height={360} />
+      <MiniMapLoader height={360} artUrls={artUrls} />
 
       <RotatingCopy />
 
@@ -110,6 +122,7 @@ export default function ProgressCard() {
         }}
       >
         <div
+          className="drift-progress-fill"
           style={{
             width: `${pct}%`,
             height: '100%',

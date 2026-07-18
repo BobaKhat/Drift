@@ -45,19 +45,17 @@ export const ACCENT1_FILL = 'rgba(20,20,22,0.2)'
 export const SELECTED = {
   fill: ACCENT1_FILL,                     // #141416 @ 20% — translucent dark glass
   border: '#F27F37',                      // accent/1 ring
-  blur: 'blur(4px)',                      // GLASS radius 4 — frosts whatever is behind the fill
-  drop: '4px 4px 5px 0px #000000',        // dx/dy 4, blur 5, solid black
-  // Glass sheen. The raw SVG export is flat, which reads as dull on our near-black rail (the 20% dark
-  // fill has no lighter backdrop to frost). These two layers re-create the frosted-glass shine in CSS:
-  // `sheen` is a soft top-edge highlight layered OVER the fill (`background: SELECTED.sheen, .fill`);
-  // `rim` adds a 1px top light line + a gentle bottom inner shade (append to the element's boxShadow).
-  sheen: 'linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0) 42%)',
-  rim: 'inset 0 1px 1.5px 0 rgba(255,255,255,0.22), inset 0 -7px 11px -7px rgba(0,0,0,0.55)',
-  // Hover — the chip lifts: the sheen catches more light (0.07 → 0.11) and the drop lengthens under it.
-  // Swap these in for `sheen` / `drop`; `fill`, `border` and `rim` don't move. The ring deliberately
-  // holds at full accent — it's already the brightest thing on the chip, so brightening it further just
-  // reads as a colour change rather than a lift, and the accent stops meaning "selected".
-  hoverSheen: 'linear-gradient(180deg, rgba(255,255,255,0.11) 0%, rgba(255,255,255,0) 42%)',
+  blur: 'blur(2px)',                      // GLASS radius 2 — matches the stack badge's frost
+  drop: '4px 4px 5px 0px #000000',        // dx/dy 4, blur 5, solid black — same hard drop as the badge
+  // Flat glass, to match the Slice-14 stack badge (StackBadge): NO gloss. `sheen` and `rim` are kept as
+  // transparent no-ops so every consumer that composes `sheen, fill` / `drop, rim` still emits valid CSS
+  // but now renders exactly like the badge — flat frosted fill + accent ring + hard black drop, nothing
+  // else. (They used to carry a top-highlight sheen + beveled rim; removed on request for the flat look.)
+  sheen: 'linear-gradient(rgba(255,255,255,0), rgba(255,255,255,0))',
+  rim: 'inset 0 0 0 0 rgba(0,0,0,0)',
+  // Hover just lengthens the drop a touch (a subtle lift); the flat glass + ring stay put, so hovering a
+  // selected chip never reintroduces gloss.
+  hoverSheen: 'linear-gradient(rgba(255,255,255,0), rgba(255,255,255,0))',
   hoverDrop: '5px 5px 8px 0px #000000',
 }
 
@@ -150,7 +148,8 @@ export const NEO_CHEV_HOVER  = 'inset 0 0 0 1px rgba(255,255,255,0.05), -5px -5p
 // round button on a dark surface) and shares it verbatim. The name is now narrower than the truth; if a
 // third surface takes it, rename the pair rather than copying the values again. Changing them here moves
 // the deck too, which is intended: they're one recipe.
-export const NEO_RAIL_BG        = '#1a1a1c'
+export const NEO_RAIL_SURFACE   = '#0F0F0F'  // the icon-rail / panel CONTAINER floor (LeftNav RAIL_BG) — darker than the raised icon buttons
+export const NEO_RAIL_BG        = '#1a1a1c'  // the raised icon BUTTONS standing off the rail
 export const NEO_RAIL_HOVER_BG  = '#222224'
 export const NEO_RAIL_ACTIVE_BG = '#0d0d0f'  // sunk BELOW the rail surface — the only face here that goes darker than its ground
 export const NEO_RAIL_RAISED = 'inset 0 0 0 1px rgba(255,255,255,0.05), -3px -3px 6px 0px rgba(255,255,255,0.06), 3px 3px 6px 0px rgba(0,0,0,0.8)'

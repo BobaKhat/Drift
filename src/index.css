@@ -132,3 +132,33 @@ html, body, #root {
     animation: driftNebulaBreathe 10s ease-in-out infinite;
   }
 }
+
+/* —— Import progress-bar strobe ————————————————————————————————————————————————————————
+   The loading bar's orange fill carries the same traveling pulse as a Flow-mode chain wire: a bright hot
+   sweep glides across the fill, then parks off the end for a beat, on the SAME 3.6s sweep + 1s pause
+   cadence as the wires (FLOW_CYCLE_S = 4.6s; 3.6/4.6 = 78.26% of the cycle is travel, the rest is the
+   pause). A ::after comet — a soft warm-white core feathering to transparent edges, like the wire's
+   blurred strobe — rides over the orange base; the fill's overflow:hidden clips it to the filled width,
+   so it always sweeps exactly the progress made. Gated on no-preference: reduced-motion just gets the
+   plain orange bar (no ::after, so nothing to undo). */
+@keyframes driftProgressStrobe {
+  0%     { transform: translateX(-140%); }
+  78.26% { transform: translateX(320%); }
+  100%   { transform: translateX(320%); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .drift-progress-fill { position: relative; overflow: hidden; }
+  .drift-progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    width: 45%;
+    /* Additive (plus-lighter) so the sweep ADDS light to the orange base — a bright hot streak, like the
+       wire strobe reading bright against its dark cable — rather than a faint tint that vanishes on orange. */
+    background: linear-gradient(90deg, rgba(255,240,220,0) 0%, rgba(255,244,228,0.95) 50%, rgba(255,240,220,0) 100%);
+    mix-blend-mode: plus-lighter;
+    filter: blur(1px);
+    transform: translateX(-140%);
+    animation: driftProgressStrobe 4.6s linear infinite;
+  }
+}

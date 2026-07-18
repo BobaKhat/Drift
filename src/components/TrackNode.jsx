@@ -478,9 +478,13 @@ function TrackNode({ id, data }) {
   // on a non-chain song, so it and the compatibility glow (the discovery signal) never overlap.
   const artColorResolved = artColor ?? (albumArtUrl ? artColorCache.get(albumArtUrl) : null) ?? ART_FALLBACK
   const showArtGlow = !buildMode || (!dimmed && !isOrphan && !isHead)
-  const artGlow = showArtGlow
-    ? `0px 0px 7px 0px ${artColorResolved}, inset 0px 0px 5px 0px #373737`
-    : null
+  // Circle tier gets the strong, bold album-art bloom (the same look as the import mini-map loader):
+  // several stacked colored halos so the glow reads big and saturated around the little circle. Pills
+  // and cards keep their subtler 7px halo + recessed inner shadow (they're larger chrome, not bare art).
+  const artGlow = !showArtGlow ? null
+    : effCircle
+      ? `0 0 2.5px 1px ${artColorResolved}, 0 0 5px 1px ${artColorResolved}, 0 0 8px 2px ${artColorResolved}`
+      : `0px 0px 7px 0px ${artColorResolved}, inset 0px 0px 5px 0px #373737`
 
   // Counter-scale is driven by the shared --node-scale var; the circle-tier head gets a small size
   // bump, and a hover-preview node gets a 2× boost — all folded into one transform so zoom, head
