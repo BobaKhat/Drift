@@ -10,9 +10,11 @@ import {
   ViewportPortal,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import TrackNode, { ZOOM_CARD, ZoomTierContext, BuildContext, BloomContext, SongPreviewCard, getTier, getNodeScale } from './TrackNode'
+import TrackNode, { ZOOM_CARD, ZoomTierContext, BuildContext, BloomContext, SongPreviewCard, getTier, getNodeScale, NODE_PILL_W, NODE_CARD_W, NODE_PILL_H, NODE_CARD_H } from './TrackNode'
 import WireEdge, { FLOW_STROBE_NAME, FLOW_OFF_START, FLOW_OFF_END, FLOW_SWEEP_S, FLOW_CYCLE_S } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
+import { computeStacks, stacksSignature } from '../lib/stacking'
+import { StackBadge, StackPopover, BADGE_FLOAT } from './StackBadges'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import { getFeatureValue, resolvePreset } from '../lib/presets'
 import { computeBuildGraph } from '../lib/setChain'
@@ -1332,6 +1334,40 @@ function DriftMapInner({ tracks }) {
   const [tier, setTier] = useState('circle')
   const tierRef = useRef('circle')
 
+  // —— Stack overlap detection (Slice 14) ——————————————————————————————————————————————
+  // At pill tier and above, a count badge floats over each cluster of physically overlapping songs.
+  // NOTHING is hidden or moved — every song always renders at its true position; the badge is a pure
+  // overlay saying "N songs here, click to pick one" (see lib/stacking).
+  const [stacks, setStacks] = useState([])
+  const stacksRef = useRef(stacks)   // read live by WireDragLayer during a wire drag
+  const stackSigRef = useRef('')     // last committed grouping signature — skips no-op commits while zooming
+
+  // Recompute stacks for a zoom. Grouping depends only on canvas positions + zoom (pan cancels), so this
+  // is cheap enough to run every throttled zoom frame; the signature guard skips the React commit while
+  // the grouping is unchanged within a tier. Reads live nodes unless a freshly built list is passed (a
+  // preset/track rebuild, where the store lags one commit). `force` bypasses the guard on a rebuild,
+  // where a preserved grouping still needs to refresh the badges' moved canvas positions. Circle tier ⇒
+  // no stacking.
+  const recomputeRef = useRef(null)
+  recomputeRef.current = (zoom, nodesList, force) => {
+    const tierNow = getTier(zoom)
+    let nextStacks = []
+    if (tierNow !== 'circle') {
+      // On-screen node rectangle at this tier = css size × counter-scale × zoom. Two songs stack when
+      // these rectangles physically intersect (bounding-box overlap, no margin).
+      const s = getNodeScale(zoom) * zoom
+      const nodeW = (tierNow === 'card' ? NODE_CARD_W : NODE_PILL_W) * s
+      const nodeH = (tierNow === 'card' ? NODE_CARD_H : NODE_PILL_H) * s
+      const list = nodesList || rf.getNodes()
+      nextStacks = computeStacks(list, zoom, nodeW, nodeH)
+    }
+    const sig = stacksSignature(nextStacks)
+    if (!force && sig === stackSigRef.current) return
+    stackSigRef.current = sig
+    stacksRef.current = nextStacks
+    setStacks(nextStacks)
+  }
+
   // Rebuild on a staged-tracks, preset, or canvas-width change. A TRACK change re-fits (new library →
   // the bloom + fitView run). A WIDTH change (resize) also re-fits, since the axis box has reshaped and
   // must be re-framed with the new aspect. A PRESET-only change instead SLIDES the songs to their new
@@ -1367,7 +1403,11 @@ function DriftMapInner({ tracks }) {
     const presetChanged = prev.preset !== presetConfig
     const widthChanged = prev.pad !== geom.PAD
     prevBuildRef.current = { tracks: stagedTracks, preset: presetConfig, pad: geom.PAD }
-    setNodes(buildNodes(stagedTracks, presetConfig, geom.PAD))
+    const built = buildNodes(stagedTracks, presetConfig, geom.PAD)
+    setNodes(built)
+    // Positions changed → re-cluster from the fresh list (the store still holds the old positions), and
+    // force the commit so the rebuilt (all-visible) nodes get re-hidden even if the grouping is unchanged.
+    recomputeRef.current?.(rf.getViewport().zoom, built, true)
     if (tracksChanged || widthChanged) {
       hasFit.current = false
     } else if (presetChanged) {
@@ -1376,7 +1416,7 @@ function DriftMapInner({ tracks }) {
       clearTimeout(repositionTimer.current)
       repositionTimer.current = setTimeout(() => el?.classList.remove('drift-repositioning'), 520)
     }
-  }, [stagedTracks, presetConfig, geom.PAD, setNodes])
+  }, [stagedTracks, presetConfig, geom.PAD, setNodes, rf])
 
   const handleWheel = useCallback((e) => {
     // ctrlKey is true for pinch-to-zoom and ctrl+scroll — the zoom gesture
@@ -1422,6 +1462,7 @@ function DriftMapInner({ tracks }) {
       tierRef.current = next
       setTier(next)
     }
+    recomputeRef.current?.(zoom) // stacks re-cluster as the zoom (and thus the overlap threshold) changes
   }, [applyExtent])
   useThrottledZoom(applyZoom)
 
@@ -1607,6 +1648,97 @@ function DriftMapInner({ tracks }) {
     previewHideTimer.current = setTimeout(() => setPreview(null), 120) // unmount after the 100ms fade-out
   }, [])
 
+  // —— Stack popover (Slice 14) —————————————————————————————————————————————————————————
+  const [popover, setPopover] = useState(null) // { stack, mode: 'select' | 'head' | 'connect' } | null
+  const popoverRef = useRef(null)
+
+  // Direct badge click. Normal mode: a row opens that song's Deck View. Build mode with an empty chain:
+  // a row seats the head. Build mode with a chain already going: informational only — songs join the set
+  // by wiring, and a wire dropped on the badge opens this same popover in 'connect' mode (onReleaseStack).
+  const openBadgePopover = useCallback((stack) => {
+    const mode = !buildMode ? 'select' : (chain.length === 0 ? 'head' : 'select')
+    setPopover({ stack, mode })
+  }, [buildMode, chain.length])
+
+  // A wire dropped on a stack badge (from WireDragLayer) opens the popover so the user picks WHICH song
+  // in the cluster to complete the connection to. `sourceId` is the song the wire was dragged FROM — the
+  // popover scores each row against it to highlight the compatible matches (connect mode only).
+  const onReleaseStack = useCallback((stack, sourceId) => { setPopover({ stack, mode: 'connect', sourceId }) }, [])
+
+  // Compatibility tiers for the popover rows — ONLY in wire-connect mode, scoring each clustered song
+  // against the wire's source song via the existing scorer. Weak → omitted (no highlight). A normal
+  // badge click (select/head mode) yields null, so those rows render neutral.
+  const stackTiers = useMemo(() => {
+    if (popover?.mode !== 'connect' || !popover.sourceId) return null
+    const src = tracksById[popover.sourceId]
+    if (!src) return null
+    const m = {}
+    for (const s of popover.stack.members) {
+      const { tier } = scoreCompatibility(src, s)
+      if (tier === 'strong' || tier === 'mild') m[s.id] = tier
+    }
+    return m
+  }, [popover, tracksById])
+
+  const onStackRowSelect = useCallback((song) => {
+    setPopover((p) => {
+      const mode = p?.mode
+      if (mode === 'connect') connectSong(song.id)
+      else if (mode === 'head') addHead(song.id)
+      else if (mode === 'select' && !buildMode) toggleDeck(song.id)
+      return null // dismiss after selection
+    })
+  }, [buildMode, connectSong, addHead, toggleDeck])
+
+  // Keep the popover glued to its badge as the map pans/zooms, clamped inside the card so it never clips
+  // the viewport edge (the panel repositions instead of panning the map). Placed to the right of the
+  // badge, flipping to its left when it would overflow. useLayoutEffect so it lands before first paint.
+  useLayoutEffect(() => {
+    if (!popover) return
+    const place = () => {
+      const el = popoverRef.current, wrap = wrapperRef.current
+      if (!el || !wrap) return
+      const [tx, ty, z] = store.getState().transform
+      const bx = popover.stack.x * z + tx
+      const by = popover.stack.y * z + ty - BADGE_FLOAT // badge screen centre
+      const cw = wrap.clientWidth, ch = wrap.clientHeight
+      const pw = el.offsetWidth, ph = el.offsetHeight
+      let left = bx + 24
+      if (left + pw > cw - 8) left = bx - 24 - pw
+      let top = by - ph / 2
+      left = clamp(left, 8, Math.max(8, cw - pw - 8))
+      top = clamp(top, 8, Math.max(8, ch - ph - 8))
+      el.style.left = `${left}px`
+      el.style.top = `${top}px`
+    }
+    place()
+    const unsub = store.subscribe(place)
+    return () => unsub()
+  }, [popover, store])
+
+  // Dismiss on click-outside (ignoring clicks on any badge, so opening another doesn't self-close) / Escape.
+  useEffect(() => {
+    if (!popover) return
+    const onDown = (e) => {
+      if (popoverRef.current?.contains(e.target)) return
+      if (e.target.closest?.('[data-stack-badge]')) return
+      setPopover(null)
+    }
+    const onKey = (e) => { if (e.key === 'Escape') setPopover(null) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [popover])
+
+  // Close the popover when its stack disappears (zoom-out to circle, preset switch); refresh it when the
+  // cluster's membership changes so the row list stays current while it's open.
+  useEffect(() => {
+    if (!popover) return
+    const fresh = stacks.find((s) => s.reprId === popover.stack.reprId)
+    if (!fresh) setPopover(null)
+    else if (fresh !== popover.stack) setPopover((p) => (p ? { ...p, stack: fresh } : p))
+  }, [stacks, popover])
+
   const buildCtx = useMemo(() => ({ buildMode, flowMode, flowTiming, startWireDrag, setHoverGroup, unplugSocket, onWireClick, setArtColor, showPreview, hidePreview }), [buildMode, flowMode, flowTiming, startWireDrag, unplugSocket, onWireClick, setArtColor, showPreview, hidePreview])
 
   return (
@@ -1671,7 +1803,7 @@ function DriftMapInner({ tracks }) {
       </ZoomTierContext.Provider>
       {/* Wire-drag overlay — only mounted in build mode; draws the dashed drag wire + feedback. */}
       {buildMode && (
-        <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} />
+        <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} stacksRef={stacksRef} onReleaseStack={onReleaseStack} />
       )}
       {/* Strobe keyframes — one continuous linear stroke-dashoffset animation PER wire. Each wire's
           keyframe holds its own travel window (activePct, ∝ its length) so the dash crosses at a
@@ -1686,6 +1818,22 @@ function DriftMapInner({ tracks }) {
           which is a CSS background on the wrapper below everything. */}
       <NebulaLayer songPositions={songPositions} width={geom.W} height={H} />
       <AxisLayer preset={presetConfig} geom={geom} />
+      {/* Stack badges (Slice 14): one per cluster of ≥2 overlapping songs, floating above the
+          representative. Rendered into the pane's ViewportPortal so they pan/zoom with the map; each is
+          counter-scaled by --axis-scale (1/zoom) to a constant screen size, and lifted BADGE_FLOAT px
+          above the representative's centre — a constant screen offset, since 1/zoom cancels the pane's
+          zoom. Only at pill tier and above (circle tier yields no stacks). */}
+      {tier !== 'circle' && stacks.length > 0 && (
+        <ViewportPortal>
+          {stacks.map((s) => (
+            <div key={s.reprId} style={{ position: 'absolute', left: s.x, top: s.y, transformOrigin: '0 0', transform: 'scale(var(--axis-scale, 1))', pointerEvents: 'none', zIndex: 6 }}>
+              <div style={{ position: 'absolute', left: 0, top: -BADGE_FLOAT, transform: 'translate(-50%, -50%)', pointerEvents: 'auto' }}>
+                <StackBadge count={s.count} onOpen={() => openBadgePopover(s)} />
+              </div>
+            </div>
+          ))}
+        </ViewportPortal>
+      )}
       <SearchBar tracks={tracks} rf={rf} onHighlight={handleHighlight} />
       <ToolBar rf={rf} presetName={presetConfig.label} activePreset={activePreset} geom={geom} />
       {/* Compatibility card — fixed bottom-right, shown while a wire is selected (Decision Log #31). */}
@@ -1709,6 +1857,17 @@ function DriftMapInner({ tracks }) {
         >
           <SongPreviewCard data={preview.data} />
         </div>
+      )}
+      {/* Stack popover (Slice 14): the proximity song list, opened by clicking a badge or dropping a
+          wire on one. Its left/top are set imperatively (glued to the badge, clamped to the card). */}
+      {popover && (
+        <StackPopover
+          innerRef={popoverRef}
+          songs={[...popover.stack.members].sort((a, b) => (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()))}
+          tiers={stackTiers}
+          onSelect={onStackRowSelect}
+          onClose={() => setPopover(null)}
+        />
       )}
     </div>
   )

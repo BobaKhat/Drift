@@ -3,6 +3,7 @@ import { useReactFlow } from '@xyflow/react'
 import { getNodeScale, getTier, HEAD_CIRCLE_BUMP, SOCKET_SIZE } from './TrackNode'
 import { CARDINAL_VECTOR, facing, nearestCardinal } from '../lib/setChain'
 import { scoreCompatibility, WIRE_COLORS } from '../lib/compatibility'
+import { BADGE_FLOAT, BADGE_RADIUS } from './StackBadges'
 
 // The wire-drag interaction (Decision Log #40, #41, #52). The user grabs the tail's outgoing socket
 // and drags: a dashed white wire trails the cursor, flashes the REAL compatibility color (green/
@@ -17,6 +18,11 @@ import { scoreCompatibility, WIRE_COLORS } from '../lib/compatibility'
 // Screen math mirrors the map's AxisLayer: container-relative px = flowCoord * zoom + viewportOffset.
 
 const DASH_WHITE = 'rgba(255,255,255,0.85)'
+const ACCENT_ORANGE = '#F27F37'
+
+// Cursor-to-badge distance (screen px) at which a dragged wire targets a stack badge instead of a
+// node. A wire released here opens the proximity popover to pick which clustered song to wire to.
+const BADGE_HIT = 42
 
 // Cursor-to-socket distance (screen px) at which the wire tip snaps onto a valid target's incoming
 // socket. Inside this radius the wire locks to the socket and the target illuminates; outside it,
@@ -72,7 +78,7 @@ function bezierBoth(sx, sy, outCard, ex, ey, inCard) {
   return `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}`
 }
 
-const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet, onConnect }, ref) {
+const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet, onConnect, stacksRef, onReleaseStack }, ref) {
   const rf = useReactFlow()
   const pathRef = useRef(null)
   const originSocketRef = useRef(null)
@@ -128,6 +134,49 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
 
     const srcCenter = toScreen(sourceNode.position, vp)
     const cursor = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+
+    // Stack badges take priority over node snapping: a wire dropped on a badge opens the proximity
+    // popover to pick a member. Badge screen centre = representative canvas centre projected, lifted
+    // BADGE_FLOAT px (a constant screen offset, matching the counter-scaled badge in the map).
+    const badges = stacksRef?.current
+    if (badges && badges.length) {
+      let hit = null, best = Infinity
+      for (const s of badges) {
+        const c = toScreen({ x: s.x, y: s.y }, vp)
+        const by = c.y - BADGE_FLOAT
+        const d = Math.hypot(cursor.x - c.x, cursor.y - by)
+        if (d <= BADGE_HIT && d < best) { best = d; hit = { s, x: c.x, y: by } }
+      }
+      if (hit) {
+        const outCard = facing(srcCenter, { x: hit.x, y: hit.y })
+        const srcOff = socketOffset(outCard, sourceNode, scale, vp.zoom, sourceNode.data?.isHead, tier)
+        const src = { x: srcCenter.x + srcOff.x, y: srcCenter.y + srcOff.y }
+        result.current = { mode: 'stack', targetId: null, stack: hit.s }
+        // Stop the wire at the badge's outer edge, not its centre: walk back from the badge centre
+        // toward the source by the badge radius so the tip lands on the ring.
+        const bdx = src.x - hit.x, bdy = src.y - hit.y
+        const bd = Math.hypot(bdx, bdy) || 1
+        const edgeX = hit.x + (bdx / bd) * BADGE_RADIUS
+        const edgeY = hit.y + (bdy / bd) * BADGE_RADIUS
+        const path = pathRef.current
+        if (path) {
+          path.setAttribute('d', bezierPath(src.x, src.y, outCard, edgeX, edgeY))
+          path.setAttribute('stroke', ACCENT_ORANGE)
+          path.setAttribute('stroke-dasharray', '6 6')
+          path.style.filter = 'drop-shadow(0 0 5px rgba(242,127,55,0.7))'
+        }
+        const origin = originSocketRef.current
+        if (origin) {
+          const bump = sourceNode.data?.isHead && tier === 'circle' ? HEAD_CIRCLE_BUMP : 1
+          origin.setAttribute('r', (SOCKET_SIZE / 2) * scale * vp.zoom * bump)
+          origin.setAttribute('cx', src.x)
+          origin.setAttribute('cy', src.y)
+        }
+        if (targetSocketRef.current) targetSocketRef.current.style.display = 'none'
+        if (errorRef.current) errorRef.current.style.display = 'none'
+        return
+      }
+    }
 
     // Magnetic snap: the wire snaps to the valid (non-chain) song whose BODY the cursor is nearest,
     // once within SNAP_RADIUS of any edge. The incoming socket is then placed on whichever cardinal
@@ -257,10 +306,14 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
   }
 
   const onUp = () => {
-    const { mode, targetId } = result.current
+    const { mode, targetId, stack } = result.current
+    const sourceId = drag.current?.sourceId // the song the wire was dragged FROM
     // Latch on a valid snap. The socket pair is optimized geometrically on release (Slice 9 #1) —
     // the snapped preview edge is intentionally discarded, so we don't forward it.
     if (mode === 'snapped' && targetId) onConnect(targetId)
+    // Dropped on a stack badge: hand the cluster + source to the map, which opens the popover (and
+    // highlights the members compatible with the source) to pick a member.
+    else if (mode === 'stack' && stack) onReleaseStack?.(stack, sourceId)
     finish()
   }
 

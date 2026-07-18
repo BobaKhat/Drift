@@ -84,6 +84,13 @@ const PILL_ART = 30
 const CARD_ART = 42
 const PILL_W = 175
 const CARD_W = 230
+// Exported for the stack-overlap detector (Slice 14): the CSS width AND height of a node at each tier,
+// which the greedy clusterer scales to on-screen size to test whether two nodes' rendered rectangles
+// physically intersect. Heights are the node root's box height per tier (pill 50, card minHeight 62).
+export const NODE_PILL_W = PILL_W
+export const NODE_CARD_W = CARD_W
+export const NODE_PILL_H = 50
+export const NODE_CARD_H = 62
 
 const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 const ACCENT1 = '#F27F37' // set-builder head accent + sockets (Decision Log color styles)

@@ -5,8 +5,8 @@ import {
   NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER,
   NEO_BTN_BG, NEO_BTN_HOVER_BG, NEO_CHEV_RAISED, NEO_CHEV_HOVER,
 } from './import/tokens'
-import { camelotColor } from '../lib/camelot'
 import { formatSetMeta } from '../lib/setChain'
+import { SongThumb, RowText, TrackMeta, SongCardRow, ROW_ART, ROW_PY, ROW_GAP } from './SongListRow'
 
 // The Set Builder panel (Figma node 658:407). Always open while building, not closeable
 // (Decision Log #53). Renders: title, library-scoped search (Decision Log #56), the connected
@@ -26,10 +26,8 @@ const ACCENT2 = C.accent2 // #4B6AE5 — the Disconnected section's accent (matc
 const HEAD_BG = 'rgba(242,127,55,0.2)' // C.accent1 @ 20%
 const ORPHAN_BG = 'rgba(75,106,229,0.2)' // Figma group container fill
 
-// Compact row metrics (Slice 9 #8) — smaller art + tighter padding than Slice 8 so more songs fit.
-const ROW_ART = 36
-const ROW_PY = 8
-const ROW_GAP = 5
+// Row metrics + the shared song-row sub-components (SongThumb/RowText/TrackMeta/SongCardRow) now live in
+// SongListRow so the Set Builder rows and the stack popover share one implementation (Slice 14).
 
 function MagnifierIcon({ color }) {
   return (
@@ -62,47 +60,6 @@ function UnlinkGlyph() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
       <path d="M11.75 15.5V14M5.75 10.25L10.25 5.75M7.25 3.5L7.59725 3.098C8.3006 2.39475 9.25452 1.9997 10.2491 1.99977C11.2438 1.99984 12.1976 2.39502 12.9009 3.09837C13.6041 3.80173 13.9992 4.75564 13.9991 5.75027C13.999 6.74489 13.6039 7.69875 12.9005 8.402L12.5 8.75M8.75 12.5L8.45225 12.9005C7.7405 13.6038 6.78022 13.9982 5.77963 13.9982C4.77903 13.9982 3.81875 13.6038 3.107 12.9005C2.75609 12.5538 2.47748 12.1409 2.28733 11.6857C2.09717 11.2306 1.99926 10.7422 1.99926 10.2489C1.99926 9.75558 2.09717 9.26719 2.28733 8.81202C2.47748 8.35685 2.75609 7.94395 3.107 7.59725L3.5 7.25M14 11.75H15.5M0.5 4.25H2M4.25 0.5V2" stroke="#4B4B4B" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
-  )
-}
-
-function SongThumb({ url, size = ROW_ART }) {
-  return (
-    <div style={{ width: size, height: size, borderRadius: 5, overflow: 'hidden', flexShrink: 0 }}>
-      {url ? (
-        <img src={url} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-      ) : (
-        <div style={{ width: '100%', height: '100%', background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, color: C.textSecondary }}>♪</div>
-      )}
-    </div>
-  )
-}
-
-// Shared metadata column (BPM + Camelot) for both connected and orphan rows.
-function TrackMeta({ track }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, flexShrink: 0 }}>
-      <span style={{ fontFamily: FONT, fontSize: 13, fontWeight: 500, color: '#fff', whiteSpace: 'nowrap' }}>
-        {track?.bpm != null ? `${Math.round(track.bpm)} Bpm` : '—'}
-      </span>
-      {/* Camelot keys are colored in the set-builder panel rows (the gray rule applies to map
-          cards only); '—' when unknown falls back to Text/Secondary. */}
-      <span style={{ fontFamily: FONT, fontSize: 12, fontWeight: 500, color: camelotColor(track?.camelot) }}>
-        {track?.camelot ?? '—'}
-      </span>
-    </div>
-  )
-}
-
-function RowText({ track }) {
-  return (
-    <div style={{ flex: 1, minWidth: 0 }}>
-      <div style={{ fontFamily: FONT, fontSize: 13, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {track?.name ?? 'Unknown'}
-      </div>
-      <div style={{ fontFamily: FONT, fontSize: 11, color: C.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {track?.artist ?? ''}
-      </div>
-    </div>
   )
 }
 
@@ -148,25 +105,11 @@ function ChainRow({ track, index, isHead, isTail, shift, lifted, onGripDown, onU
   )
 }
 
-// An orphan row inside a Disconnected group — a normal card row (matches Figma 658:547: solid
+// An orphan row inside a Disconnected group — the shared song card (matches Figma 658:547: solid
 // #222224 border, #141416 fill), clickable to locate on the map. No grip: orphans can't be
 // reordered within their group, so the drag handle only appears on connected chain rows (r4 #1).
 function OrphanRow({ track, onOpen }) {
-  return (
-    <div
-      onClick={onOpen}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: `${ROW_PY}px 10px`, borderRadius: 10,
-        background: C.card, border: `1px solid ${C.border}`,
-        cursor: 'pointer', userSelect: 'none',
-      }}
-    >
-      <SongThumb url={track?.album_art_url} />
-      <RowText track={track} />
-      <TrackMeta track={track} />
-    </div>
-  )
+  return <SongCardRow track={track} onClick={onOpen} />
 }
 
 // One orphan group ("1 of N" + Dissolve) in Figma's accent-2 blue dashed container (658:541).
