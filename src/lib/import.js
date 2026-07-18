@@ -118,7 +118,13 @@ export async function runImport(text, onProgress = () => {}) {
           unresolved.push(result.unresolved)
         }
         done += 1
-        onProgress({ current: done, total, name: entry.title || entry.originalText })
+        // Display label for the loading card's current-track line: "Artist – Title" once parsed, else
+        // the raw URL for a Spotify link that hasn't resolved (its artist/title aren't on the entry).
+        // Label only — the import result, SoundNet lookups and current/total tracking are unaffected.
+        const label = entry.artist && entry.title
+          ? `${entry.artist} – ${entry.title}`
+          : (entry.title || entry.originalText)
+        onProgress({ current: done, total, name: label })
       }),
     )
     if (i + CONCURRENCY < entries.length) await sleep(PAIR_DELAY)

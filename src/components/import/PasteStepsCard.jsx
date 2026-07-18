@@ -41,6 +41,14 @@ export default function PasteStepsCard() {
             value={text}
             onChange={(e) => { setText(e.target.value); if (error) setError(null) }}
             placeholder="Artist – Title or Spotify link, one per line"
+            // Keep the browser out of this field. Left to its defaults, autofill/history can drop stray,
+            // unrelated text in here (e.g. "Convert liters to gallons…"), which then imports as a bogus
+            // line and surfaces in the loading card's current-track readout. The paste box only ever
+            // wants exactly what the user pastes — no autocomplete, autocorrect, autocap, or spellcheck.
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             style={{ ...wellStyle, height: 126 }}
           />
 

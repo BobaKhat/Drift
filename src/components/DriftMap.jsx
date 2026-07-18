@@ -282,11 +282,11 @@ const nodeTypes = { track: TrackNode }
 const edgeTypes = { wire: WireEdge }
 
 const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
-const AXIS_COLOR = 'rgba(255,255,255,0.08)' // crosshair lines — present but subtle, never competing with songs
-const TICK_LEN = 30 // screen px length of the axis endpoint ticks (counter-scaled to hold this at any zoom)
-const TICK_COLOR = 'rgba(242,127,55,0.5)' // Y ticks: ACCENT1 orange at 0.5 — reads as a calibration mark, not a button
-const TICK_COLOR_X = 'rgba(75,106,229,0.5)' // X ticks: ACCENT2 purple at 0.5 — matches the mood-axis pole pills
-const TICK_W_X = 3 // X ticks tripled to 3px thick and pill-capped, so the mood-axis marks read heavier than Y's
+const AXIS_COLOR = 'rgba(255,255,255,0.12)' // crosshair lines — present but subtle, never competing with songs
+const TICK_LEN = 15 // screen px length of the axis endpoint ticks (counter-scaled to hold this at any zoom)
+const TICK_COLOR = '#F27F37' // Y ticks: solid ACCENT1 orange — the energy-axis calibration mark
+const TICK_COLOR_X = '#4B6AE5' // X ticks: solid ACCENT2 purple — matches the mood-axis pole pills
+const TICK_W = 3 // tick thickness, shared by both axes so the orange Y ticks read the same weight as the purple X ticks; pill-capped
 const ACCENT1 = '#F27F37' // Intense / Chill (energy axis)
 const ACCENT2 = '#4B6AE5' // Dark / Bright (mood axis)
 const MAP_BG = '#141415'
@@ -362,7 +362,7 @@ const FIT_PAD_FRAC = 0.04
 // background-size, which is why the pan code needs no per-layer math. GRID_LINE is far weaker than the
 // dots it replaced (0.035 to their 0.055) and that is not a taste call: a 1px ruling in both axes inks
 // ~9% of every 22px cell where a dot inked ~0.7%, so holding the old alpha would have put >10x the light
-// on the map and turned the backdrop into the subject. The ceiling is AXIS_COLOR (0.08): the crosshair is
+// on the map and turned the backdrop into the subject. The ceiling is AXIS_COLOR (0.12): the crosshair is
 // the map's one piece of real information, and a grid that reaches it competes with the axes.
 const GRID_LINE = 'rgba(255,255,255,0.035)'
 const LINE_GRID = `linear-gradient(to right, ${GRID_LINE} 1px, transparent 1px), linear-gradient(to bottom, ${GRID_LINE} 1px, transparent 1px)`
@@ -494,6 +494,7 @@ function AxisLayer({ preset, geom }) {
   const rootRef = useRef(null)
   const chipRef = useRef(null)
   const chipLabelRef = useRef(null)
+  const coordRef = useRef(null)
   const dimsRef = useRef({ w: 0, h: 0 })
   const [chipOpen, setChipOpen] = useState(false)
 
@@ -521,6 +522,19 @@ function AxisLayer({ preset, geom }) {
     // Canvas coordinate under the card centre — feeds both the quadrant label and the compass store.
     const cxCanvas = (w / 2 - x) / zoom
     const cyCanvas = (h / 2 - y) / zoom
+
+    // Lat/long readout: where the viewport centre sits, as geographic coordinates. The crosshair
+    // intersection (canvas W/2,H/2) is the origin; mood axis → longitude (Bright E / Dark W), energy
+    // axis → latitude (Intense N / Chill S, and canvas Y is inverted so low Y = north). Fractions off
+    // centre are clamped to the axis half-span and mapped to the real ±90°/±180° ranges, so panning to
+    // an edge reads as a pole/dateline rather than running off. Set imperatively — no per-frame re-render.
+    if (coordRef.current) {
+      const lonF = Math.max(-1, Math.min(1, (cxCanvas - W / 2) / (W / 2)))
+      const latF = Math.max(-1, Math.min(1, (H / 2 - cyCanvas) / (H / 2)))
+      const lat = (Math.abs(latF) * 90).toFixed(1)
+      const lon = (Math.abs(lonF) * 180).toFixed(1)
+      coordRef.current.textContent = `${lat}°${latF >= 0 ? 'N' : 'S'}  ${lon}°${lonF >= 0 ? 'E' : 'W'}`
+    }
 
     if (chipRef.current && chipLabelRef.current) {
       const { yHigh, yLow, xHigh, xLow } = labelsRef.current
@@ -615,18 +629,19 @@ function AxisLayer({ preset, geom }) {
           {/* Axis endpoint ticks — perpendicular calibration marks at the PAD band edges (where the song
               field begins) on each axis, so they ride geom.PAD and follow whenever the pad is re-derived.
               Base size is (thickness × TICK_LEN) canvas px with a uniform 1/zoom counter-scale, so like the
-              pills they hold their screen size at any zoom. X ticks: purple TICK_COLOR_X, tripled to TICK_W_X
-              thick and pill-capped (mood axis). Y ticks: orange TICK_COLOR, 1px (energy axis). Two per axis. */}
+              pills they hold their screen size at any zoom. Both axes share TICK_W thickness and a pill cap,
+              so the marks read at one weight: X purple (mood), Y orange (energy). Two per axis. */}
           {geom.PAD.x.map((x) => (
             <div key={`tick-x-${x}`} style={{
-              position: 'absolute', left: x, top: H / 2, width: TICK_W_X, height: TICK_LEN, background: TICK_COLOR_X,
+              position: 'absolute', left: x, top: H / 2, width: TICK_W, height: TICK_LEN, background: TICK_COLOR_X,
               borderRadius: 999,
               transformOrigin: 'center', transform: 'translate(-50%, -50%) scale(var(--axis-scale, 1))',
             }} />
           ))}
           {geom.PAD.y.map((y) => (
             <div key={`tick-y-${y}`} style={{
-              position: 'absolute', left: geom.W / 2, top: y, width: TICK_LEN, height: 1, background: TICK_COLOR,
+              position: 'absolute', left: geom.W / 2, top: y, width: TICK_LEN, height: TICK_W, background: TICK_COLOR,
+              borderRadius: 999,
               transformOrigin: 'center', transform: 'translate(-50%, -50%) scale(var(--axis-scale, 1))',
             }} />
           ))}
@@ -679,6 +694,19 @@ function AxisLayer({ preset, geom }) {
           </div>
         )}
       </div>
+
+      {/* Lat/long readout — a quiet HUD coordinate at the bottom-right corner telling you where the
+          viewport centre sits on the map. Text is set imperatively per frame in applyViewport; tabular
+          figures keep the width from jittering as digits change. */}
+      <div
+        ref={coordRef}
+        style={{
+          position: 'absolute', right: EDGE, bottom: EDGE,
+          fontFamily: FONT, fontSize: 10, fontWeight: 500, letterSpacing: '0.08em',
+          color: 'rgba(255,255,255,0.4)', fontVariantNumeric: 'tabular-nums',
+          whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 3,
+        }}
+      />
     </div>
   )
 }
@@ -1801,6 +1829,20 @@ function DriftMapInner({ tracks }) {
         </BuildContext.Provider>
         </BloomContext.Provider>
       </ZoomTierContext.Provider>
+      {/* Recessed-well frame. An inset shadow so the canvas reads as the LOWEST layer in the neomorphic
+          hierarchy — the well the toolbar, panels and icon rail float above. It follows the SAME
+          single-light-source rule as every other recessed surface (search-bar tray NEO_TRAY_INSET, deck
+          screens, the textarea): a dark cast on the top-left inner edges + a faint white lip on the
+          bottom-right, same 0.7 / 0.04 alphas, just scaled up for the map's size (the tray's 3px/6px
+          bevel → ~10px/24px here so the crease reads across a ~1150px surface). Pure CSS: pointerEvents:
+          none so it never intercepts pan / zoom / node clicks / wire drags, and zIndex 3 sits above the
+          whole ReactFlow subtree (nodes, wires, nebula, axis — all sandboxed in RF's own stacking
+          context) but below the search bar and toolbar (z 4). borderRadius:inherit hugs the card's
+          rounded corners. */}
+      <div style={{
+        position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none', zIndex: 3,
+        boxShadow: 'inset 10px 10px 24px 0 rgba(0,0,0,0.7), inset -4px -4px 14px 0 rgba(255,255,255,0.04)',
+      }} />
       {/* Wire-drag overlay — only mounted in build mode; draws the dashed drag wire + feedback. */}
       {buildMode && (
         <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} stacksRef={stacksRef} onReleaseStack={onReleaseStack} />

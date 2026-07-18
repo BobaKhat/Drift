@@ -1,12 +1,15 @@
 import { useState } from 'react'
 import {
-  C, FONT, INSET, CARD_DROP, PANEL_LIP, RADIUS, SELECTED,
+  C, FONT, RADIUS, SELECTED,
   NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER,
+  NEO_BTN_RAISED, NEO_SCREEN_BG,
 } from './tokens'
 
 // Shared presentational primitives for the import flow — keep the bento aesthetic in one place.
 
-// Floating modal shell over the map: panel surface, soft drop + inner lip (from Figma).
+// Floating modal shell over the map. A raised slab off the neomorphic system, matching the toolbar: the
+// NEO_BAR_BG surface a step up from the map, the canonical raised recipe (NEO_BTN_RAISED — outer dark
+// cast + inner bevel), and a 1px top-light rim so the edge reads against the map behind it.
 export function ModalCard({ width, children, style }) {
   return (
     <div
@@ -14,10 +17,11 @@ export function ModalCard({ width, children, style }) {
         position: 'relative',
         width,
         maxWidth: 'calc(100vw - 140px)',
-        background: C.panel,
+        background: NEO_BAR_BG,
+        border: '1px solid rgba(255,255,255,0.06)',
         borderRadius: RADIUS.card,
         padding: 30,
-        boxShadow: `${CARD_DROP}, ${PANEL_LIP}`,
+        boxShadow: NEO_BTN_RAISED,
         display: 'flex',
         flexDirection: 'column',
         fontFamily: FONT,
@@ -104,12 +108,14 @@ export function SecondaryButton({ children, onClick, disabled, style }) {
   )
 }
 
-// Recessed input/textarea well (paste box, playlist-name field).
+// Recessed input/textarea well (paste box, playlist-name field). The inset side of the toolbar system:
+// the NEO_SCREEN_BG floor a step below the slab, an inset shadow (dark top-left cast + a faint
+// bottom-right light lip) so the field reads as carved into the modal, and a 1px rim.
 export const wellStyle = {
-  background: C.card,
-  border: `1px solid ${C.border}`,
+  background: NEO_SCREEN_BG, // #0d0d0f — the inset well floor
+  border: '1px solid rgba(255,255,255,0.04)',
   borderRadius: RADIUS.well,
-  boxShadow: INSET,
+  boxShadow: 'inset 2px 2px 4px 0px rgba(0,0,0,0.8), inset -1px -1px 2px 0px rgba(255,255,255,0.03)',
   color: C.textPrimary,
   fontFamily: FONT,
   fontSize: 14,

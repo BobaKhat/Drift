@@ -60,10 +60,11 @@ export default function CompassPreview({ presetKey, locked = false }) {
       flexShrink: 0,
       boxShadow: 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px black',
     }}>
-      {/* Dot grid */}
+      {/* Line grid — the same 1px ruling the map uses (GRID_LINE @0.035, 22px cells), so the compass
+          backdrop reads as a small window onto the map rather than its own dotted texture. */}
       <div style={{
         position: 'absolute', inset: 0, pointerEvents: 'none',
-        backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.055) 1px, transparent 1.3px)',
+        backgroundImage: 'linear-gradient(to right, rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.035) 1px, transparent 1px)',
         backgroundSize: '22px 22px',
       }} />
 
