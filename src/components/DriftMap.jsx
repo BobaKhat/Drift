@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useEffect, useCallback, useLayoutEffect } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -939,29 +940,68 @@ function SearchBar({ tracks, rf, onHighlight }) {
   )
 }
 
+// Toolbar hover micro-interactions (Framer Motion). Each glyph animates in a way that mirrors what its
+// button does — "lock on", grow, shrink, bounce, pulse — rather than a generic scale. All are driven by
+// variants keyed "rest"/"hover" so the *button* (which fills the full 60×40 hit area) owns the trigger
+// via whileHover; the glyph itself is only 20×20, so hovering the button rim still fires the animation
+// through framer's variant propagation. Everything animated is a transform, so nothing reflows the
+// button box. prefers-reduced-motion is handled globally by the MotionConfig around the ToolBar, which
+// short-circuits these transforms while leaving the CSS colour/shadow hover states untouched.
+const ICON_SPRING = { type: 'spring', stiffness: 400, damping: 15 }
+// One-shot pulses read cleaner as a keyframe tween than a spring between keyframes.
+const PULSE_TWEEN = { duration: 0.4, ease: 'easeInOut' }
+
 // Recenter / fit-view glyph (Figma): a viewfinder — four bracketed corners around a centre dot.
+// Hover: the whole viewfinder pulses inward toward its centre and springs back out — "locking on".
 function RecenterIcon({ color }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <motion.svg
+      width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"
+      style={{ transformOrigin: 'center' }}
+      variants={{ rest: { scale: 1 }, hover: { scale: [1, 0.85, 1], transition: PULSE_TWEEN } }}
+    >
       <path d="M10 6.15385C8.97994 6.15385 8.00165 6.55907 7.28036 7.28036C6.55907 8.00165 6.15385 8.97994 6.15385 10C6.15385 11.0201 6.55907 11.9983 7.28036 12.7196C8.00165 13.4409 8.97994 13.8462 10 13.8462C11.0201 13.8462 11.9983 13.4409 12.7196 12.7196C13.4409 11.9983 13.8462 11.0201 13.8462 10C13.8462 8.97994 13.4409 8.00165 12.7196 7.28036C11.9983 6.55907 11.0201 6.15385 10 6.15385ZM7.33333 0H7.29949C6.17949 0 5.29128 -8.0237e-08 4.57641 0.0584615C3.8441 0.117949 3.22564 0.243077 2.66051 0.530256C1.74358 0.997615 0.998199 1.74335 0.531282 2.66051C0.243077 3.22462 0.117949 3.8441 0.0584615 4.57641C-8.0237e-08 5.29128 0 6.17949 0 7.29949V7.33333C0 7.53735 0.0810436 7.733 0.225302 7.87726C0.369561 8.02152 0.565218 8.10256 0.769231 8.10256C0.973244 8.10256 1.1689 8.02152 1.31316 7.87726C1.45742 7.733 1.53846 7.53735 1.53846 7.33333C1.53846 6.17231 1.53846 5.34667 1.59179 4.70154C1.64308 4.06564 1.74256 3.67077 1.90154 3.35795C2.22109 2.7309 2.7309 2.22109 3.35795 1.90154C3.67077 1.74256 4.06564 1.6441 4.70154 1.59179C5.34769 1.53949 6.17231 1.53846 7.33333 1.53846C7.53735 1.53846 7.733 1.45742 7.87726 1.31316C8.02152 1.1689 8.10256 0.973244 8.10256 0.769231C8.10256 0.565218 8.02152 0.369561 7.87726 0.225302C7.733 0.0810436 7.53735 0 7.33333 0ZM12.6667 1.53846C13.8287 1.53846 14.6533 1.53846 15.2985 1.59179C15.9344 1.64308 16.3292 1.74256 16.6421 1.90154C17.2691 2.22109 17.7789 2.7309 18.0985 3.35795C18.2574 3.67077 18.3559 4.06564 18.4082 4.70154C18.4605 5.34769 18.4615 6.17231 18.4615 7.33333C18.4615 7.53735 18.5426 7.733 18.6868 7.87726C18.8311 8.02152 19.0268 8.10256 19.2308 8.10256C19.4348 8.10256 19.6304 8.02152 19.7747 7.87726C19.919 7.733 20 7.53735 20 7.33333V7.29949C20 6.17949 20 5.29128 19.9415 4.57641C19.8821 3.8441 19.7569 3.22564 19.4697 2.66051C19.0027 1.74373 18.2573 0.998374 17.3405 0.531282C16.7744 0.243077 16.1559 0.117949 15.4236 0.0584615C14.7087 -8.0237e-08 13.8205 0 12.7005 0H12.6667C12.4627 4.29925e-09 12.267 0.0810436 12.1227 0.225302C11.9785 0.369561 11.8974 0.565218 11.8974 0.769231C11.8974 0.973244 11.9785 1.1689 12.1227 1.31316C12.267 1.45742 12.4627 1.53846 12.6667 1.53846ZM1.53846 12.6667C1.53846 12.4627 1.45742 12.267 1.31316 12.1227C1.1689 11.9785 0.973244 11.8974 0.769231 11.8974C0.565218 11.8974 0.369561 11.9785 0.225302 12.1227C0.0810436 12.267 0 12.4627 0 12.6667V12.7005C0 13.8205 -8.0237e-08 14.7087 0.0584615 15.4236C0.117949 16.1559 0.243077 16.7744 0.530256 17.3405C0.99779 18.2571 1.74351 19.0021 2.66051 19.4687C3.22462 19.7569 3.8441 19.8821 4.57641 19.9415C5.29128 20 6.17949 20 7.29949 20H7.33333C7.53735 20 7.733 19.919 7.87726 19.7747C8.02152 19.6304 8.10256 19.4348 8.10256 19.2308C8.10256 19.0268 8.02152 18.8311 7.87726 18.6868C7.733 18.5426 7.53735 18.4615 7.33333 18.4615C6.17231 18.4615 5.34667 18.4615 4.70154 18.4082C4.06564 18.3569 3.67077 18.2574 3.35795 18.0985C2.7309 17.7789 2.22109 17.2691 1.90154 16.6421C1.74256 16.3292 1.6441 15.9344 1.59179 15.2985C1.53949 14.6523 1.53846 13.8277 1.53846 12.6667ZM20 12.6667C20 12.4627 19.919 12.267 19.7747 12.1227C19.6304 11.9785 19.4348 11.8974 19.2308 11.8974C19.0268 11.8974 18.8311 11.9785 18.6868 12.1227C18.5426 12.267 18.4615 12.4627 18.4615 12.6667C18.4615 13.8287 18.4615 14.6533 18.4082 15.2985C18.3569 15.9344 18.2574 16.3292 18.0985 16.6421C17.7789 17.2691 17.2691 17.7789 16.6421 18.0985C16.3292 18.2574 15.9344 18.3559 15.2985 18.4082C14.6523 18.4605 13.8277 18.4615 12.6667 18.4615C12.4627 18.4615 12.267 18.5426 12.1227 18.6868C11.9785 18.8311 11.8974 19.0268 11.8974 19.2308C11.8974 19.4348 11.9785 19.6304 12.1227 19.7747C12.267 19.919 12.4627 20 12.6667 20H12.7005C13.8205 20 14.7087 20 15.4236 19.9415C16.1559 19.8821 16.7744 19.7569 17.3405 19.4697C18.2569 19.0025 19.0019 18.2571 19.4687 17.3405C19.7569 16.7744 19.8821 16.1559 19.9415 15.4236C20 14.7087 20 13.8205 20 12.7005V12.6667Z" fill={color} />
-    </svg>
+    </motion.svg>
   )
 }
 
-// Zoom glyphs (Figma) — solid magnifiers with a chunky handle, not stroked outlines.
+// Zoom glyphs (Figma) — solid magnifiers with a chunky handle, not stroked outlines. The ZoomIn path
+// carries the "+" as its own trailing subpath, so it's split out here into a second <path> that can spin
+// independently of the magnifier body.
+const ZOOM_MAGNIFIER_D = "M14.656 12.8978H13.7296L13.4013 12.5812C14.1341 11.73 14.6697 10.7273 14.9697 9.64495C15.2697 8.56258 15.3267 7.42729 15.1367 6.3203C14.5856 3.06086 11.8652 0.457994 8.58201 0.0593566C3.622 -0.550323 -0.540653 3.62364 0.0573628 8.58315C0.45604 11.866 3.05917 14.5862 6.31893 15.1372C7.42603 15.3272 8.56144 15.2702 9.64392 14.9702C10.7264 14.6702 11.7292 14.1347 12.5805 13.402L12.8971 13.7303V14.6565L17.8923 19.6395C18.373 20.1202 19.1469 20.1202 19.6277 19.6395L19.6394 19.6277C20.1202 19.147 20.1202 18.3732 19.6394 17.8925L14.656 12.8978ZM7.6205 12.8978C4.70078 12.8978 2.34389 10.5412 2.34389 7.62174C2.34389 4.70231 4.70078 2.34566 7.6205 2.34566C10.5402 2.34566 12.8971 4.70231 12.8971 7.62174C12.8971 10.5412 10.5402 12.8978 7.6205 12.8978Z"
+const ZOOM_PLUS_D = "M7.6205 4.69058C7.29218 4.69058 7.03421 4.94852 7.03421 5.27681V7.0355H5.27534C4.94702 7.0355 4.68905 7.29345 4.68905 7.62174C4.68905 7.95002 4.94702 8.20797 5.27534 8.20797H7.03421V9.96666C7.03421 10.2949 7.29218 10.5529 7.6205 10.5529C7.94882 10.5529 8.20679 10.2949 8.20679 9.96666V8.20797H9.96566C10.294 8.20797 10.5519 7.95002 10.5519 7.62174C10.5519 7.29345 10.294 7.0355 9.96566 7.0355H8.20679V5.27681C8.20679 4.94852 7.94882 4.69058 7.6205 4.69058Z"
+
+// Hover: the whole magnifier grows to 1.12 with a soft spring while the "+" rotates a quarter-turn —
+// still a "+", but visibly moved. `fill-box` origin spins the plus about its own centre, not the viewBox.
 function ZoomInIcon({ color }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M14.656 12.8978H13.7296L13.4013 12.5812C14.1341 11.73 14.6697 10.7273 14.9697 9.64495C15.2697 8.56258 15.3267 7.42729 15.1367 6.3203C14.5856 3.06086 11.8652 0.457994 8.58201 0.0593566C3.622 -0.550323 -0.540653 3.62364 0.0573628 8.58315C0.45604 11.866 3.05917 14.5862 6.31893 15.1372C7.42603 15.3272 8.56144 15.2702 9.64392 14.9702C10.7264 14.6702 11.7292 14.1347 12.5805 13.402L12.8971 13.7303V14.6565L17.8923 19.6395C18.373 20.1202 19.1469 20.1202 19.6277 19.6395L19.6394 19.6277C20.1202 19.147 20.1202 18.3732 19.6394 17.8925L14.656 12.8978ZM7.6205 12.8978C4.70078 12.8978 2.34389 10.5412 2.34389 7.62174C2.34389 4.70231 4.70078 2.34566 7.6205 2.34566C10.5402 2.34566 12.8971 4.70231 12.8971 7.62174C12.8971 10.5412 10.5402 12.8978 7.6205 12.8978ZM7.6205 4.69058C7.29218 4.69058 7.03421 4.94852 7.03421 5.27681V7.0355H5.27534C4.94702 7.0355 4.68905 7.29345 4.68905 7.62174C4.68905 7.95002 4.94702 8.20797 5.27534 8.20797H7.03421V9.96666C7.03421 10.2949 7.29218 10.5529 7.6205 10.5529C7.94882 10.5529 8.20679 10.2949 8.20679 9.96666V8.20797H9.96566C10.294 8.20797 10.5519 7.95002 10.5519 7.62174C10.5519 7.29345 10.294 7.0355 9.96566 7.0355H8.20679V5.27681C8.20679 4.94852 7.94882 4.69058 7.6205 4.69058Z" fill={color} />
-    </svg>
+    <motion.svg
+      width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"
+      style={{ transformOrigin: 'center' }}
+      variants={{ rest: { scale: 1 }, hover: { scale: 1.12 } }}
+      transition={ICON_SPRING}
+    >
+      <path d={ZOOM_MAGNIFIER_D} fill={color} />
+      <motion.path
+        d={ZOOM_PLUS_D} fill={color}
+        style={{ transformBox: 'fill-box', transformOrigin: 'center' }}
+        variants={{ rest: { rotate: 0 }, hover: { rotate: 90 } }}
+        transition={ICON_SPRING}
+      />
+    </motion.svg>
   )
 }
 
+// Hover: the magnifier dips to 0.9 and springs back — the inverse "shrink for a beat" of ZoomIn.
 function ZoomOutIcon({ color }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <motion.svg
+      width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"
+      style={{ transformOrigin: 'center' }}
+      variants={{ rest: { scale: 1 }, hover: { scale: [1, 0.9, 1], transition: PULSE_TWEEN } }}
+    >
       <path d="M14.656 12.8978H13.7296L13.4013 12.5812C14.1341 11.73 14.6697 10.7273 14.9697 9.64495C15.2697 8.56258 15.3267 7.42729 15.1367 6.3203C14.5856 3.06086 11.8652 0.457994 8.58201 0.0593566C3.622 -0.550323 -0.540653 3.62364 0.0573628 8.58315C0.45604 11.866 3.05917 14.5862 6.31893 15.1372C7.42603 15.3272 8.56144 15.2702 9.64392 14.9702C10.7264 14.6702 11.7292 14.1347 12.5805 13.402L12.8971 13.7303V14.6565L17.8923 19.6395C18.373 20.1202 19.1469 20.1202 19.6277 19.6395L19.6394 19.6277C20.1202 19.147 20.1202 18.3732 19.6394 17.8925L14.656 12.8978ZM7.6205 12.8978C4.70078 12.8978 2.34389 10.5412 2.34389 7.62174C2.34389 4.70231 4.70078 2.34566 7.6205 2.34566C10.5402 2.34566 12.8971 4.70231 12.8971 7.62174C12.8971 10.5412 10.5402 12.8978 7.6205 12.8978ZM7.62176 7.03477C7.29344 7.03477 7.62176 7.03477 7.03547 7.03477L7.03421 7.0355H5.27534C4.94702 7.0355 4.68905 7.29345 4.68905 7.62174C4.68905 7.95002 4.94702 8.20797 5.27534 8.20797L7.03421 8.20723C7.03421 8.20723 7.29245 8.20723 7.62113 8.20723C7.94981 8.20723 8.20805 8.20723 8.20805 8.20723L8.20679 8.20797H9.96566C10.294 8.20797 10.5519 7.95002 10.5519 7.62174C10.5519 7.29345 10.294 7.0355 9.96566 7.0355H8.20679C8.20405 7.03477 7.95009 7.03477 7.62176 7.03477Z" fill={color} />
-    </svg>
+    </motion.svg>
   )
 }
 
@@ -979,6 +1019,10 @@ const PRESS_MIN_MS = 180
 function ToolButton({ icon: Icon, onClick, radius = 10 }) {
   const [pressed, setPressed] = useState(false)
   const [hover, setHover] = useState(false)
+  // Under prefers-reduced-motion we drop the hover variant entirely so no transform ever fires — the
+  // CSS colour/shadow hover states below are untouched. (framer's reducedMotion only strips the tween,
+  // still snapping to the moved end-state, which isn't "skip the animation".)
+  const reduce = useReducedMotion()
   const downAt = useRef(0)
   const timer = useRef(0)
 
@@ -998,7 +1042,12 @@ function ToolButton({ icon: Icon, onClick, radius = 10 }) {
   }, [])
 
   return (
-    <div
+    // motion.div only supplies the "rest"/"hover" variant context that the glyph reads — its own layout,
+    // background and shadow stay pure CSS, so the existing neomorphic press/hover states are untouched.
+    <motion.div
+      initial="rest"
+      animate="rest"
+      whileHover={reduce ? undefined : 'hover'}
       onClick={onClick}
       onPointerDown={press}
       onPointerUp={release}
@@ -1026,7 +1075,7 @@ function ToolButton({ icon: Icon, onClick, radius = 10 }) {
       }}
     >
       <Icon color={pressed ? ACCENT1 : ICON_PRIMARY} />
-    </div>
+    </motion.div>
   )
 }
 
@@ -1035,6 +1084,8 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
   const stroke = ICON_PRIMARY
   const [compassOpen, setCompassOpen] = useState(false)
   const [chevHover, setChevHover] = useState(false)
+  // See ToolButton: gate every hover variant on reduced-motion so the transforms are skipped outright.
+  const reduce = useReducedMotion()
 
   // Fit the axis box, not the nodes — same framing the map opens with, so this button always
   // returns you to the full crosshair with its four poles in view.
@@ -1065,12 +1116,20 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
         position: 'relative',
       }}>
         {/* Label rides directly on the pill surface — no tray behind it. The split between the label (on
-            the slab) and the buttons (in the trench) is the point: it separates readout from control. */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            the slab) and the buttons (in the trench) is the point: it separates readout from control.
+            Hovering the label gives the accent dot a single heartbeat (scale only, so the text never
+            shifts); the motion.div just carries the "beat" variant to the dot. */}
+        <motion.div
+          initial="rest" animate="rest" whileHover={reduce ? undefined : 'beat'}
+          style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+        >
           <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 500, color: TEXT_SECONDARY }}>Preset</span>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1 }} />
+          <motion.span
+            style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1, transformOrigin: 'center' }}
+            variants={{ rest: { scale: 1 }, beat: { scale: [1, 1.5, 1], transition: PULSE_TWEEN } }}
+          />
           <span style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: '#fff' }}>{presetName}</span>
-        </div>
+        </motion.div>
         {/* Recessed tray (Figma 916:31) holding the three map controls. The chevron stays OUT of it —
             in the mockup the tray ends before the chevron, which reads right: the tray groups the map
             controls, and the dropdown affordance stays distinct. 7px padding on the 40px buttons makes
@@ -1091,7 +1150,8 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
             an outer light shadow to wash out, which is the whole reason the tray buttons can't have one;
             see the rule at the top of the NEO_* block. The glyph rotates when the compass is open while
             the button surface stays put, and the open state sinks it inset. */}
-        <button
+        <motion.button
+          initial="rest" animate="rest" whileHover={reduce ? undefined : 'hover'}
           onClick={() => setCompassOpen((o) => !o)}
           onPointerEnter={() => setChevHover(true)}
           onPointerLeave={() => setChevHover(false)}
@@ -1104,13 +1164,21 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
             transition: 'box-shadow 120ms ease, background 120ms ease',
           }}
         >
-          <svg width="13" height="8" viewBox="0 0 13 8" fill="none" style={{
-            transition: 'transform 220ms ease',
-            transform: compassOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-          }}>
-            <path d="M1 1.5L6.5 6.5L12 1.5" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+          {/* Hover nudges the chevron down a couple px and back — a hint of the drawer it drops. The
+              y-bounce lives on this wrapper so the open/close rotate can stay an independent CSS transform
+              on the svg without the two transforms fighting. */}
+          <motion.div
+            style={{ display: 'flex' }}
+            variants={{ rest: { y: 0 }, hover: { y: [0, 2, 0], transition: { duration: 0.3, ease: 'easeOut' } } }}
+          >
+            <svg width="13" height="8" viewBox="0 0 13 8" fill="none" style={{
+              transition: 'transform 220ms ease',
+              transform: compassOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+            }}>
+              <path d="M1 1.5L6.5 6.5L12 1.5" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </motion.div>
+        </motion.button>
         {/* Raised-slab inner rim — a faint top-left highlight + bottom-right inner shade (no border) */}
         <div style={{
           position: 'absolute', inset: 0, borderRadius: 'inherit',

@@ -10,7 +10,7 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #000000;
+  background: #0F0F0F; /* matches the panels / rail floor (PANEL_BG) rather than pure black */
 }
 
 /* React Flow is transparent so the map card's background + dot grid show through */
