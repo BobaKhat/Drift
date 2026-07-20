@@ -3,7 +3,7 @@ import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react'
 import ColorThief from 'colorthief'
 import { nearestCardinal } from '../lib/setChain'
 import { camelotColor } from '../lib/camelot'
-import { C, ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
+import { C, ORPHAN_CORAL, ORPHAN_INACTIVE, SELECTED } from './import/tokens'
 
 // Album-art ambient glow (Slice 11.5): one shared ColorThief extractor + a URL→color cache so each
 // unique cover is sampled only once across the whole map (and the color survives node data being
@@ -16,6 +16,20 @@ import { C, ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
 export const colorThief = new ColorThief()
 export const artColorCache = new Map()
 export const ART_FALLBACK = 'rgba(242,127,55,0.3)' // #F27F37 @ 30%
+
+// Solid, fully-opaque base fill for a pill/card node (the map never shows through).
+const NODE_CARD_BASE = '#121212'
+// Pull the r,g,b out of an 'rgb(...)' / 'rgba(...)' color so we can re-emit it at any alpha.
+function rgbParts(color) {
+  const m = /(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/.exec(color || '')
+  return m ? `${m[1]}, ${m[2]}, ${m[3]}` : '242, 127, 55'
+}
+// The Deck playback card's album wash (Slice 12 #4), reused on pill/card nodes: a left→right tint from
+// the cover's dominant colour (@38%) fading out by 72%, painted OVER an opaque base — so the node reads
+// as a mini deck card but stays fully solid (no map showing through). The outer album glow is applied
+// separately (boxShadow), so the node keeps it on top of this.
+const nodeArtGradient = (artColorResolved) =>
+  `linear-gradient(90deg, rgba(${rgbParts(artColorResolved)}, 0.38) 0%, rgba(18,18,18,0) 72%), ${NODE_CARD_BASE}`
 
 // RGB → HSL (h in 0–360, s/l in 0–100). Used to score palette swatches by saturation + lightness.
 function rgbToHsl(r, g, b) {
@@ -243,7 +257,7 @@ export function SongPreviewCard({ data }) {
       width: CARD_W, minHeight: 62, boxSizing: 'border-box',
       display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 10,
       padding: '10px 15px', borderRadius: 8,
-      background: 'rgba(18,18,18,0.90)',                       // ← identical to card-tier node
+      background: nodeArtGradient(artColorResolved),           // ← identical to card-tier node (album wash)
       border: '1px solid rgba(255,255,255,0.12)',             // ← identical to card-tier node border
       boxShadow: `0px 0px 7px 0px ${artColorResolved}, inset 0px 0px 5px 0px #373737`, // ← the node's artGlow
       pointerEvents: 'none',
@@ -280,7 +294,7 @@ function AnchorIcon() {
 }
 
 function TrackNode({ id, data }) {
-  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId, glow, artColor, bloomDelay } = data
+  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId, glow, artColor, bloomDelay, selected } = data
   const tier = useContext(ZoomTierContext)
   const { buildMode, flowMode, startWireDrag, setHoverGroup, unplugSocket, setArtColor, showPreview, hidePreview } = useContext(BuildContext)
   const { gen: bloomGen, active: bloomActive } = useContext(BloomContext)
@@ -486,6 +500,15 @@ function TrackNode({ id, data }) {
       ? `0 0 2.5px 1px ${artColorResolved}, 0 0 5px 1px ${artColorResolved}, 0 0 8px 2px ${artColorResolved}`
       : `0px 0px 7px 0px ${artColorResolved}, inset 0px 0px 5px 0px #373737`
 
+  // Node boxShadow, highest priority first: search highlight → orphan → head → album-art glow →
+  // compatibility glow → default ambient. When the song is SELECTED (its Deck is open) the app's
+  // selected treatment — a 1.5px accent ring + its drop — is layered OVER that, so a clicked song reads
+  // as selected while keeping its own album glow.
+  const baseShadow = highlighted
+    ? '0 0 0 2.5px #F27F37, 0 0 18px rgba(242,127,55,0.45)'
+    : (orphanGlow || headGlow || artGlow || compatGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)')
+  const nodeShadow = selected ? `0 0 0 1.5px ${SELECTED.border}, ${SELECTED.drop}, ${baseShadow}` : baseShadow
+
   // Counter-scale is driven by the shared --node-scale var; the circle-tier head gets a small size
   // bump, and a hover-preview node gets a 2× boost — all folded into one transform so zoom, head
   // bump and hover compose cleanly.
@@ -529,18 +552,15 @@ function TrackNode({ id, data }) {
         height: effCard ? undefined : (effCircle ? CIRCLE_SIZE : 50),
         minHeight: effCard ? 62 : undefined,
         borderRadius: effCircle ? CIRCLE_SIZE / 2 : effPill ? 25 : 8,
-        background: effCircle ? 'transparent' : 'rgba(18,18,18,0.90)',
+        // Pill/card fill mirrors the Deck playback card: an album-colour wash into the base (circles stay
+        // bare — the cover fills them). The outer album glow rides on top via boxShadow below.
+        background: effCircle ? 'transparent' : nodeArtGradient(artColorResolved),
         // Orphans always carry a dashed coral border (even in the circle tier); everyone else keeps
         // the solid head/normal border, none in the circle tier.
         borderWidth: isOrphan ? 1 : (effCircle ? 0 : 1),
         borderStyle: isOrphan ? 'dashed' : 'solid',
         borderColor: isOrphan ? orphanColor : headBorderColor,
-        // Priority (highest first): search highlight → orphan → head → album-art identity glow →
-        // compatibility discovery glow → the default ambient. artGlow and compatGlow are mutually
-        // exclusive (chain vs non-chain), so their relative order is moot.
-        boxShadow: highlighted
-          ? '0 0 0 2.5px #F27F37, 0 0 18px rgba(242,127,55,0.45)'
-          : orphanGlow || headGlow || artGlow || compatGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)',
+        boxShadow: nodeShadow,
         gap: effCircle ? 0 : 10,
         padding: effCircle ? 0 : '10px 15px',
         cursor: grabbable ? 'grab' : 'default', userSelect: 'none',

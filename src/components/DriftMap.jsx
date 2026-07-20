@@ -1168,7 +1168,7 @@ function DriftMapInner({ tracks }) {
   const {
     activePreset, customXFeature, customYFeature, setActivePanel,
     buildMode, flowMode, chain, orphanGroups, addHead, connectSong, unlinkAfter, registerMapControls,
-    toggleDeck, closeDeck,
+    toggleDeck, closeDeck, deckTrackId,
   } = usePlaylistStore()
   const presetConfig = useMemo(
     () => resolvePreset(activePreset, customXFeature, customYFeature),
@@ -1317,23 +1317,28 @@ function DriftMapInner({ tracks }) {
       const dimmed = buildMode && !inChain && !isOrphan
       const isTail = buildMode && n.id === buildGraph.tailId
       const orphanBright = isOrphan && groupId === hoverGroup
+      // The clicked song (its Deck is open) is "selected" — outside build mode only (in build mode a
+      // click seats the head instead of opening the Deck).
+      const selected = !buildMode && n.id === deckTrackId
       // Stacking order (Slice 9 r2 #3): in build mode, chain songs sit above non-chain ones so
       // their sockets are always grabbable when songs overlap — and the tail (whose open outgoing
-      // socket you drag from) sits highest of all. Orphans just above the dimmed field. A hover-
-      // preview node (Slice 11.5) trumps everything so its scaled-up card renders above its neighbours.
-      const baseZ = !buildMode ? 0 : isTail ? 40 : inChain ? 30 : isOrphan ? 10 : 0
+      // socket you drag from) sits highest of all. Orphans just above the dimmed field. The SELECTED
+      // song lifts above its overlapping neighbours so you can actually see the one you picked (e.g. a
+      // song chosen from a stack badge that was hidden behind another). A hover-preview node (Slice
+      // 11.5) still trumps everything so its scaled-up card renders above even the selection.
+      const baseZ = !buildMode ? (selected ? 500 : 0) : isTail ? 40 : inChain ? 30 : isOrphan ? 10 : 0
       const zIndex = n.id === previewNodeId ? 1000 : baseZ
       const d = n.data
       if (
         d.sockets === sockets && d.isHead === isHead && d.dimmed === dimmed && d.isTail === isTail &&
         d.isOrphan === isOrphan && d.orphanBright === orphanBright && d.orphanGroupId === groupId &&
-        n.zIndex === zIndex
+        d.selected === selected && n.zIndex === zIndex
       ) {
         return n // nothing changed for this node — keep the same reference (no re-render)
       }
-      return { ...n, zIndex, data: { ...d, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId: groupId } }
+      return { ...n, zIndex, data: { ...d, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId: groupId, selected } }
     }))
-  }, [buildMode, buildGraph, chainSet, hoverGroup, previewNodeId, setNodes])
+  }, [buildMode, buildGraph, chainSet, hoverGroup, previewNodeId, deckTrackId, setNodes])
 
   // Compatibility glow (Slice 11.5): in build mode with an active chain and Flow OFF, EVERY non-chain,
   // non-orphan song is scored against the chain TAIL as a candidate next song and gets a colored glow
@@ -1829,20 +1834,6 @@ function DriftMapInner({ tracks }) {
         </BuildContext.Provider>
         </BloomContext.Provider>
       </ZoomTierContext.Provider>
-      {/* Recessed-well frame. An inset shadow so the canvas reads as the LOWEST layer in the neomorphic
-          hierarchy — the well the toolbar, panels and icon rail float above. It follows the SAME
-          single-light-source rule as every other recessed surface (search-bar tray NEO_TRAY_INSET, deck
-          screens, the textarea): a dark cast on the top-left inner edges + a faint white lip on the
-          bottom-right, same 0.7 / 0.04 alphas, just scaled up for the map's size (the tray's 3px/6px
-          bevel → ~10px/24px here so the crease reads across a ~1150px surface). Pure CSS: pointerEvents:
-          none so it never intercepts pan / zoom / node clicks / wire drags, and zIndex 3 sits above the
-          whole ReactFlow subtree (nodes, wires, nebula, axis — all sandboxed in RF's own stacking
-          context) but below the search bar and toolbar (z 4). borderRadius:inherit hugs the card's
-          rounded corners. */}
-      <div style={{
-        position: 'absolute', inset: 0, borderRadius: 'inherit', pointerEvents: 'none', zIndex: 3,
-        boxShadow: 'inset 10px 10px 24px 0 rgba(0,0,0,0.7), inset -4px -4px 14px 0 rgba(255,255,255,0.04)',
-      }} />
       {/* Wire-drag overlay — only mounted in build mode; draws the dashed drag wire + feedback. */}
       {buildMode && (
         <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} stacksRef={stacksRef} onReleaseStack={onReleaseStack} />
