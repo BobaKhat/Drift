@@ -163,9 +163,11 @@ export function SetCreationIcon({ active, color }) {
     )
   }
 
-  // Rail glyph. At rest the wire stops ~3px short of the right node (strokeDashoffset gap = the
-  // "disconnected" state); on hover it draws the last stretch to the node (offset → 0) and the right node
-  // fires one scale pulse, delayed so it lands as the wire arrives — a "connection made" beat. The wire
+  // Rail glyph. At rest the wire only reaches ~halfway to the right node — it stops around the top of the
+  // vertical with an upward hook, a big obvious "disconnected" gap (strokeDashoffset 0.48 hides the last
+  // ~48% of the path, near the right node). On hover it draws that whole stretch to the node over ~300ms
+  // (offset → 0) and, once it has arrived, the right node fires one scale pulse — a "connection made"
+  // beat (delay ≈ the wire's travel time so it lands on arrival, not at the start of hover). The wire
   // sits under the nodes, so its tucked start (inside the left node) and its arrival under the right
   // node's edge stay hidden — which also masks the spring's tiny dashoffset overshoot at either end.
   // pathLength=1 normalises the dash maths to the path's own length regardless of its geometry.
@@ -174,15 +176,15 @@ export function SetCreationIcon({ active, color }) {
       <motion.path
         d={WIRE_D} {...wireProps}
         pathLength="1" strokeDasharray="1 1"
-        variants={{ rest: { strokeDashoffset: 0.16 }, hover: { strokeDashoffset: 0 } }}
-        transition={ICON_SPRING}
+        variants={{ rest: { strokeDashoffset: 0.48 }, hover: { strokeDashoffset: 0 } }}
+        transition={{ type: 'spring', duration: 0.42, bounce: 0.12 }}
       />
       <circle cx="5.25" cy="15.75" r="5.25" fill={glyphColor} />
       <motion.circle
         cx="24.75" cy="5.25" r="5.25" fill={glyphColor}
         style={{ transformBox: 'fill-box', transformOrigin: 'center' }}
         variants={{ rest: { scale: 1 }, hover: { scale: [1, 1.15, 1] } }}
-        transition={{ duration: 0.34, delay: 0.12, ease: 'easeOut' }}
+        transition={{ duration: 0.32, delay: 0.25, ease: 'easeOut' }}
       />
     </>
   )
