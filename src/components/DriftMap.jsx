@@ -639,11 +639,13 @@ function AxisLayer({ preset, geom }) {
               transformOrigin: 'center', transform: 'translate(-50%, -50%) scale(var(--axis-scale, 1))',
             }} />
           ))}
-          {geom.PAD.y.map((y) => (
+          {geom.PAD.y.map((y, i) => (
+            // Top tick (i=0) nudged 15px up, bottom (i=1) 15px down. The translateY sits INSIDE the axis
+            // counter-scale so it stays a fixed 15 screen px at every zoom, like the tick itself.
             <div key={`tick-y-${y}`} style={{
               position: 'absolute', left: geom.W / 2, top: y, width: TICK_LEN, height: TICK_W, background: TICK_COLOR,
               borderRadius: 999,
-              transformOrigin: 'center', transform: 'translate(-50%, -50%) scale(var(--axis-scale, 1))',
+              transformOrigin: 'center', transform: `translate(-50%, -50%) scale(var(--axis-scale, 1)) translateY(${i === 0 ? -15 : 15}px)`,
             }} />
           ))}
 
@@ -1264,6 +1266,7 @@ function DriftMapInner({ tracks }) {
   const zoomTimer = useRef(null)
   const highlightTimer = useRef(null)
   const dragRef = useRef(null) // WireDragLayer imperative handle
+  const [snapTargetId, setSnapTargetId] = useState(null) // song the dragged wire is snapped to — it brightens + glows
 
   // Playlist switch → the old nodes vanish instantly and the new set blooms in with the random
   // stagger: we just stage the new tracks and bump the generation. The new nodes replace the old in
@@ -1430,6 +1433,17 @@ function DriftMapInner({ tracks }) {
       return n.data.glow === glow ? n : { ...n, data: { ...n.data, glow } }
     }))
   }, [buildMode, flowMode, buildGraph, tracksById, chainSet, setNodes])
+
+  // Pre-connect highlight: the ONE song the dragged wire is currently snapped to gets `data.snapTarget`,
+  // which TrackNode reads to brighten it back to 100% and add a glow ring — so only the connection
+  // target lights up, not the whole library. Only the two affected nodes (old target off, new on) re-
+  // render, mirroring the glow effect above. Clears to null when the drag ends or unsnaps.
+  useEffect(() => {
+    setNodes((prev) => prev.map((n) => {
+      const isSnap = n.id === snapTargetId
+      return !!n.data.snapTarget === isSnap ? n : { ...n, data: { ...n.data, snapTarget: isSnap } }
+    }))
+  }, [snapTargetId, setNodes])
   // Tier is global (depends only on zoom) — held once here and broadcast via context so nodes
   // re-render only on a threshold crossing, not on every zoom frame.
   const [tier, setTier] = useState('circle')
@@ -1904,7 +1918,7 @@ function DriftMapInner({ tracks }) {
       </ZoomTierContext.Provider>
       {/* Wire-drag overlay — only mounted in build mode; draws the dashed drag wire + feedback. */}
       {buildMode && (
-        <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} stacksRef={stacksRef} onReleaseStack={onReleaseStack} />
+        <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} stacksRef={stacksRef} onReleaseStack={onReleaseStack} onSnapTargetChange={setSnapTargetId} />
       )}
       {/* Strobe keyframes — one continuous linear stroke-dashoffset animation PER wire. Each wire's
           keyframe holds its own travel window (activePct, ∝ its length) so the dash crosses at a
@@ -1924,7 +1938,7 @@ function DriftMapInner({ tracks }) {
           counter-scaled by --axis-scale (1/zoom) to a constant screen size, and lifted BADGE_FLOAT px
           above the representative's centre — a constant screen offset, since 1/zoom cancels the pane's
           zoom. Only at pill tier and above (circle tier yields no stacks). */}
-      {tier !== 'circle' && stacks.length > 0 && (
+      {tier !== 'circle' && stacks.length > 0 && !flowMode && (
         <ViewportPortal>
           {stacks.map((s) => (
             <div key={s.reprId} style={{ position: 'absolute', left: s.x, top: s.y, transformOrigin: '0 0', transform: 'scale(var(--axis-scale, 1))', pointerEvents: 'none', zIndex: 6 }}>

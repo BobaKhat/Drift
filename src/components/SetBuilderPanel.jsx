@@ -195,6 +195,7 @@ export default function SetBuilderPanel() {
   const [copied, setCopied] = useState(false)
   const [minHover, setMinHover] = useState(false)   // minimize chevron
   const [saveHover, setSaveHover] = useState(false) // Save & Complete
+  const [copyHover, setCopyHover] = useState(false) // Copy Tracklist
   // The Disconnected section is ALWAYS present but starts COLLAPSED (r4 #4) — it never auto-expands
   // to steal panel space; the user clicks its header to reveal the orphan groups.
   const [disconnectedOpen, setDisconnectedOpen] = useState(false)
@@ -369,7 +370,7 @@ export default function SetBuilderPanel() {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, fontFamily: FONT }}>
       {/* Title + minimize (Slice 9 final #5) — collapse the panel to a thin bottom tab for full map
           visibility while staying in build mode. */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 18 }}>
         <h2 style={{ margin: 0, fontSize: 27, fontWeight: 600, color: '#fff', lineHeight: 1.05 }}>Set Builder</h2>
         {/* Same construction as the toolbar's chevron: a raised button sitting directly on a slab (the
             panel), so it takes the outer-glow recipe rather than the tray buttons' inner bevel — there's
@@ -381,7 +382,7 @@ export default function SetBuilderPanel() {
           onPointerLeave={() => setMinHover(false)}
           title="Minimize panel"
           style={{
-            marginTop: 6, width: 32, height: 32, flexShrink: 0, borderRadius: '50%',
+            width: 32, height: 32, flexShrink: 0, borderRadius: '50%',
             border: 'none', padding: 0,
             background: minHover ? NEO_BTN_HOVER_BG : NEO_BTN_BG,
             boxShadow: minHover ? NEO_CHEV_HOVER : NEO_CHEV_RAISED,
@@ -398,7 +399,7 @@ export default function SetBuilderPanel() {
 
       {/* Library-scoped search */}
       <div ref={searchRef} style={{ position: 'relative', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 5px 5px 22px', background: C.card, borderRadius: 100, boxShadow: INSET }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 5px 5px 22px', background: NEO_BAR_BG, borderRadius: 100 }}>
           <input
             value={query}
             onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
@@ -513,15 +514,27 @@ export default function SetBuilderPanel() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 16, flexShrink: 0 }}>
           <button
             onClick={copyTracklist}
+            onPointerEnter={() => setCopyHover(true)}
+            onPointerLeave={() => setCopyHover(false)}
             style={{
-              height: 56, borderRadius: 100,
+              height: 56, borderRadius: 100, boxSizing: 'border-box',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              background: C.card, border: `1px solid ${copied ? ACCENT : C.border}`, boxShadow: INSET,
-              color: copied ? ACCENT : '#fff', fontFamily: FONT, fontSize: 15, fontWeight: 500,
-              cursor: 'pointer', transition: 'color 160ms ease, border-color 160ms ease',
+              background: copied
+                ? `${copyHover ? SELECTED.hoverSheen : SELECTED.sheen}, ${SELECTED.fill}`
+                : (copyHover ? NEO_BAR_HOVER_BG : NEO_BAR_BG),
+              border: `1px solid ${copied ? SELECTED.border : 'transparent'}`,
+              boxShadow: copied
+                ? `${copyHover ? SELECTED.hoverDrop : SELECTED.drop}, ${SELECTED.rim}`
+                : `${copyHover ? NEO_BAR_HOVER : NEO_BAR_SHADOW}, ${NEO_BAR_EDGE}`,
+              backdropFilter: copied ? SELECTED.blur : undefined,
+              WebkitBackdropFilter: copied ? SELECTED.blur : undefined,
+              color: copied ? ACCENT : C.textSecondary,
+              fontFamily: FONT, fontSize: 15, fontWeight: 500,
+              cursor: 'pointer',
+              transition: 'color 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease',
             }}
           >
-            <CopyIcon color={copied ? ACCENT : '#fff'} />
+            <CopyIcon color={copied ? ACCENT : C.textSecondary} />
             {copied ? 'Copied!' : 'Copy Tracklist'}
           </button>
           <button

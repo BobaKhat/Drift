@@ -152,7 +152,7 @@ function t(...props) {
 }
 
 const ART_TRANSITION = t('width', 'height', 'border-radius')
-const ROOT_TRANSITION = t('width', 'height', 'border-radius', 'background', 'border-color', 'border-width', 'padding', 'gap', 'opacity', 'box-shadow')
+const ROOT_TRANSITION = t('width', 'height', 'border-radius', 'background', 'border-color', 'border-width', 'padding', 'gap', 'opacity', 'box-shadow', 'filter')
 
 const nameStyle = {
   fontFamily: FONT, fontSize: 11, fontWeight: 600, letterSpacing: '0.02em',
@@ -294,7 +294,7 @@ function AnchorIcon() {
 }
 
 function TrackNode({ id, data }) {
-  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId, glow, artColor, bloomDelay, selected } = data
+  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId, glow, snapTarget, artColor, bloomDelay, selected } = data
   const tier = useContext(ZoomTierContext)
   const { buildMode, flowMode, startWireDrag, setHoverGroup, unplugSocket, setArtColor, showPreview, hidePreview } = useContext(BuildContext)
   const { gen: bloomGen, active: bloomActive } = useContext(BloomContext)
@@ -479,7 +479,10 @@ function TrackNode({ id, data }) {
   // glow, not a border, and — because it scales with the node's counter-scale — stays visible even on
   // small circle-tier nodes at full zoom-out. The tier also lifts opacity (0.85 / 0.65) above the 0.4
   // dim floor. `glow` is the tier string or undefined; only dimmed songs carry it.
-  const compatGlow = !dimmed ? null
+  // The pre-connect target (wire snapped to this song) glows orange to match the connection affordance
+  // — it wins over the compatibility tier so even a non-matching target lights up while snapped.
+  const compatGlow = snapTarget ? '0 0 9px 2px rgba(242,127,55,0.85), 0 0 24px 7px rgba(242,127,55,0.45)'
+    : !dimmed ? null
     : glow === 'strong' ? '0 0 8px 1px rgba(30,255,184,0.75), 0 0 22px 6px rgba(30,255,184,0.40)'
     : glow === 'mild' ? '0 0 8px 1px rgba(247,203,41,0.70), 0 0 22px 6px rgba(247,203,41,0.35)'
     : null
@@ -506,7 +509,9 @@ function TrackNode({ id, data }) {
   // as selected while keeping its own album glow.
   const baseShadow = highlighted
     ? '0 0 0 2.5px #F27F37, 0 0 18px rgba(242,127,55,0.45)'
-    : (orphanGlow || headGlow || artGlow || compatGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)')
+    // snapTarget's orange glow (folded into compatGlow) wins over orphan/head/art so the pre-connect
+    // target always lights up, even when it's an orphan being re-plugged.
+    : (snapTarget ? compatGlow : (orphanGlow || headGlow || artGlow || compatGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)'))
   const nodeShadow = selected ? `0 0 0 1.5px ${SELECTED.border}, ${SELECTED.drop}, ${baseShadow}` : baseShadow
 
   // Counter-scale is driven by the shared --node-scale var; the circle-tier head gets a small size
@@ -573,7 +578,13 @@ function TrackNode({ id, data }) {
         // mild / 0.4 otherwise), paired with the colored ring above. Set from `glow` on node data.
         opacity: flowMode
           ? (!isOrphan && !dimmed ? 1 : FLOW_DIM)
-          : (isOrphan ? (orphanBright ? 0.95 : 0.45) : (dimmed ? dimOpacity : 1)),
+          // Flow OFF: unconnected non-set songs stay fully OPAQUE (not transparent) but are darkened
+          // 75% via the brightness filter below, so the set still reads clearly. Orphans keep their band.
+          : (isOrphan ? (orphanBright ? 0.95 : 0.45) : 1),
+        // Flow OFF: darken unconnected non-set songs to 45% brightness instead of fading them — but NOT
+        // the compatibility-glow songs (glow strong/mild), and NOT the song the dragged wire is snapped
+        // to (`snapTarget`), which brightens to 100% as the pre-connect target.
+        filter: (!flowMode && dimmed && !glow && !snapTarget) ? 'brightness(0.45)' : undefined,
         // Counter the pane's zoom. The factor lives in the --node-scale CSS var, written by the map
         // once per throttled frame, so zooming rescales every node via CSS with no React re-render.
         // Out of the transition (tracks zoom instantly, no rubber-banding); the 400ms morph below

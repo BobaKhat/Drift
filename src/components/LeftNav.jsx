@@ -173,6 +173,12 @@ export function SetCreationIcon({ active, color }) {
   // pathLength=1 normalises the dash maths to the path's own length regardless of its geometry.
   const content = (
     <>
+      {/* The glyph inherits its rest/hover variant from the button (so hover draws the wire). When Set
+          Builder mode is ACTIVE the BUTTON is pinned to the "hover" variant (see RailButton's
+          pinActiveHover) — the wire stays connected the whole time and the node fires its one pulse.
+          Clicking OUT drops the button back to "rest", so the wire RETRACTS along the same spring: a
+          clean reverse of the connect draw. Nothing here sets its own `animate`, or hover would stop
+          propagating from the button. */}
       <motion.path
         d={WIRE_D} {...wireProps}
         pathLength="1" strokeDasharray="1 1"
@@ -310,8 +316,13 @@ const NAV_ITEMS = [
 // Circular icon button. Two modes:
 //  • media: a pre-rendered glass-button PNG (logo / profile) — static, no active/hover states.
 //  • default: recessed well with an orange active ring and a glyph that brightens on hover.
-function RailButton({ label, Icon, isActive, onClick, media }) {
+function RailButton({ label, Icon, isActive, onClick, media, pinActiveHover }) {
   const [hover, setHover] = useState(false)
+  // After a click the pointer is still over the button, so whileHover would keep the glyph pinned to its
+  // "hover" (open) state — meaning clicking an ACTIVE icon to close its panel leaves the glyph open until
+  // the mouse moves away (e.g. the library crate lid not closing). We suppress hover from the moment of a
+  // click until the pointer LEAVES, so the close animation wins; a fresh hover later still previews.
+  const [suppressHover, setSuppressHover] = useState(false)
   // Reduced motion drops the whileHover trigger so the glyph transforms never fire; the colour/shadow
   // hover state below (driven by the `hover` flag) is unaffected.
   const reduce = useReducedMotion()
@@ -396,12 +407,17 @@ function RailButton({ label, Icon, isActive, onClick, media }) {
     // whether or not its panel is the active one.
     <motion.button
       title={label}
-      onClick={onClick}
+      onClick={(e) => { setSuppressHover(true); onClick?.(e) }}
       onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onMouseLeave={() => { setHover(false); setSuppressHover(false) }}
       initial="rest"
-      animate="rest"
-      whileHover={reduce ? undefined : 'hover'}
+      // Normally the glyph rests until hovered. For a pinActiveHover button (all three nav icons), being
+      // ACTIVE holds the glyph in its "hover" END state the whole time its panel is open; going inactive
+      // animates it back to "rest" (the reverse). whileHover normally overrides to "hover" on pointer-over,
+      // but is suppressed right after a click (until the pointer leaves) so closing a panel lets the glyph
+      // animate shut instead of staying open under the still-hovering cursor.
+      animate={pinActiveHover && isActive ? 'hover' : 'rest'}
+      whileHover={reduce || suppressHover ? undefined : 'hover'}
       style={style}
     >
       <span style={{ width: GLYPH, height: GLYPH, display: 'flex' }}>
@@ -492,6 +508,7 @@ export default function LeftNav() {
                 Icon={item.Icon}
                 isActive={activePanel === item.id}
                 onClick={() => togglePanel(item.id)}
+                pinActiveHover
               />
             ))}
           </nav>

@@ -105,17 +105,22 @@ function Thumb({ url, size, radius }) {
 }
 
 // A recessed compatibility badge (Decision Log #65) — a dark inset well with tier-colored key text.
-function KeyBadge({ text, color, big }) {
+function KeyBadge({ text, color, big, fill }) {
   return (
     <span style={{
-      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-      // 5px sides on the `big` (Compatible Keys) variant, not 6. Those three badges are the widest
-      // thing in that tile, and after it lost 25px to NextUp the worst-case key set — three 3-char
-      // Camelot codes like 10A/12A/11B, 125px — no longer fit the 121px on offer. Trimming a pixel a
-      // side (plus a tighter row gap) brings the worst case to ~117 and buys back the margin.
-      padding: big ? '3px 5px' : '2px 7px', borderRadius: 6,
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      // `fill` (Compatible Keys 2-per-line grid): each badge is a big, half-width cell so exactly two
+      // sit per row and the third wraps to a second line. `big` is the older single-row variant.
+      // 5px sides on the `big` variant, not 6. Those three badges are the widest thing in that tile,
+      // and after it lost 25px to NextUp the worst-case key set — three 3-char Camelot codes like
+      // 10A/12A/11B, 125px — no longer fit the 121px on offer. Trimming a pixel a side (plus a tighter
+      // row gap) brings the worst case to ~117 and buys back the margin.
+      ...(fill
+        ? { flexGrow: 0, flexShrink: 0, flexBasis: 'calc(50% - 2px)' }
+        : { flexShrink: 0 }),
+      padding: fill ? '8px 5px' : big ? '3px 5px' : '2px 7px', borderRadius: fill ? 8 : 6,
       background: '#0C0C0C', boxShadow: 'inset 1px 1px 3px 0px #000000, inset -1px -1px 2px 0px rgba(55,55,55,0.6)',
-      fontFamily: FONT, fontSize: big ? 13 : 10, fontWeight: 600, color, whiteSpace: 'nowrap',
+      fontFamily: FONT, fontSize: fill ? 18 : big ? 13 : 10, fontWeight: 600, color, whiteSpace: 'nowrap',
     }}>
       {text}
     </span>
@@ -826,27 +831,13 @@ function CompatibleKeys({ track }) {
     }}>
       {wheel ? (
         <>
-          <div style={{ fontFamily: FONT, fontSize: F_COUNT, fontWeight: 500, color: '#fff', lineHeight: 1 }}>{keys.length}</div>
-          {/* Label + badges are ONE bottom-anchored group (marginTop:auto on the group, not on the
-              badge row). That's what lets this tile line up with NextUp next door in both of its
-              states, and it's structural rather than a tuned number:
-                • the badge row sits on the content-box floor  → same baseline as NextUp's badges
-                • the label sits one badge-row above the floor → same baseline as "Add to a set"
-              Anchoring from the BOTTOM is the point. The label used to be positioned from the top,
-              trailing the big count — whose size is a vh clamp (F_COUNT) — so its baseline slid with
-              the viewport while NextUp's heading, pinned from the floor, stayed put. They could only
-              ever agree at one window size. Now neither depends on the count's height; the slack
-              collects above the label instead, between it and the number. */}
-          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ fontFamily: FONT, fontSize: F_TILE_LABEL, fontWeight: 500, color: SUB }}>compatible keys</div>
-            {/* This 20px is what LIFTS the label: the badges are pinned to the floor, so the space
-                between them and the label is the only thing that decides how high the label sits.
-                It was 4px, which is why the label sat almost on top of the badges. NextUp's matching
-                heading→subtitle gap is set to keep the two headings on one line — see there. */}
-            <div style={{ display: 'flex', gap: 4, paddingTop: 13, flexWrap: 'nowrap' }}>
-              {keys.map((k) => <KeyBadge key={k.text} text={k.text} color={k.color} big />)}
-            </div>
+          {/* Key badges now sit at the TOP of the tile — where the count used to be (the "3" is gone).
+              The "compatible keys" label is bottom-anchored (marginTop:auto) so it's pushed down below
+              the badges to the tile floor. */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {keys.map((k) => <KeyBadge key={k.text} text={k.text} color={k.color} fill />)}
           </div>
+          <div style={{ marginTop: 'auto', fontFamily: FONT, fontSize: F_TILE_LABEL, fontWeight: 500, color: SUB }}>compatible keys</div>
         </>
       ) : (
         // Key-unknown empty state (Decision Log #65, key-unknown state).

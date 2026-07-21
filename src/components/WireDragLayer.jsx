@@ -78,7 +78,7 @@ function bezierBoth(sx, sy, outCard, ex, ey, inCard) {
   return `M ${sx} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${ex} ${ey}`
 }
 
-const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet, onConnect, stacksRef, onReleaseStack }, ref) {
+const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet, onConnect, stacksRef, onReleaseStack, onSnapTargetChange }, ref) {
   const rf = useReactFlow()
   const pathRef = useRef(null)
   const originSocketRef = useRef(null)
@@ -98,6 +98,16 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
   // not stay "occupied" from the pre-unplug chainSet.
   const chainSetRef = useRef(chainSet)
   chainSetRef.current = chainSet
+
+  // The song the wire is currently snapped to (the pre-connect target). Reported to the map ONLY when
+  // it changes — render() runs every rAF frame, so a dedupe ref keeps this to one React update per
+  // target change, not one per frame.
+  const lastSnap = useRef(null)
+  const reportSnap = (id) => {
+    if (lastSnap.current === id) return
+    lastSnap.current = id
+    onSnapTargetChange?.(id)
+  }
 
   const containerRect = () => containerRef.current?.getBoundingClientRect()
 
@@ -152,6 +162,7 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
         const srcOff = socketOffset(outCard, sourceNode, scale, vp.zoom, sourceNode.data?.isHead, tier)
         const src = { x: srcCenter.x + srcOff.x, y: srcCenter.y + srcOff.y }
         result.current = { mode: 'stack', targetId: null, stack: hit.s }
+        reportSnap(null) // snapped to a badge, not a song — no single target to brighten
         // Stop the wire at the badge's outer edge, not its centre: walk back from the badge centre
         // toward the source by the badge radius so the tip lands on the ring.
         const bdx = src.x - hit.x, bdy = src.y - hit.y
@@ -215,6 +226,7 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
 
     const mode = snapped ? 'snapped' : occupied ? 'occupied' : 'empty'
     result.current = { mode, targetId: snapped ? snapNode.id : null, inCardinal: snapInCard }
+    reportSnap(snapped ? snapNode.id : null) // brighten only the song we're snapped to (if any)
 
     // Source outgoing socket: when snapped, aim at the target center so the exit edge matches the
     // final latched wire; otherwise follow the cursor so all four edges stay reachable.
@@ -303,6 +315,7 @@ const WireDragLayer = forwardRef(function WireDragLayer({ containerRef, chainSet
     if (originSocketRef.current) originSocketRef.current.style.display = 'none'
     if (targetSocketRef.current) targetSocketRef.current.style.display = 'none'
     if (errorRef.current) errorRef.current.style.display = 'none'
+    reportSnap(null) // wire drag over — the target song returns to its darkened rest state
   }
 
   const onUp = () => {

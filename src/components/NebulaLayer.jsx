@@ -11,7 +11,7 @@ import { useStoreApi, ViewportPortal } from '@xyflow/react'
 // The one colour knob. Warm white, so the cloud lands on the same side of neutral as the album art
 // and the accents instead of reading as cold grey fog over them.
 const NEBULA_COLOR = '255, 235, 210'
-const NEBULA_BASE_OPACITY = 0.035 // per-song contribution, at a library of NEBULA_REF_COUNT songs
+const NEBULA_BASE_OPACITY = 0.06 // per-song contribution, at a library of NEBULA_REF_COUNT songs
 const NEBULA_REF_COUNT = 30       // the library size the base is tuned against
 const NEBULA_RADIUS = 400         // canvas units — reach of a single song's cloud
 const [NR, NG, NB] = NEBULA_COLOR.split(',').map(Number)
