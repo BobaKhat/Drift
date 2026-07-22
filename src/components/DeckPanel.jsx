@@ -5,7 +5,7 @@ import DeckVisualizer from './DeckVisualizer'
 import { resolvePreview } from '../lib/preview'
 import { FEATURE_POLES, getFeatureValue, resolvePreset } from '../lib/presets'
 import {
-  C, FONT,
+  C, FONT, INSET,
   NEO_TILE_BG, NEO_TILE_SHADOW, NEO_SCREEN_BG, NEO_SCREEN_INSET, NEO_WELL_INSET,
   NEO_BTN_BG, NEO_RAIL_RAISED, NEO_TRAY_BG,
 } from './import/tokens'
@@ -30,6 +30,8 @@ const ACCENT = C.accent1     // orange — BPM ring, progress ring
 const ACCENT2 = C.accent2    // blue — Camelot ring, Energy slider
 const CARD = C.card          // #141416 — now only the vinyl label on the disc; tiles use TILE_BG
 const SUB = C.textSecondary  // #848484
+// Monospace stack for the Compatible-Keys relationship diagram — Camelot codes align cleanly in mono.
+const MONO = "ui-monospace, 'SF Mono', Menlo, monospace"
 
 const labelStyle = { fontFamily: FONT, fontSize: 12, fontWeight: 500, color: SUB }
 // Every bento tile's face + cast (NEO_TILE_SHADOW): a machined module, cast down-right onto the panel
@@ -101,29 +103,6 @@ function Thumb({ url, size, radius }) {
         </div>
       )}
     </div>
-  )
-}
-
-// A recessed compatibility badge (Decision Log #65) — a dark inset well with tier-colored key text.
-function KeyBadge({ text, color, big, fill }) {
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      // `fill` (Compatible Keys 2-per-line grid): each badge is a big, half-width cell so exactly two
-      // sit per row and the third wraps to a second line. `big` is the older single-row variant.
-      // 5px sides on the `big` variant, not 6. Those three badges are the widest thing in that tile,
-      // and after it lost 25px to NextUp the worst-case key set — three 3-char Camelot codes like
-      // 10A/12A/11B, 125px — no longer fit the 121px on offer. Trimming a pixel a side (plus a tighter
-      // row gap) brings the worst case to ~117 and buys back the margin.
-      ...(fill
-        ? { flexGrow: 0, flexShrink: 0, flexBasis: 'calc(50% - 2px)' }
-        : { flexShrink: 0 }),
-      padding: fill ? '8px 5px' : big ? '3px 5px' : '2px 7px', borderRadius: fill ? 8 : 6,
-      background: '#0C0C0C', boxShadow: 'inset 1px 1px 3px 0px #000000, inset -1px -1px 2px 0px rgba(55,55,55,0.6)',
-      fontFamily: FONT, fontSize: fill ? 18 : big ? 13 : 10, fontWeight: 600, color, whiteSpace: 'nowrap',
-    }}>
-      {text}
-    </span>
   )
 }
 
@@ -690,15 +669,17 @@ const CIRCLE_MAX = 84 // px — caps the circles at their regular-window size so
                       // (and overflowing the narrower pill) at very wide/tall viewports
 
 // A dark readout screen sunk into the raised pill, not a module sitting on it — so the shadow is purely
-// inset and the face drops below the tile rather than stepping above it. The accent ring stays a border:
-// it's the Camelot/BPM colour coding, not part of the shader.
+// inset and the face drops below the tile rather than stepping above it. Uses the strong recessed-well
+// INSET (visible #373737 bottom-right lip) rather than NEO_SCREEN_INSET, whose 0.04-white lip vanishes on
+// the near-black fill and left the well reading flat. The accent ring stays a border: it's the
+// Camelot/BPM colour coding, not part of the shader.
 function StatCircle({ value, label, ringColor, ringWidth, valueColor }) {
   return (
     <div style={{
       height: '100%', maxHeight: CIRCLE_MAX, aspectRatio: '1 / 1', flexShrink: 0, borderRadius: '50%',
       border: `${ringWidth}px solid ${ringColor}`, background: NEO_SCREEN_BG, boxSizing: 'border-box',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-      boxShadow: NEO_SCREEN_INSET,
+      boxShadow: INSET,
     }}>
       <div style={{ fontFamily: FONT, fontSize: F_NUM, fontWeight: 600, color: valueColor, lineHeight: 1 }}>{value}</div>
       <div style={{ fontFamily: FONT, fontSize: F_TILE_LABEL, fontWeight: 500, color: SUB, marginTop: 2 }}>{label}</div>
@@ -799,17 +780,23 @@ function NextUp({ track, nextTrack }) {
 }
 
 // —— Compatible Keys (Decision Log #65) ———————————————————————————————————————————————
+// A mini relationship diagram (not a flat badge list) that shows HOW the keys relate: the current
+// song's key anchors the center, its two wheel-adjacent keys flank it horizontally (strong Camelot
+// transitions, green), and its parallel key hangs below (mild transition, amber). Connector lines
+// carry the same colour as the key they reach, so the geometry itself reads the compatibility.
+const KEY_STYLE = { fontFamily: MONO, fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', padding: '0 3px' }
+const GREEN = WIRE_COLORS.strong // #1EFFB8 — adjacent (strong)
+const AMBER = WIRE_COLORS.mild   // #F7CB29 — parallel (mild)
+const H_LINE = { width: 14, height: 1, background: 'rgba(30,255,184,0.4)' }  // green, adjacent connectors
+const V_LINE = { width: 1, height: 14, background: 'rgba(247,203,41,0.4)' }  // amber, parallel connector
+
 function CompatibleKeys({ track }) {
   const camelot = track.camelot ? String(track.camelot).replace(/\s+/g, '').toUpperCase() : null
   const wheel = camelot ? CAMELOT_WHEEL[camelot] : null
-  // 2 adjacent (strong) + 1 parallel (mild) — e.g. 3A → 2A, 4A, 3B.
-  const keys = wheel
-    ? [
-        { text: wheel.adjacent[0], color: WIRE_COLORS.strong },
-        { text: wheel.adjacent[1], color: WIRE_COLORS.strong },
-        { text: wheel.parallel, color: WIRE_COLORS.mild },
-      ]
-    : []
+  // Current key rendered in its own Camelot colour (same hue as the Camelot circle above), with a
+  // 0.5-alpha glow of that colour under it.
+  const curColor = camelot ? camelotColor(camelot) : null
+  const glow = curColor ? curColor.replace('hsl(', 'hsla(').replace(')', ', 0.5)') : null
 
   return (
     <div style={{
@@ -829,23 +816,33 @@ function CompatibleKeys({ track }) {
       background: TILE_BG, boxShadow: TILE_SHADOW,
       display: 'flex', flexDirection: 'column',
     }}>
-      {wheel ? (
-        <>
-          {/* Key badges now sit at the TOP of the tile — where the count used to be (the "3" is gone).
-              The "compatible keys" label is bottom-anchored (marginTop:auto) so it's pushed down below
-              the badges to the tile floor. */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {keys.map((k) => <KeyBadge key={k.text} text={k.text} color={k.color} fill />)}
+      {/* Header rides on the tile surface, above the recess — matches "NEXT UP" next door. */}
+      <div style={{ fontFamily: FONT, fontSize: 10, fontWeight: 500, color: SUB, letterSpacing: '0.04em' }}>COMPATIBLE KEYS</div>
+      {/* Recessed inset well (same recipe as the search bar / slider wells) holding the diagram. */}
+      <div style={{
+        flex: 1, minHeight: 0, marginTop: 8,
+        borderRadius: 10, background: '#0d0d0f',
+        boxShadow: 'inset 2px 2px 4px 0px rgba(0,0,0,0.8), inset -1px -1px 2px 0px rgba(255,255,255,0.03)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        {wheel ? (
+          // 5-column grid: [left]—[current]—[right] across row 1; the vertical line and parallel key
+          // sit in column 3 (row 2/3), so they stay anchored under the current key regardless of how
+          // wide the flanking codes are.
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, auto)', alignItems: 'center', justifyItems: 'center' }}>
+            <span style={{ gridColumn: 1, gridRow: 1, ...KEY_STYLE, color: GREEN }}>{wheel.adjacent[0]}</span>
+            <div style={{ gridColumn: 2, gridRow: 1, ...H_LINE }} />
+            <span style={{ gridColumn: 3, gridRow: 1, fontFamily: MONO, fontSize: 14, fontWeight: 700, color: curColor, textShadow: `0 0 6px ${glow}`, whiteSpace: 'nowrap', padding: '0 3px' }}>{camelot}</span>
+            <div style={{ gridColumn: 4, gridRow: 1, ...H_LINE }} />
+            <span style={{ gridColumn: 5, gridRow: 1, ...KEY_STYLE, color: GREEN }}>{wheel.adjacent[1]}</span>
+            <div style={{ gridColumn: 3, gridRow: 2, ...V_LINE }} />
+            <span style={{ gridColumn: 3, gridRow: 3, ...KEY_STYLE, color: AMBER }}>{wheel.parallel}</span>
           </div>
-          <div style={{ marginTop: 'auto', fontFamily: FONT, fontSize: F_TILE_LABEL, fontWeight: 500, color: SUB }}>compatible keys</div>
-        </>
-      ) : (
-        // Key-unknown empty state (Decision Log #65, key-unknown state).
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <div style={{ fontFamily: FONT, fontSize: 15, fontWeight: 600, color: SUB }}>Key unknown</div>
-          <div style={{ fontFamily: FONT, fontSize: 11, color: SUB, marginTop: 6 }}>No Camelot data for this track.</div>
-        </div>
-      )}
+        ) : (
+          // Key-unknown empty state — a lone "—", matching the Camelot circle's unknown readout.
+          <span style={{ fontFamily: MONO, fontSize: 15, fontWeight: 600, color: SUB }}>—</span>
+        )}
+      </div>
     </div>
   )
 }

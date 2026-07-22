@@ -1,16 +1,12 @@
 import { useState } from 'react'
-import {
-  C, FONT, RADIUS, SELECTED,
-  NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER,
-  NEO_BTN_RAISED, NEO_SCREEN_BG, NEO_RAIL_SURFACE,
-} from './tokens'
+import { C, FONT, RADIUS, SELECTED, NEO_SCREEN_BG, NEO_RAIL_SURFACE, NEO_BTN_PRESS_BG, NEO_BTN_PRESS } from './tokens'
 
-// Shared presentational primitives for the import flow — keep the bento aesthetic in one place.
+// Shared presentational primitives for the import flow — flat treatment (no neomorphic bevels): solid
+// fills, clean 1px borders, and only a plain drop shadow on the modal itself so it lifts off the map.
 
-// Floating modal shell over the map. A raised slab off the neomorphic system, in the icon rail's CONTAINER
-// colour (NEO_RAIL_SURFACE #0F0F0F — the rail floor, not its raised buttons) so every import pop-up matches
-// the rail, with the canonical raised recipe (NEO_BTN_RAISED — outer dark cast + inner bevel) and a 1px
-// top-light rim so the edge reads against the map.
+// Floating modal shell over the map. Flat slab in the icon rail's CONTAINER colour (NEO_RAIL_SURFACE
+// #0F0F0F) so every import pop-up matches the rail, with a clean 1px border and a soft, non-directional
+// drop shadow (elevation, not extrusion) so the edge reads against the busy map behind it.
 export function ModalCard({ width, children, style }) {
   return (
     <div
@@ -19,10 +15,10 @@ export function ModalCard({ width, children, style }) {
         width,
         maxWidth: 'calc(100vw - 140px)',
         background: NEO_RAIL_SURFACE,
-        border: '1px solid rgba(255,255,255,0.06)',
+        border: `1px solid ${C.border}`,
         borderRadius: RADIUS.card,
         padding: 30,
-        boxShadow: NEO_BTN_RAISED,
+        boxShadow: '0 12px 32px rgba(0,0,0,0.55)',
         display: 'flex',
         flexDirection: 'column',
         fontFamily: FONT,
@@ -50,10 +46,15 @@ const basePill = {
   transition: 'opacity 150ms ease, background 150ms ease, box-shadow 150ms ease',
 }
 
-// Orange-outlined hero CTA (Explore the demo library / Map my music / Done).
-export function PrimaryButton({ children, onClick, disabled, style }) {
+// Hero CTA (Explore the demo library / Map my music / Done). States:
+//   • DISABLED  — flat dark inactive button (neutral fill, gray text, no accent), reads as "not yet".
+//   • SELECTED  — the icon rail's active-button recipe verbatim: sunk-in dark face (NEO_BTN_PRESS_BG), an
+//                 inset accent ring + press shadow, white label. A held "you're on this" look, not a lift.
+//   • ENABLED   — the flat selected-button look: accent-tinted fill under a 1px accent border with accent
+//                 text; hover brightens the fill.
+export function PrimaryButton({ children, onClick, disabled, selected, style }) {
   const [hover, setHover] = useState(false)
-  const lift = hover && !disabled
+  const lift = hover && !disabled && !selected
   return (
     <button
       onClick={onClick}
@@ -62,18 +63,11 @@ export function PrimaryButton({ children, onClick, disabled, style }) {
       onPointerLeave={() => setHover(false)}
       style={{
         ...basePill,
-        // The Explore By row's ACTIVE state: the selected glass chip. Accent ring + accent label over
-        // dark glass — the same treatment the rail, the Flow knob and the search icon carry. Hover lifts
-        // the glass (brighter sheen, longer drop); disabled sits it back down, since the 0.4 opacity
-        // already says the click won't land.
-        background: `${lift ? SELECTED.hoverSheen : SELECTED.sheen}, ${SELECTED.fill}`,
-        border: `1px solid ${SELECTED.border}`,
-        color: C.accent1,
-        boxShadow: `${lift ? SELECTED.hoverDrop : SELECTED.drop}, ${SELECTED.rim}`,
-        backdropFilter: SELECTED.blur,
-        WebkitBackdropFilter: SELECTED.blur,
-        opacity: disabled ? 0.4 : 1,
-        cursor: disabled ? 'not-allowed' : 'pointer',
+        ...(disabled
+          ? { background: C.card, border: `1px solid ${C.border}`, color: C.textSecondary, cursor: 'not-allowed' }
+          : selected
+            ? { background: NEO_BTN_PRESS_BG, color: C.accent1, boxShadow: `inset 0 0 0 1.5px ${SELECTED.border}, ${NEO_BTN_PRESS}` }
+            : { background: lift ? 'rgba(242,127,55,0.20)' : 'rgba(242,127,55,0.12)', border: `1px solid ${C.accent1}`, color: C.accent1 }),
         ...style,
       }}
     >
@@ -82,10 +76,8 @@ export function PrimaryButton({ children, onClick, disabled, style }) {
   )
 }
 
-// Secondary button (Paste your tracklist / Back). Still tracks the Explore By preset rows at rest, which
-// are now raised slabs off the neomorphic system — same fill, same outer pair, same rim. The rim rides in
-// the element's own box-shadow rather than an overlay div (as the rows use): nothing here overlaps the
-// 1px it occupies, so the extra node would buy nothing.
+// Secondary button (Paste your tracklist / Back). Flat: solid card fill under a 1px border, no bevel or
+// drop. Hover steps the fill and border a touch lighter.
 export function SecondaryButton({ children, onClick, disabled, style }) {
   const [hover, setHover] = useState(false)
   const lift = hover && !disabled
@@ -97,9 +89,9 @@ export function SecondaryButton({ children, onClick, disabled, style }) {
       onPointerLeave={() => setHover(false)}
       style={{
         ...basePill,
-        background: lift ? NEO_BAR_HOVER_BG : NEO_BAR_BG,
+        background: lift ? '#1c1c1e' : C.card,
+        border: `1px solid ${lift ? '#333335' : C.border}`,
         color: C.textSecondary,
-        boxShadow: `${lift ? NEO_BAR_HOVER : NEO_BAR_SHADOW}, ${NEO_BAR_EDGE}`,
         opacity: disabled ? 0.4 : 1,
         ...style,
       }}
@@ -109,14 +101,12 @@ export function SecondaryButton({ children, onClick, disabled, style }) {
   )
 }
 
-// Recessed input/textarea well (paste box, playlist-name field). The inset side of the toolbar system:
-// the NEO_SCREEN_BG floor a step below the slab, an inset shadow (dark top-left cast + a faint
-// bottom-right light lip) so the field reads as carved into the modal, and a 1px rim.
+// Input/textarea field (paste box, playlist-name field). Flat: a slightly darker fill than the modal
+// under a 1px border — reads as a field without the carved-in inset shadow.
 export const wellStyle = {
-  background: NEO_SCREEN_BG, // #0d0d0f — the inset well floor
-  border: '1px solid rgba(255,255,255,0.04)',
+  background: NEO_SCREEN_BG, // #0d0d0f — a step darker than the modal so the field reads
+  border: `1px solid ${C.border}`,
   borderRadius: RADIUS.well,
-  boxShadow: 'inset 2px 2px 4px 0px rgba(0,0,0,0.8), inset -1px -1px 2px 0px rgba(255,255,255,0.03)',
   color: C.textPrimary,
   fontFamily: FONT,
   fontSize: 14,

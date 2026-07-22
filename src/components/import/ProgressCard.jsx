@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePlaylistStore } from '../../store/usePlaylistStore'
 import { demoTrackRows } from '../../data/demoLibrary'
-import { C, FONT, INSET, RADIUS } from './tokens'
+import { C, FONT, RADIUS } from './tokens'
 import { ModalCard } from './pieces'
 import MiniMapLoader from './MiniMapLoader'
 
@@ -117,7 +117,7 @@ export default function ProgressCard() {
           height: 10,
           background: C.card,
           borderRadius: RADIUS.pill,
-          boxShadow: INSET,
+          border: `1px solid ${C.border}`,
           overflow: 'hidden',
         }}
       >

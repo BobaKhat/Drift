@@ -60,7 +60,7 @@ export default function PasteStepsCard() {
             <SecondaryButton onClick={() => goImportStep('welcome')} style={{ flex: 1, padding: '0 30px' }}>
               Back
             </SecondaryButton>
-            <PrimaryButton onClick={handleMap} style={{ flex: 1, padding: '0 30px' }}>
+            <PrimaryButton onClick={handleMap} disabled={!text.trim()} selected style={{ flex: 1, padding: '0 30px' }}>
               Map my music
             </PrimaryButton>
           </div>

@@ -568,7 +568,9 @@ function TrackNode({ id, data }) {
         boxShadow: nodeShadow,
         gap: effCircle ? 0 : 10,
         padding: effCircle ? 0 : '10px 15px',
-        cursor: grabbable ? 'grab' : 'default', userSelect: 'none',
+        // Grabbable tail (build mode) shows grab; every other song still opens its Deck / sets the head
+        // on click, so it gets the hand to read as clickable rather than the plain arrow.
+        cursor: grabbable ? 'grab' : 'pointer', userSelect: 'none',
         // Build-mode dimming (Slice 9 #6): non-set songs drop to 0.4 so the set reads clearly.
         // Orphans get their own band — ~45% at rest, lifting to ~0.95 when their group is hovered.
         // Flow ON (Slice 10): only the connected chain stays lit; everything else — non-set AND

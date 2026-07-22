@@ -376,10 +376,6 @@ function RailButton({ label, Icon, isActive, onClick, media, pinActiveHover }) {
     justifyContent: 'center',
     flexShrink: 0,
     cursor: onClick ? 'pointer' : 'default',
-    // Vestigial — the ring and every edge are box-shadows now ("the shadows are the edge"). Inert rather
-    // than load-bearing: box-sizing is border-box, so this sits inside the 60px and dropping it resizes
-    // nothing. All it does is hold the inset rim and accent ring 1px in from the circle's edge.
-    border: '1px solid transparent',
     color: ICON_REST,
     transition: 'color 150ms ease, background 150ms ease, box-shadow 150ms ease',
   }

@@ -18,7 +18,7 @@ export default function WelcomeCard() {
               Drop in a playlist and Orion maps it by preset feeling
             </p>
           </div>
-          <PrimaryButton onClick={loadDemo} style={{ width: 330 }}>
+          <PrimaryButton onClick={loadDemo} selected style={{ width: 330 }}>
             Explore the demo library
           </PrimaryButton>
         </div>

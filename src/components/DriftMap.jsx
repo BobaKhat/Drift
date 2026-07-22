@@ -1164,7 +1164,9 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
             border: 'none', cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: compassOpen ? NEO_BTN_PRESS_BG : (chevHover ? NEO_BTN_HOVER_BG : NEO_BTN_BG),
-            boxShadow: compassOpen ? NEO_BTN_PRESS : (chevHover ? NEO_CHEV_HOVER : NEO_CHEV_RAISED),
+            // Open = the app's selected state (like the tray buttons + rail): sunk in with an accent-orange
+            // ring over the press, and the glyph below turns orange to match.
+            boxShadow: compassOpen ? `inset 0 0 0 1.5px ${SELECTED.border}, ${NEO_BTN_PRESS}` : (chevHover ? NEO_CHEV_HOVER : NEO_CHEV_RAISED),
             transition: 'box-shadow 120ms ease, background 120ms ease',
           }}
         >
@@ -1175,11 +1177,13 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
             style={{ display: 'flex' }}
             variants={{ rest: { y: 0 }, hover: { y: [0, 2, 0], transition: { duration: 0.3, ease: 'easeOut' } } }}
           >
-            <svg width="13" height="8" viewBox="0 0 13 8" fill="none" style={{
+            {/* Same chevron glyph as the Set Builder panel's minimize control (SetBuilderPanel.jsx):
+                viewBox 0 0 12 8, path M1 1.5L6 6L11 1.5, strokeWidth 1.6. */}
+            <svg width="12" height="8" viewBox="0 0 12 8" fill="none" style={{
               transition: 'transform 220ms ease',
               transform: compassOpen ? 'rotate(180deg)' : 'rotate(0deg)',
             }}>
-              <path d="M1 1.5L6.5 6.5L12 1.5" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M1 1.5L6 6L11 1.5" stroke={compassOpen ? ACCENT1 : stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </motion.div>
         </motion.button>
