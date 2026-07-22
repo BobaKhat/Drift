@@ -30,7 +30,10 @@ export async function resolvePreview(track, { force = false } = {}) {
     if (track.preview_url) return track.preview_url
     if (previewCache.has(track.id)) return previewCache.get(track.id)
   }
-  const url = await getPreviewUrl(track.artist, track.name)
+  const url = await getPreviewUrl(track.artist, track.name, {
+    album: track.album ?? null,
+    duration: track.duration ?? null,
+  })
   previewCache.set(track.id, url)
   await persist(track.id, url)
   return url

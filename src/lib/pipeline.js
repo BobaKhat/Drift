@@ -270,10 +270,13 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
   if (!resolvedArt) resolvedArt = await getAlbumArt(artist, title)
   resolvedArt = resolvedArt ?? cached?.album_art_url ?? null
 
-  // 30-second preview (Slice 13): the corroboration search's previewUrl first, then a dedicated
-  // cleaned-query lookup for over-stuffed queries that missed, then any cached URL. null → no preview.
-  let resolvedPreview = itunes?.previewUrl ?? null
-  if (!resolvedPreview) resolvedPreview = await getPreviewUrl(artist, title)
+  // 30-second preview (Slice 13): the accuracy-scored iTunes lookup (limit=10 + artist/title/duration
+  // verification — see getPreviewUrl), then any cached URL. We no longer trust the corroboration
+  // search's loose limit=1 previewUrl — that's the source of wrong-song previews. null → no preview.
+  let resolvedPreview = await getPreviewUrl(artist, title, {
+    album: cached?.album ?? null,
+    duration: features?.duration ?? null,
+  })
   resolvedPreview = resolvedPreview ?? cached?.preview_url ?? null
 
   const track = {

@@ -60,6 +60,8 @@ export const SELECTED = {
 }
 
 export const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
+// Monospace accent face — the ORION brand mark and panel headings.
+export const MONO = "ui-monospace, 'SF Mono', Menlo, monospace"
 
 // Effect styles (Figma): raised modules vs recessed wells.
 // Extrusion = drop shadow + inner highlight; used on cards/tiles/buttons.

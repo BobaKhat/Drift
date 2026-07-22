@@ -565,8 +565,8 @@ function TrackInfoBar({ track }) {
         type="button"
         onClick={disabled ? undefined : () => toggle(track)}
         disabled={disabled}
-        title={disabled ? 'No preview available' : playing ? 'Pause' : 'Play'}
-        aria-label={disabled ? 'No preview available' : playing ? 'Pause' : 'Play'}
+        title={disabled ? 'Preview unavailable' : playing ? 'Pause' : 'Play'}
+        aria-label={disabled ? 'Preview unavailable' : playing ? 'Pause' : 'Play'}
         style={{
           width: 60, height: 60, borderRadius: '50%', flexShrink: 0, marginLeft: 12, // 12px gap + 12 = 24 (doubled)
           background: NEO_BTN_BG, display: 'flex', alignItems: 'center', justifyContent: 'center',

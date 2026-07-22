@@ -1,7 +1,8 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { usePlaylistStore } from '../store/usePlaylistStore'
 import {
-  C, FONT, INSET, ACCENT1_FILL, SELECTED,
+  C, FONT, MONO, INSET, ACCENT1_FILL, SELECTED,
   NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER,
   NEO_BTN_BG, NEO_BTN_HOVER_BG, NEO_CHEV_RAISED, NEO_CHEV_HOVER,
 } from './import/tokens'
@@ -193,7 +194,8 @@ export default function SetBuilderPanel() {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [minHover, setMinHover] = useState(false)   // minimize chevron
+  const [minHover, setMinHover] = useState(false)   // minimize button
+  const reduce = useReducedMotion()
   const [saveHover, setSaveHover] = useState(false) // Save & Complete
   const [copyHover, setCopyHover] = useState(false) // Copy Tracklist
   // The Disconnected section is ALWAYS present but starts COLLAPSED (r4 #4) — it never auto-expands
@@ -371,12 +373,13 @@ export default function SetBuilderPanel() {
       {/* Title + minimize (Slice 9 final #5) — collapse the panel to a thin bottom tab for full map
           visibility while staying in build mode. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 18 }}>
-        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 600, color: '#fff', lineHeight: 1.1 }}>Set Builder</h2>
+        <h2 style={{ margin: 0, fontFamily: MONO, fontSize: 24, fontWeight: 600, color: '#fff', lineHeight: 1.1 }}>Set Builder</h2>
         {/* Same construction as the toolbar's chevron: a raised button sitting directly on a slab (the
             panel), so it takes the outer-glow recipe rather than the tray buttons' inner bevel — there's
             no trench floor next to it for the outer light to wash out. See the rule atop the NEO_* block.
             Was recessed (INSET + a border), which read as a hole in the panel rather than a control. */}
-        <button
+        <motion.button
+          initial="rest" animate="rest" whileHover={reduce ? undefined : 'hover'}
           onClick={toggleSetBuilderMinimized}
           onPointerEnter={() => setMinHover(true)}
           onPointerLeave={() => setMinHover(false)}
@@ -390,11 +393,17 @@ export default function SetBuilderPanel() {
             transition: 'box-shadow 120ms ease, background 120ms ease',
           }}
         >
-          {/* chevron down = minimize */}
-          <svg width="12" height="8" viewBox="0 0 12 8" fill="none">
-            <path d="M1 1.5L6 6L11 1.5" stroke={C.textSecondary} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
+          {/* Hover nudges the bar down a couple px and back — a hint of the panel dropping to its tab. */}
+          <motion.div
+            style={{ display: 'flex' }}
+            variants={{ rest: { y: 0 }, hover: { y: [0, 2, 0], transition: { duration: 0.3, ease: 'easeOut' } } }}
+          >
+            {/* universal minimize = single horizontal bar */}
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M1.5 6H10.5" stroke={C.textSecondary} strokeWidth="1.6" strokeLinecap="round" />
+            </svg>
+          </motion.div>
+        </motion.button>
       </div>
 
       {/* Library-scoped search */}

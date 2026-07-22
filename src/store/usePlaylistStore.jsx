@@ -121,17 +121,23 @@ export function PlaylistProvider({ children }) {
 
   // Sever the wire AFTER the song at `index` (Decision Log #35, Slice 9 #2). The rule is anchored on
   // the head: the side of the cut still connected to the head KEEPS anchor status, and the side that
-  // lost its path back to the head orphans as one group, keeping its internal wires. So the upstream
-  // remainder [0..index] stays the chain and everything downstream orphans — uniformly, at every
-  // index. Cutting head→#2 is just index 0 of that rule: the head survives as a 1-song chain (still
-  // the head, still haloed, since headId = chain[0]) and songs #2..n orphan together. The tail row is
-  // a no-op (nothing downstream).
+  // lost its path back to the head is cut loose. The upstream remainder [0..index] stays the chain.
+  // What happens downstream depends on how many songs were cut off:
+  //   • 2+ songs  → they orphan together as one group, keeping their internal wires (non-destructive).
+  //   • 1 song    → a lone song is NOT an orphan group; it simply leaves the set and returns to the
+  //                 map as an unselected node (reconnect it later like any library track). This is why
+  //                 you only ever see a "Disconnected" group of 2 or more.
+  // Cutting head→#2 with a longer tail is index 0 of the group rule: the head survives as a 1-song
+  // chain (still haloed, since headId = chain[0]) and songs #2..n orphan together. The tail row is a
+  // no-op (nothing downstream).
   const unlinkAfter = useCallback((index) => {
     const prev = chainRef.current
     if (index < 0 || index >= prev.length || index === prev.length - 1) return
     const downstream = prev.slice(index + 1)
     setChain(prev.slice(0, index + 1))
-    setOrphanGroups((g) => [...g, { id: nextGroupId(), tracks: downstream }])
+    if (downstream.length >= 2) {
+      setOrphanGroups((g) => [...g, { id: nextGroupId(), tracks: downstream }])
+    }
   }, [])
 
   // Re-sequence the connected chain by drag-to-reorder (Decision Log #47). Wires re-cascade

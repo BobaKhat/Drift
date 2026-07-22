@@ -9,6 +9,7 @@ import {
 import CompassPreview from './CompassPreview'
 
 const FONT    = "'DM Sans', system-ui, -apple-system, sans-serif"
+const MONO    = "ui-monospace, 'SF Mono', Menlo, monospace" // ORION accent face — panel heading
 const ACCENT1 = '#F27F37'
 const TEXT_SEC = '#848484'
 
@@ -24,7 +25,7 @@ export default function ExploreByPanel() {
       <div style={{ marginBottom: 18 }}>
         <h2 style={{
           margin: 0,
-          fontFamily: FONT, fontSize: 24, fontWeight: 600,
+          fontFamily: MONO, fontSize: 24, fontWeight: 600,
           color: '#fff', lineHeight: 1.1,
         }}>
           Explore By

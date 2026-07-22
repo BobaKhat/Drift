@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { usePlaylistStore } from '../store/usePlaylistStore'
-import { C, FONT, RADIUS, NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER } from './import/tokens'
+import { C, FONT, MONO, RADIUS, NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE, NEO_BAR_HOVER_BG, NEO_BAR_HOVER } from './import/tokens'
 
 // Playlists panel body (replaces the Slice-4 placeholder). Shows playlist NAMES + song counts,
 // not song lists — the map is the song list. Active playlist gets the orange accent indicator.
@@ -12,7 +12,7 @@ export default function PlaylistPanel() {
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, fontFamily: FONT }}>
       {/* Title — matches the Explore By / Set Builder panel headings. */}
       <div style={{ marginBottom: 18 }}>
-        <h2 style={{ margin: 0, fontFamily: FONT, fontSize: 24, fontWeight: 600, color: '#fff', lineHeight: 1.1 }}>
+        <h2 style={{ margin: 0, fontFamily: MONO, fontSize: 24, fontWeight: 600, color: '#fff', lineHeight: 1.1 }}>
           Playlists
         </h2>
       </div>

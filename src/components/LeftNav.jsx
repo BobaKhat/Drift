@@ -28,7 +28,6 @@ const PANEL_LEFT = RAIL_INSET + RAIL_W + RAIL_GAP // map card's left edge (113) 
 
 const RAIL_BG = '#0F0F0F'
 const PANEL_BG = '#0F0F0F'
-const CARD = '#141416'
 const BORDER = '#222224'
 const ACCENT = '#F27F37'
 const ICON_REST = '#808080'
@@ -41,10 +40,8 @@ const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 // them. prefers-reduced-motion drops the whileHover entirely (see RailButton), so the transforms never
 // fire while the colour hover states stay intact.
 const ICON_SPRING = { type: 'spring', stiffness: 400, damping: 15 }
-
-// Recessed well — now only the Set Builder mini-bar's chevron, which lives on the panel rather than the
-// rail and so keeps the older pressed-in look. The rail's own buttons moved to the NEO_RAIL_* recipe.
-const WELL_SHADOW = 'inset -1px -1px 3px 0px #373737, inset 2px 2px 2px 0px rgba(0,0,0,0.7)'
+// Symmetric scale-pulse tween shared by the mini-bar's maximize glyph (matches the toolbar's recipe).
+const PULSE_TWEEN = { duration: 0.4, ease: 'easeInOut' }
 
 // The logo/profile PNGs bake the whole button (well + glyph + shadow) onto a canvas with the
 // circle slightly inset toward the top-left (shadow padding bottom-right). Given the canvas
@@ -432,8 +429,12 @@ function RailButton({ label, Icon, isActive, onClick, media, pinActiveHover }) {
 // Collapsed Set Builder — a thin bottom tab (Slice 9 final #5). Clicking anywhere re-expands the
 // panel, giving the user the whole map while staying in build mode.
 function SetBuilderMiniBar({ onExpand }) {
+  const reduce = useReducedMotion()
   return (
-    <button
+    // motion.button owns the hover trigger (whileHover) for the whole bar; the glyph reads the
+    // resulting "rest"/"hover" variant, same recipe as the icon-rail buttons.
+    <motion.button
+      initial="rest" animate="rest" whileHover={reduce ? undefined : 'hover'}
       onClick={onExpand}
       title="Expand Set Builder"
       style={{
@@ -442,13 +443,17 @@ function SetBuilderMiniBar({ onExpand }) {
       }}
     >
       <span style={{ fontFamily: FONT, fontSize: 16, fontWeight: 600, color: '#fff' }}>Set Builder</span>
-      <span style={{ width: 30, height: 30, borderRadius: '50%', background: CARD, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: WELL_SHADOW }}>
-        {/* chevron up = expand */}
-        <svg width="12" height="8" viewBox="0 0 12 8" fill="none" style={{ transform: 'rotate(180deg)' }}>
-          <path d="M1 1.5L6 6L11 1.5" stroke={ACCENT} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+      {/* Same treatment as an ACTIVE icon-rail button: sunken accent-ringed press surface + orange glyph. */}
+      <span style={{ width: 30, height: 30, borderRadius: '50%', background: NEO_BTN_PRESS_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `inset 0 0 0 1.5px ${SELECTED.border}, ${NEO_BTN_PRESS}` }}>
+        {/* universal maximize = square outline (restores the panel). Hover swells it a touch — a hint of
+            the panel growing back. */}
+        <motion.svg width="12" height="12" viewBox="0 0 12 12" fill="none"
+          variants={{ rest: { scale: 1 }, hover: { scale: [1, 1.18, 1], transition: PULSE_TWEEN } }}
+        >
+          <rect x="1.5" y="1.5" width="9" height="9" rx="1.5" stroke={ACCENT} strokeWidth="1.6" />
+        </motion.svg>
       </span>
-    </button>
+    </motion.button>
   )
 }
 
