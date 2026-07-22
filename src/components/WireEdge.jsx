@@ -20,30 +20,26 @@ import { WIRE_COLORS } from '../lib/compatibility'
 export const WIRE_STRONG = WIRE_COLORS.strong
 
 // —— Flow mode (Slice 10) ————————————————————————————————————————————————————————
-// In Flow ON every chain wire becomes a uniform dark cable and a single bright strobe pulse travels
-// head→tail across the whole chain, pausing between sweeps. Each wire runs the same CSS keyframe
-// (driftFlowStrobe, injected by DriftMap) — a comet dash sliding along the normalized path — but with
-// a staggered animation-delay so the pulse hands off wire→wire in order. All wires share one
-// FLOW_CYCLE_S period so they stay in lockstep across loops.
-export const DARK_WIRE = '#2A2A2A'
+// In Flow ON every chain wire becomes a uniform dark cable and bright comet pulses glide head→tail along
+// it. The pulses move at a CONSTANT physical speed and are launched at a CONSTANT physical spacing, both
+// independent of chain length — so adding songs never speeds the pulses up (the old fixed-total-sweep
+// scheme did), it just lets a longer chain hold more pulses in flight at once. Each wire runs one
+// continuous CSS stroke-dashoffset animation (driftFlowStrobe-i keyframes injected by DriftMap); because
+// every wire's dash pattern repeats every FLOW_SPACING and slides one spacing per FLOW_PERIOD_S, the
+// pulses read as a single coherent marching wave that hands off seamlessly across wire boundaries.
+export const DARK_WIRE = 'rgba(255,255,255,0.12)' // flow-mode cable — matches the axis crosshair (AXIS_COLOR)
 export const FLOW_STROBE_COLOR = '#F27F37'
-export const FLOW_SWEEP_S = 3.6   // total head→tail sweep time (regardless of chain length)
-export const FLOW_PAUSE_S = 1     // quiet gap between sweeps — short, so pulses repeat often
-export const FLOW_CYCLE_S = FLOW_SWEEP_S + FLOW_PAUSE_S
+export const FLOW_SPEED = 340        // canvas units / second — the constant pulse pace (song positions are canvas units)
+export const FLOW_SPACING = 1500     // canvas units between consecutive pulses; a chain N spacings long shows ~N pulses
+export const FLOW_PULSE_LEN = 240    // canvas-unit length of the bright comet dash (the rest of a spacing is the dark gap)
+// One dashoffset period slides the dash pattern forward by exactly one FLOW_SPACING. Every wire shares
+// this period, which (with the per-wire offsets from DriftMap) keeps all pulses locked into one wave.
+export const FLOW_PERIOD_S = FLOW_SPACING / FLOW_SPEED
 export const FLOW_STROBE_NAME = 'driftFlowStrobe'
-// The pulse is a single soft dash that glides via ONE continuous CSS animation on stroke-dashoffset
-// (linear) — no offset-path, no per-frame SVG mask, no JS timers — so it stays perfectly smooth and
-// display-synced. Two blurred layers (a wide dim halo + a narrow bright core, same dash so they move
-// locked together) feather it into an orange-core → dark-edge glow that blends into the cable. The
-// dash has a huge gap (one pulse per wire, never a repeat) and parks fully off the path end during the
-// pause; animation-fill-mode:backwards keeps it off the path start during the stagger delay too — so
-// no orange is ever left on any wire at rest.
-export const FLOW_DASH = '0.2 12'
-export const FLOW_OFF_START = 0.35   // dash + blur parked off the path start
-export const FLOW_OFF_END = -1.35    // dash + blur parked off the path end (held through the pause)
-// Percentage of the full cycle during which a single wire's pulse is mid-travel — the keyframe's
-// travel window. Equals one wire's slice (sweep / n) as a fraction of the whole cycle.
-export const flowStrobeActivePct = (n) => (100 * (FLOW_SWEEP_S / Math.max(1, n))) / FLOW_CYCLE_S
+// The pulse is a soft dash gliding via ONE continuous linear stroke-dashoffset animation — no offset-path,
+// no per-frame SVG mask, no JS timers — so it stays perfectly smooth and display-synced. Two blurred
+// layers (a wide dim halo + a narrow bright core, same dash so they move locked together) feather it into
+// an orange-core → dark-edge glow that blends into the cable.
 
 // Half-size of the node along the socket's axis (width for E/W, height for N/S), scaled the same
 // way the node's DOM is: counter-scale × the circle-tier head bump. Returned in flow units, which
@@ -101,32 +97,33 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
   // animation-delay staggers it after the upstream wires so it sweeps head→tail (Decision Log #51). The
   // wire stays clickable.
   if (flowMode) {
-    // Each wire gets a time slice PROPORTIONAL to its length (flowTiming, from DriftMap) so the pulse
-    // holds a constant speed across the whole chain instead of speeding up on long wires — a uniform,
-    // linear glide. Its own keyframe bakes that per-wire travel window; delay staggers it head→tail.
+    // This wire's dash pattern + offset keyframe come from DriftMap (flowTiming), keyed by its chain
+    // position. The dash repeats every FLOW_SPACING (normalized to this wire's own length) and its
+    // driftFlowStrobe-i keyframe slides the offset one spacing per FLOW_PERIOD_S — a constant-speed,
+    // evenly-spaced stream. Both blurred layers share it so the halo and hot core glide locked together.
     const i = data?.flowIndex ?? 0
     const t = flowTiming?.[i]
-    const delay = t ? t.delay : i * (FLOW_SWEEP_S / Math.max(1, data?.flowCount ?? 1))
-    // Both blurred layers share the exact same dash + keyframe so they glide locked together: the wide
-    // dim halo feathers the leading/trailing edges, the narrow bright core is the hot centre.
-    const comet = {
-      animation: `${FLOW_STROBE_NAME}-${i} ${FLOW_CYCLE_S}s linear infinite`,
-      animationDelay: `${delay}s`,
-      animationFillMode: 'backwards',
-    }
+    const comet = t ? { animation: `${FLOW_STROBE_NAME}-${i} ${FLOW_PERIOD_S}s linear infinite` } : undefined
     return (
       <>
         <path d={path} fill="none" stroke={DARK_WIRE} strokeWidth={2.5} strokeLinecap="round" />
-        <path
-          d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={9} strokeLinecap="round"
-          strokeOpacity={0.4} pathLength={1} strokeDasharray={FLOW_DASH}
-          style={{ ...comet, filter: 'blur(6px)' }}
-        />
-        <path
-          d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={3.5} strokeLinecap="round"
-          pathLength={1} strokeDasharray={FLOW_DASH}
-          style={{ ...comet, filter: 'blur(2px)' }}
-        />
+        {t && (
+          <>
+            {/* A soft comet: a wide dim halo + a narrow hot core, both the same sliding dash so they move
+                locked together. Round caps + blur feather the dash's leading/trailing ends so each pulse
+                fades and blends into the cable on its sides rather than reading as a hard segment. */}
+            <path
+              d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={11} strokeLinecap="round"
+              strokeOpacity={0.32} pathLength={1} strokeDasharray={t.dash}
+              style={{ ...comet, filter: 'blur(7px)' }}
+            />
+            <path
+              d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={3.5} strokeLinecap="round"
+              pathLength={1} strokeDasharray={t.dash}
+              style={{ ...comet, filter: 'blur(2.5px)' }}
+            />
+          </>
+        )}
         <path
           d={path} fill="none" stroke="transparent" strokeWidth={20} strokeLinecap="round"
           style={{ pointerEvents: 'stroke', cursor: 'pointer' }}

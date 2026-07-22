@@ -400,10 +400,22 @@ function RailButton({ label, Icon, isActive, onClick, media, pinActiveHover }) {
     style.color = '#CFCFCF'
   }
 
+  // The glyph's open ("hover") vs closed ("rest") variant, driven through `animate` from our OWN hover
+  // state rather than framer's whileHover gesture. That gesture is the whole reason the crate lid used to
+  // stick open: framer applies/removes whileHover only on pointerenter/leave, so flipping the prop while
+  // the pointer already sits on the icon does NOT drop the variant until you move off and back. Deriving
+  // the variant from `hover` (tracked via onMouseEnter/Leave) re-evaluates on every render, so a panel
+  // close animates the glyph shut immediately even under the still-hovering cursor.
+  //  • pinActiveHover + isActive → open the whole time the panel is open.
+  //  • hover (and not just-clicked, not reduced-motion) → the inactive-icon peek preview.
+  // suppressHover is set on click and cleared on pointer-leave, so clicking to close doesn't re-open as a
+  // hover preview; a fresh hover later still previews.
+  const open = (pinActiveHover && isActive) || (hover && !suppressHover && !reduce)
+
   return (
     // motion.button only carries the "rest"/"hover" variant context that the glyph reads; its own
     // background/shadow/colour stay pure inline style, so the raised/hover/active neomorphic states and
-    // the orange active ring are untouched — the hover animation layers on top and works on any button
+    // the orange active ring are untouched — the glyph animation layers on top and works on any button
     // whether or not its panel is the active one.
     <motion.button
       title={label}
@@ -411,13 +423,7 @@ function RailButton({ label, Icon, isActive, onClick, media, pinActiveHover }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => { setHover(false); setSuppressHover(false) }}
       initial="rest"
-      // Normally the glyph rests until hovered. For a pinActiveHover button (all three nav icons), being
-      // ACTIVE holds the glyph in its "hover" END state the whole time its panel is open; going inactive
-      // animates it back to "rest" (the reverse). whileHover normally overrides to "hover" on pointer-over,
-      // but is suppressed right after a click (until the pointer leaves) so closing a panel lets the glyph
-      // animate shut instead of staying open under the still-hovering cursor.
-      animate={pinActiveHover && isActive ? 'hover' : 'rest'}
-      whileHover={reduce || suppressHover ? undefined : 'hover'}
+      animate={open ? 'hover' : 'rest'}
       style={style}
     >
       <span style={{ width: GLYPH, height: GLYPH, display: 'flex' }}>

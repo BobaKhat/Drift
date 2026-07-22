@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TrackNode, { ZOOM_CARD, ZoomTierContext, BuildContext, BloomContext, SongPreviewCard, getTier, getNodeScale, NODE_PILL_W, NODE_CARD_W, NODE_PILL_H, NODE_CARD_H } from './TrackNode'
-import WireEdge, { FLOW_STROBE_NAME, FLOW_OFF_START, FLOW_OFF_END, FLOW_SWEEP_S, FLOW_CYCLE_S } from './WireEdge'
+import WireEdge, { FLOW_STROBE_NAME, FLOW_SPACING, FLOW_PULSE_LEN } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { computeStacks, stacksSignature } from '../lib/stacking'
 import { StackBadge, StackPopover, BADGE_FLOAT } from './StackBadges'
@@ -614,15 +614,17 @@ function AxisLayer({ preset, geom }) {
           axis end and hangs inward). pointerEvents:none so the furniture never eats a pan or a click. */}
       <ViewportPortal>
         <div style={{ pointerEvents: 'none' }}>
-          {/* Horizontal line — value 50 on the energy axis (canvas H/2), spanning the mood axis. */}
+          {/* Horizontal line — value 50 on the energy axis (canvas H/2), spanning the mood axis.
+              zIndex -1 keeps the crosshair BEHIND the songs (nodes sit at z-index 0+), so the lines
+              read as backdrop furniture rather than crossing over the album art. */}
           <div style={{
-            position: 'absolute', left: geom.AXIS_X[0], top: H / 2,
+            position: 'absolute', left: geom.AXIS_X[0], top: H / 2, zIndex: -1,
             width: geom.AXIS_X[1] - geom.AXIS_X[0], height: 1, background: AXIS_COLOR,
             transformOrigin: 'center', transform: 'translateY(-50%) scaleY(var(--axis-scale, 1))',
           }} />
           {/* Vertical line — value 50 on the mood axis (canvas W/2), spanning the energy axis. */}
           <div style={{
-            position: 'absolute', left: geom.W / 2, top: AXIS_Y[0],
+            position: 'absolute', left: geom.W / 2, top: AXIS_Y[0], zIndex: -1,
             width: 1, height: AXIS_Y[1] - AXIS_Y[0], background: AXIS_COLOR,
             transformOrigin: 'center', transform: 'translateX(-50%) scaleX(var(--axis-scale, 1))',
           }} />
@@ -1353,25 +1355,31 @@ function DriftMapInner({ tracks }) {
   }, [buildMode, buildGraph, hoverGroup, tracksById, chain.length])
   const chainSet = useMemo(() => new Set(chain), [chain])
 
-  // Strobe timing per chain wire, PROPORTIONAL to each wire's on-map length, so the pulse keeps a
-  // constant speed across the whole chain (a uniform, linear glide) rather than the equal-time-per-wire
-  // scheme that sped up on long wires. delay = fraction of the chain before this wire × sweep time;
-  // activePct = this wire's share of the sweep, as a % of the full cycle. Recomputed on node moves.
+  // Per chain-wire pulse geometry, in CONSTANT physical (canvas) units so the pulse speed never depends
+  // on chain length. For each wire we hand WireEdge a dash pattern + a stroke-dashoffset keyframe range,
+  // both normalized to that wire's own on-map length (its rendered path uses pathLength=1):
+  //   • dash    — a FLOW_PULSE_LEN-long bright comet, then the rest of one FLOW_SPACING as dark gap, so
+  //               pulses sit a fixed physical distance apart (⇒ a long chain carries several at once).
+  //   • from/to — the offset carries this wire's cumulative distance so its dashes line up with the
+  //               neighbours into one continuous wave; sliding from→to by exactly one FLOW_SPACING per
+  //               FLOW_PERIOD_S (in WireEdge) marches the pulses head→tail at the constant FLOW_SPEED.
+  // Recomputed on node moves so the spacing stays physical as the map reflows.
   const flowTiming = useMemo(() => {
     if (!buildMode || !flowMode || chain.length < 2) return null
     const posById = new Map(nodes.map((n) => [n.id, n.position]))
-    const lens = []
+    let cum = 0
+    const out = []
     for (let i = 0; i < chain.length - 1; i++) {
       const a = posById.get(chain[i]), b = posById.get(chain[i + 1])
-      lens.push(a && b ? Math.hypot(b.x - a.x, b.y - a.y) : 1)
+      const L = (a && b ? Math.hypot(b.x - a.x, b.y - a.y) : 1) || 1
+      const dashN = FLOW_PULSE_LEN / L
+      const gapN = Math.max(0.0001, (FLOW_SPACING - FLOW_PULSE_LEN) / L)
+      const from = cum / L
+      const to = from - FLOW_SPACING / L
+      out.push({ dash: `${dashN.toFixed(4)} ${gapN.toFixed(4)}`, from: from.toFixed(4), to: to.toFixed(4) })
+      cum += L
     }
-    const L = lens.reduce((s, l) => s + l, 0) || 1
-    let cum = 0
-    return lens.map((l) => {
-      const delay = (cum / L) * FLOW_SWEEP_S
-      cum += l
-      return { delay, activePct: ((l / L) * FLOW_SWEEP_S / FLOW_CYCLE_S) * 100 }
-    })
+    return out
   }, [buildMode, flowMode, chain, nodes])
 
   // Inject build-mode presentation into node data: socket dots for chain + orphan songs, the head
@@ -1920,12 +1928,12 @@ function DriftMapInner({ tracks }) {
       {buildMode && (
         <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} stacksRef={stacksRef} onReleaseStack={onReleaseStack} onSnapTargetChange={setSnapTargetId} />
       )}
-      {/* Strobe keyframes — one continuous linear stroke-dashoffset animation PER wire. Each wire's
-          keyframe holds its own travel window (activePct, ∝ its length) so the dash crosses at a
-          constant speed chain-wide; it slides from off the path start (FLOW_OFF_START) to off the end
-          (FLOW_OFF_END), then holds off the end through the pause (Decision Log #51). */}
+      {/* Strobe keyframes — one continuous linear stroke-dashoffset animation PER wire. Each wire slides
+          its dash pattern from `from` to `to` (a drop of exactly one FLOW_SPACING, so the loop is
+          seamless) over FLOW_PERIOD_S. The per-wire `from` bakes in cumulative chain distance, so all
+          wires' dashes stay locked into one constant-speed, evenly-spaced marching wave (Decision Log #51). */}
       {buildMode && flowMode && flowTiming && (
-        <style>{flowTiming.map((w, i) => `@keyframes ${FLOW_STROBE_NAME}-${i}{0%{stroke-dashoffset:${FLOW_OFF_START}}${w.activePct.toFixed(3)}%{stroke-dashoffset:${FLOW_OFF_END}}100%{stroke-dashoffset:${FLOW_OFF_END}}}`).join('')}</style>
+        <style>{flowTiming.map((w, i) => `@keyframes ${FLOW_STROBE_NAME}-${i}{from{stroke-dashoffset:${w.from}}to{stroke-dashoffset:${w.to}}}`).join('')}</style>
       )}
       {/* Density nebula — canvas-space gas under the songs. Rendered before AxisLayer so its portal
           content is inserted first and the crosshair stays on top of the cloud; both sit below the

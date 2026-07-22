@@ -371,7 +371,7 @@ export default function SetBuilderPanel() {
       {/* Title + minimize (Slice 9 final #5) — collapse the panel to a thin bottom tab for full map
           visibility while staying in build mode. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 18 }}>
-        <h2 style={{ margin: 0, fontSize: 27, fontWeight: 600, color: '#fff', lineHeight: 1.05 }}>Set Builder</h2>
+        <h2 style={{ margin: 0, fontSize: 24, fontWeight: 600, color: '#fff', lineHeight: 1.1 }}>Set Builder</h2>
         {/* Same construction as the toolbar's chevron: a raised button sitting directly on a slab (the
             panel), so it takes the outer-glow recipe rather than the tray buttons' inner bevel — there's
             no trench floor next to it for the outer light to wash out. See the rule atop the NEO_* block.
