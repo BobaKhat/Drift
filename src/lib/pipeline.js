@@ -1,6 +1,6 @@
 import { supabase } from './supabase'
 import { getAudioFeatures } from './soundnet'
-import { searchItunes, getAlbumArt, getPreviewUrl } from './itunes'
+import { searchItunes, getVerifiedItunesMatch } from './itunes'
 import { titlesMatch, titleSimilarity } from './match'
 
 // Parses "Artist – Title" or "Artist - Title" into { artist, title }
@@ -262,22 +262,26 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
     }
   }
 
-  // Album art resolution: the corroboration search's art (full-query iTunes hit) first, then a
-  // Spotify-provided cover, then a dedicated cleaned-query lookup (iTunes → Deezer fallback) for the
-  // over-stuffed queries that missed above, then any cached art. null → the music-note placeholder.
-  const itunesArt = itunes?.albumArtUrl ?? null
-  let resolvedArt = itunesArt ?? spotifyArtUrl ?? null
-  if (!resolvedArt) resolvedArt = await getAlbumArt(artist, title)
-  resolvedArt = resolvedArt ?? cached?.album_art_url ?? null
+  // Album art + 30-second preview (Slice 13) both come from ONE verified iTunes result — the match
+  // that passes artist/title/duration verification (limit=10, see getVerifiedItunesMatch). Tying them
+  // together means art and preview can never disagree: if the best candidate fails the duration check
+  // and nothing else verifies, BOTH are null (no cover for a rejected preview).
+  const { albumArtUrl: verifiedArt, previewUrl: verifiedPreview } = await getVerifiedItunesMatch(
+    artist,
+    title,
+    { album: cached?.album ?? null, duration: features?.duration ?? null },
+  )
 
-  // 30-second preview (Slice 13): the accuracy-scored iTunes lookup (limit=10 + artist/title/duration
-  // verification — see getPreviewUrl), then any cached URL. We no longer trust the corroboration
-  // search's loose limit=1 previewUrl — that's the source of wrong-song previews. null → no preview.
-  let resolvedPreview = await getPreviewUrl(artist, title, {
-    album: cached?.album ?? null,
-    duration: features?.duration ?? null,
-  })
-  resolvedPreview = resolvedPreview ?? cached?.preview_url ?? null
+  // Art: the verified iTunes/Deezer cover, then a trustworthy Spotify-provided cover, then any cached
+  // art. No loose limit=1 fallback — a wrong-result cover is worse than the placeholder. Uses
+  // truthiness (not ??) so an empty-string art never wins over a real fallback. null → placeholder.
+  let resolvedArt = null
+  if (verifiedArt) resolvedArt = verifiedArt
+  else if (spotifyArtUrl) resolvedArt = spotifyArtUrl
+  else if (cached?.album_art_url) resolvedArt = cached.album_art_url
+
+  // Preview: the verified iTunes/Deezer URL, then any cached URL. null → play button greyed out.
+  const resolvedPreview = verifiedPreview ?? cached?.preview_url ?? null
 
   const track = {
     name: title,

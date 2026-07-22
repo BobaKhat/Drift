@@ -104,6 +104,24 @@ function normalizeTitleForMatch(title) {
     .toLowerCase()
 }
 
+// —— Version-word filter (whitelist-aware) ——————————————————————————————————————————————————————————
+// A result is a DIFFERENT release from the one searched when its trackName carries a version marker
+// (remix, edit, cover, …). But legitimate EDM originals are routinely listed as "(Original Mix)" /
+// "(Extended Mix)" — the canonical release, not a derivative — so those (and bare "Original"/
+// "Extended") are WHITELISTED: stripped from the name BEFORE the check. Any version word that survives
+// the strip means a genuinely different version → reject.
+const VERSION_WHITELIST = /\b(original mix|extended mix|original|extended)\b/gi
+const VERSION_WORDS =
+  /\b(remix|bootleg|cover|slowed|reverb|sped up|acoustic|nightcore|hardstyle|vip|dub|radio|edit|instrumental|mixed|mix|version)\b/i
+
+// True when a trackName (or the search query) names a rejectable alternate version. Strip the
+// whitelisted "(Original/Extended Mix)" markers first, THEN test for any remaining version word.
+//   "No Room For A Saint (Extended Mix)"    → strip "Extended Mix" → no version word → NOT rejected
+//   "The Less I Know The Better (Club Edit)" → "Edit" remains       → rejected
+function isRejectedVersion(text) {
+  return VERSION_WORDS.test((text || '').replace(VERSION_WHITELIST, ' '))
+}
+
 // Score one iTunes result against the expected artist(s) + title.
 //   +2 for each expected-artist name found (case-insensitive, partial) in result.artistName
 //   +3 if the expected title appears in result.trackName (both stripped of parentheticals)
@@ -123,16 +141,26 @@ function scoreItunesResult(result, expectedArtists, expectedTitle) {
   return { score, artistMatches }
 }
 
-// Pick the best iTunes result (or null). Candidates are ranked by score, ties broken by higher
-// trackId (usually the more recent release). We then scan best-first and return the first candidate
-// that passes BOTH verifications:
+// Pick the best iTunes result (or null). When the user's query asks for the ORIGINAL (no version
+// word), every candidate whose trackName is a remix/edit/version is hard-removed from the pool BEFORE
+// scoring — a remix must never win just because the original isn't in iTunes' top 10 (common for
+// heavily-remixed tracks). If the query itself contains a version word, the filter is skipped and all
+// candidates score normally. Whatever survives is ranked by score, ties broken by higher trackId
+// (usually the more recent release). We then scan best-first and return the first candidate that
+// passes BOTH verifications:
 //   • artist  — at least one expected artist name appears (zero → reject, wrong artist entirely)
 //   • duration — within 20s of the SoundNet duration when both are known (reject a different
 //                version/song). Rejected candidates fall through to the next best.
+// An empty survivor pool → null → placeholder art + disabled playback (correct behavior).
 function pickBestItunesResult(results, artist, title, expectedDurationSec) {
   const expectedArtists = splitArtistNames(artist)
   const expectedTitle = normalizeTitleForMatch(title)
-  const ranked = results
+  const queryWantsVersion = isRejectedVersion(`${artist} ${title}`)
+  // Check the RAW trackName — version markers usually live in parentheticals.
+  const candidates = queryWantsVersion
+    ? results
+    : results.filter((r) => !isRejectedVersion(r.trackName))
+  const ranked = candidates
     .map((r) => ({ r, ...scoreItunesResult(r, expectedArtists, expectedTitle) }))
     .sort((a, b) => b.score - a.score || (b.r.trackId || 0) - (a.r.trackId || 0))
 
@@ -159,23 +187,49 @@ async function itunesPreviewResults(query) {
   }
 }
 
-async function deezerPreviewForQuery(query) {
+// Verified Deezer fallback (used when iTunes verification finds nothing). Deezer's structured query
+// syntax — artist:"…" track:"…" — is far more precise than iTunes' freetext, so it often surfaces an
+// original that iTunes buried under covers/remixes. Applies the SAME verification as iTunes:
+//   • version pre-filter — drop remix/edit/etc. titles unless the query itself asks for a version
+//   • artist  — result.artist.name must contain an expected artist name (case-insensitive partial)
+//   • duration — within 20s of the SoundNet duration when both are known (Deezer durations are in
+//                SECONDS, not ms)
+// Returns the first result that passes all three, or null.
+async function verifiedDeezerLookup(artist, title, expectedDurationSec) {
+  let data
   try {
-    const res = await fetch(`/api/deezer/search?q=${encodeURIComponent(query)}`)
+    const q = `artist:"${artist}" track:"${title}"`
+    const res = await fetch(`/api/deezer/search?q=${encodeURIComponent(q)}&limit=5`)
     if (!res.ok) return null
-    const data = await res.json()
-    return data.data?.[0]?.preview ?? null
+    data = await res.json()
   } catch {
     return null
   }
+
+  const results = data?.data ?? []
+  const expectedArtists = splitArtistNames(artist)
+  const queryWantsVersion = isRejectedVersion(`${artist} ${title}`)
+  const candidates = queryWantsVersion
+    ? results
+    : results.filter((r) => !isRejectedVersion(r.title))
+
+  for (const r of candidates) {
+    const deezerArtist = (r.artist?.name || '').toLowerCase()
+    if (!expectedArtists.some((name) => deezerArtist.includes(name))) continue // wrong artist, reject
+    if (expectedDurationSec != null && r.duration != null) {
+      if (Math.abs(r.duration - expectedDurationSec) > 20) continue // different version/song, try next
+    }
+    return r
+  }
+  return null
 }
 
-// Preview URL for a track. Cleans the query (adding album when known — a more specific query yields
-// better results), pulls the top 10 iTunes song results, and selects the best verified match. When
-// iTunes returns candidates but none survive verification, we return null (no preview beats a wrong
-// one). Deezer is used only when iTunes carries nothing at all for the query — a genuine absence,
-// not a mismatch — since Deezer's loose top-hit has the same wrong-song failure mode.
-export async function getPreviewUrl(artist, title, { album = null, duration = null } = {}) {
+// Fetch iTunes candidates for a track and pick the single best VERIFIED result. Cleans the query
+// (adding album when known — a more specific query yields better results), pulls the top 10 song
+// results, and selects the best match that passes artist + duration verification. Returns
+// { results, best }: the raw candidate list (used to distinguish "no coverage" from "coverage but
+// nothing verified") plus that best result, or null when none survive / iTunes has no coverage.
+async function verifiedItunesLookup(artist, title, { album = null, duration = null } = {}) {
   const base = buildArtQuery(artist, title)
   const query = album ? `${base} ${album}` : base
 
@@ -183,10 +237,37 @@ export async function getPreviewUrl(artist, title, { album = null, duration = nu
   // Album may over-constrain (or be wrong) and zero out the results — retry the bare query.
   if (results.length === 0 && album) results = await itunesPreviewResults(base)
 
-  if (results.length > 0) {
-    const best = pickBestItunesResult(results, artist, title, duration)
-    return best?.previewUrl ?? null // candidates existed but none verified → no preview
+  const best = results.length > 0 ? pickBestItunesResult(results, artist, title, duration) : null
+  return { results, best }
+}
+
+// Verified match for a track: album art AND preview always come from the SAME verified result, so
+// they can never disagree (Decision — art must be tied to the verified preview, never a loose top
+// hit). iTunes is tried first; a verified iTunes hit supplies both from its own fields. When iTunes
+// verification finds nothing — zero coverage, OR (common for heavily-remixed tracks) a top 10 that's
+// all covers/remixes the verifier rejects — we fall back to a precise, structured Deezer search under
+// the same verification. A verified Deezer hit supplies both cover_xl/cover_big art and its MP3
+// preview. If Deezer also fails, BOTH are null: placeholder art + a greyed-out play button.
+export async function getVerifiedItunesMatch(artist, title, { album = null, duration = null } = {}) {
+  const { best } = await verifiedItunesLookup(artist, title, { album, duration })
+  if (best) {
+    return {
+      albumArtUrl: best.artworkUrl100 ? best.artworkUrl100.replace('100x100bb', '600x600bb') : null,
+      previewUrl: best.previewUrl ?? null,
+    }
   }
-  // iTunes has no coverage for this query → Deezer fallback (genuinely absent, not a mismatch).
-  return await deezerPreviewForQuery(base)
+
+  // iTunes verification returned null → verified Deezer fallback (both art + preview, or null/null).
+  const deezer = await verifiedDeezerLookup(artist, title, duration)
+  const albumArtUrl =
+    deezer?.album?.cover_xl ?? deezer?.album?.cover_big ?? deezer?.album?.cover_medium ?? null
+  const previewUrl = deezer?.preview ?? null
+  return { albumArtUrl, previewUrl }
+}
+
+// Preview URL for a track (lazy resolver in preview.js). Thin wrapper over getVerifiedItunesMatch —
+// keeps the same verified-iTunes → Deezer-fallback → null behavior, but only the preview half.
+export async function getPreviewUrl(artist, title, opts = {}) {
+  const { previewUrl } = await getVerifiedItunesMatch(artist, title, opts)
+  return previewUrl
 }
