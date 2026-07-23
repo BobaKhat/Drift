@@ -24,21 +24,28 @@ export async function backfillMissingArt() {
     if (error || !rows?.length) return
 
     let resolved = 0
+    let failed = 0
     for (const row of rows) {
-      const { albumArtUrl: art } = await getVerifiedItunesMatch(row.artist, row.name, {
-        album: row.album ?? null,
-        duration: row.duration ?? null,
-      })
-      if (art) {
-        const { error: upErr } = await supabase
-          .from('tracks')
-          .update({ album_art_url: art })
-          .eq('id', row.id)
-        if (!upErr) resolved++
+      try {
+        const { albumArtUrl: art } = await getVerifiedItunesMatch(row.artist, row.name, {
+          album: row.album ?? null,
+          duration: row.duration ?? null,
+        })
+        if (art) {
+          const { error: upErr } = await supabase
+            .from('tracks')
+            .update({ album_art_url: art })
+            .eq('id', row.id)
+          if (upErr) throw upErr
+          resolved++
+        }
+      } catch (err) {
+        failed++
+        console.log(`[backfill] failed for "${row.artist} - ${row.name}" (${err?.message ?? 'error'})`)
       }
-      await new Promise((r) => setTimeout(r, 150)) // gentle pacing on the iTunes/Deezer proxies
+      await new Promise((r) => setTimeout(r, 250)) // gentle pacing on the iTunes/Deezer proxies
     }
-    console.log(`[backfill] Resolved art for ${resolved} of ${rows.length} tracks with missing art`)
+    console.log(`[backfill] Backfill complete: ${resolved} resolved, ${failed} failed`)
   } catch (err) {
     console.log(`[backfill] skipped (${err?.message ?? 'error'})`)
   }

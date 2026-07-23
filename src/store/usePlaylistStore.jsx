@@ -8,6 +8,7 @@ import {
 } from '../lib/playlists'
 import { runImport, retryUnresolved } from '../lib/import'
 import { saveSet } from '../lib/sets'
+import { setArtResolvedHandler } from '../lib/preview'
 
 // Central app state for the playlist model + import flow.
 // One playlist is active on the map at a time; the import flow is a small state machine:
@@ -26,6 +27,16 @@ export function PlaylistProvider({ children }) {
   const [activePlaylistId, setActivePlaylistId] = useState(null)
   const [activeTracks, setActiveTracks] = useState([])
   const [loading, setLoading] = useState(true)
+
+  // Preview resolution (src/lib/preview.js) is self-healing for art: when a lazy lookup finds album
+  // art for a track that had none, it persists to Supabase and calls back here so the map/deck reflect
+  // the new cover immediately, without a reload.
+  useEffect(() => {
+    setArtResolvedHandler((id, url) => {
+      setActiveTracks((prev) => prev.map((t) => (t.id === id ? { ...t, album_art_url: url } : t)))
+    })
+    return () => setArtResolvedHandler(null)
+  }, [])
 
   const [importState, setImportState] = useState(null) // null|'welcome'|'steps'|'progress'|'reconcile'
   const [progress, setProgress] = useState({ current: 0, total: 0, name: '' })

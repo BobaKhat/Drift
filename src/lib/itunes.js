@@ -110,7 +110,7 @@ function normalizeTitleForMatch(title) {
 // "(Extended Mix)" — the canonical release, not a derivative — so those (and bare "Original"/
 // "Extended") are WHITELISTED: stripped from the name BEFORE the check. Any version word that survives
 // the strip means a genuinely different version → reject.
-const VERSION_WHITELIST = /\b(original mix|extended mix|original|extended)\b/gi
+const VERSION_WHITELIST = /\b(original mix|extended mix|radio edit|original|extended)\b/gi
 const VERSION_WORDS =
   /\b(remix|bootleg|cover|slowed|reverb|sped up|acoustic|nightcore|hardstyle|vip|dub|radio|edit|instrumental|mixed|mix|version)\b/i
 
@@ -122,9 +122,39 @@ function isRejectedVersion(text) {
   return VERSION_WORDS.test((text || '').replace(VERSION_WHITELIST, ' '))
 }
 
+// —— Compilation / "Various Artists" penalty ————————————————————————————————————————————————————————
+// Artist + title can both match while the art is still wrong: a "2010s Hits" or "Techno Tuesday
+// Vol. 3" compilation carries generic playlist artwork, not the original release's cover. This is a
+// SOFT penalty (score -4), not a hard reject — a compilation still wins when it's the only result
+// with the right artist, but a genuine original alongside it now outranks it.
+const COMPILATION_KEYWORDS = [
+  'hits', 'best of', 'greatest', 'compilation', 'vol.', 'volume', 'playlist',
+  'mix tape', 'mixtape', 'anthems', 'essentials', 'rewind', 'sessions', 'presents', 'collection',
+]
+function hasCompilationKeyword(name) {
+  const lower = (name || '').toLowerCase()
+  return COMPILATION_KEYWORDS.some((kw) => lower.includes(kw))
+}
+
+// iTunes: "Various Artists" collections, a compilation-keyword collectionName, or a suspiciously
+// large trackCount (a normal album runs 8-16 tracks; compilations tend to run 20+).
+function isCompilationRelease({ collectionArtistName, collectionName, trackCount } = {}) {
+  return (
+    (collectionArtistName || '').toLowerCase() === 'various artists' ||
+    hasCompilationKeyword(collectionName) ||
+    (trackCount ?? 0) >= 20
+  )
+}
+
+// Deezer: no collectionArtistName equivalent, so just the album title keywords + track count.
+function isDeezerCompilationAlbum(result) {
+  return hasCompilationKeyword(result.album?.title) || (result.album?.nb_tracks ?? 0) >= 20
+}
+
 // Score one iTunes result against the expected artist(s) + title.
 //   +2 for each expected-artist name found (case-insensitive, partial) in result.artistName
 //   +3 if the expected title appears in result.trackName (both stripped of parentheticals)
+//   -4 if the result looks like a compilation/"Various Artists" release (see isCompilationRelease)
 // Returns { score, artistMatches } — artistMatches drives the final artist verification.
 function scoreItunesResult(result, expectedArtists, expectedTitle) {
   const artistName = (result.artistName || '').toLowerCase()
@@ -138,6 +168,7 @@ function scoreItunesResult(result, expectedArtists, expectedTitle) {
     }
   }
   if (expectedTitle && trackName.includes(expectedTitle)) score += 3
+  if (isCompilationRelease(result)) score -= 4
   return { score, artistMatches }
 }
 
@@ -213,7 +244,13 @@ async function verifiedDeezerLookup(artist, title, expectedDurationSec) {
     ? results
     : results.filter((r) => !isRejectedVersion(r.title))
 
-  for (const r of candidates) {
+  // Soft compilation penalty (see isDeezerCompilationAlbum): rank non-compilation candidates first,
+  // stable-sorted so ties keep Deezer's original relevance order. A compilation still wins below if
+  // it's the only candidate that passes the artist + duration checks.
+  const deezerScore = (r) => (isDeezerCompilationAlbum(r) ? -4 : 0)
+  const ranked = [...candidates].sort((a, b) => deezerScore(b) - deezerScore(a))
+
+  for (const r of ranked) {
     const deezerArtist = (r.artist?.name || '').toLowerCase()
     if (!expectedArtists.some((name) => deezerArtist.includes(name))) continue // wrong artist, reject
     if (expectedDurationSec != null && r.duration != null) {
