@@ -1,12 +1,11 @@
 import { supabase } from './supabase'
-import { demoTrackRows } from '../data/demoLibrary'
+import { DEMO_PLAYLISTS, demoTrackRow } from '../data/demoLibrary'
 
 // Playlist persistence. One playlist is active on the map at a time; switching swaps the
 // visible songs. user_id is "demo" until auth lands. The map IS the song list — these
 // helpers just manage which track rows belong to which playlist.
 
 const DEMO_USER = 'demo'
-const DEMO_NAME = 'Demo Library'
 
 const keyOf = (artist, name) => `${(artist || '').toLowerCase()}|||${(name || '').toLowerCase()}`
 
@@ -66,18 +65,36 @@ export async function linkTracks(playlistId, trackIds) {
   if (error) throw new Error(`linkTracks failed: ${error.message}`)
 }
 
-// Upsert the baked demo tracks into the `tracks` cache and return their full rows (with ids).
-async function upsertDemoTracks() {
-  const rows = demoTrackRows()
-  const { data: existing } = await supabase
-    .from('tracks')
-    .select('*')
-    .in('name', rows.map((r) => r.name))
+// Look up existing track rows by name, chunked so the `in(...)` filter can't blow the URL length
+// on a fresh-clone seed (the two demo playlists carry a few hundred names between them).
+async function fetchTracksByName(names) {
+  const out = []
+  for (let i = 0; i < names.length; i += 50) {
+    const { data, error } = await supabase
+      .from('tracks')
+      .select('*')
+      .in('name', names.slice(i, i + 50))
+    if (error) throw new Error(`demo track lookup failed: ${error.message}`)
+    out.push(...(data || []))
+  }
+  return out
+}
 
-  const found = new Map((existing || []).map((t) => [keyOf(t.artist, t.name), t]))
-  const toInsert = rows
-    .filter((r) => !found.has(keyOf(r.artist, r.name)))
-    .map((r) => ({ ...r, analyzed_at: new Date().toISOString() }))
+// Upsert baked demo track rows into the `tracks` cache; return a map keyed by artist|||name → the
+// full row (with id) for every input row. Existing rows are reused, so re-seeding is a no-op.
+async function upsertDemoTracks(rows) {
+  const existing = await fetchTracksByName(rows.map((r) => r.name))
+  const found = new Map(existing.map((t) => [keyOf(t.artist, t.name), t]))
+  // Dedupe by artist|||name: a handful of tracks appear in both demo playlists, so the same row can
+  // arrive twice — insert each new track once, then both playlists link to the shared id.
+  const toInsert = []
+  const queued = new Set()
+  for (const r of rows) {
+    const k = keyOf(r.artist, r.name)
+    if (found.has(k) || queued.has(k)) continue
+    queued.add(k)
+    toInsert.push({ ...r, analyzed_at: new Date().toISOString() })
+  }
 
   let inserted = []
   if (toInsert.length) {
@@ -86,22 +103,33 @@ async function upsertDemoTracks() {
     inserted = data
   }
 
-  const all = new Map([...(existing || []), ...inserted].map((t) => [keyOf(t.artist, t.name), t]))
-  return rows.map((r) => all.get(keyOf(r.artist, r.name))).filter(Boolean)
+  return new Map([...existing, ...inserted].map((t) => [keyOf(t.artist, t.name), t]))
 }
 
-// Idempotently ensure the "Demo Library" playlist exists for the demo user and return it.
+// Idempotently ensure BOTH demo playlists (src/data/demoLibrary.json) exist for the demo user,
+// seeding tracks from the baked JSON with no external API calls. Returns the default playlist
+// ("House & Tech House") so the caller can load it on the map; the switcher lists both.
 export async function ensureDemoLibrary(userId = DEMO_USER) {
   const { data: existing } = await supabase
     .from('playlists')
     .select('*')
     .eq('user_id', userId)
-    .eq('name', DEMO_NAME)
-    .limit(1)
-  if (existing?.[0]) return existing[0]
+  const byName = new Map((existing || []).map((p) => [p.name, p]))
 
-  const tracks = await upsertDemoTracks()
-  const playlist = await createPlaylist(DEMO_NAME, userId)
-  await linkTracks(playlist.id, tracks.map((t) => t.id))
-  return playlist
+  // Only touch the tracks cache for playlists we still have to create.
+  const missing = DEMO_PLAYLISTS.filter((cfg) => !byName.has(cfg.name))
+  if (missing.length) {
+    const trackMap = await upsertDemoTracks(missing.flatMap((cfg) => cfg.tracks.map(demoTrackRow)))
+    for (const cfg of missing) {
+      const playlist = await createPlaylist(cfg.name, userId)
+      const ids = cfg.tracks
+        .map((t) => trackMap.get(keyOf(t.artist, t.name))?.id)
+        .filter(Boolean)
+      await linkTracks(playlist.id, ids)
+      byName.set(cfg.name, playlist)
+    }
+  }
+
+  const def = DEMO_PLAYLISTS.find((c) => c.default) || DEMO_PLAYLISTS[0]
+  return byName.get(def.name)
 }

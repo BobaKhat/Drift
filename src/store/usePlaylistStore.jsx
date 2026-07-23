@@ -294,7 +294,7 @@ export function PlaylistProvider({ children }) {
 
   // Demo path: instant, persisted, tagged user_id='demo'.
   const loadDemo = useCallback(async () => {
-    setProgress({ current: 0, total: 1, name: 'Demo Library' })
+    setProgress({ current: 0, total: 1, name: 'Demo library' })
     setImportState('progress')
     try {
       const playlist = await ensureDemoLibrary('demo')

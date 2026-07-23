@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePlaylistStore } from '../../store/usePlaylistStore'
-import { demoTrackRows } from '../../data/demoLibrary'
+import { demoArtUrls } from '../../data/demoLibrary'
 import { C, FONT, RADIUS } from './tokens'
 import { ModalCard } from './pieces'
 import MiniMapLoader from './MiniMapLoader'
@@ -83,7 +83,7 @@ export default function ProgressCard() {
     const out = []
     const push = (u) => { if (u && !seen.has(u)) { seen.add(u); out.push(u) } }
     for (const t of activeTracks ?? []) push(t.album_art_url)
-    for (const t of demoTrackRows()) push(t.album_art_url)
+    for (const u of demoArtUrls()) push(u)
     return out.slice(0, 30)
   }, [activeTracks])
 
