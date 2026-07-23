@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/api/itunes/:path*", "destination": "https://itunes.apple.com/:path*" },
+    { "source": "/api/deezer/:path*", "destination": "https://api.deezer.com/:path*" },
+    { "source": "/api/spotify/:path*", "destination": "https://open.spotify.com/:path*" }
+  ]
+}
