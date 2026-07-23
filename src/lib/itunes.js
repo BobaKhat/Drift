@@ -156,8 +156,12 @@ const VERSION_WORDS =
 
 // True when a trackName (or the search query) names a rejectable alternate version. Strip the
 // whitelisted "(Original/Extended Mix)" markers first, THEN test for any remaining version word.
-//   "No Room For A Saint (Extended Mix)"    → strip "Extended Mix" → no version word → NOT rejected
-//   "The Less I Know The Better (Club Edit)" → "Edit" remains       → rejected
+// The version word can sit ANYWHERE in the string — inside a parenthetical "(Club Edit)" OR after a
+// dash "- Dom Dolla Remix" — so we scan the whole text, not just the parenthetical. A dash is a
+// regex word boundary, so "\bremix\b" matches "… - Dom Dolla Remix" exactly as it does "(… Remix)".
+//   "No Room For A Saint (Extended Mix)"                 → strip "Extended Mix" → no version → NOT rejected
+//   "The Less I Know The Better (Club Edit)"             → "Edit" remains                     → rejected
+//   "New Gold (feat. …) - Dom Dolla Remix"               → "Remix" after the dash             → rejected
 function isRejectedVersion(text) {
   return VERSION_WORDS.test((text || '').replace(VERSION_WHITELIST, ' '))
 }

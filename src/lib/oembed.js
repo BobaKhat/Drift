@@ -49,17 +49,35 @@ function parseEmbed(html) {
   return { artist, title, ogImage, duration }
 }
 
+// Spotify's embed endpoint intermittently hangs or returns a 504 from behind our proxy. A plain
+// fetch has no deadline, so a hung request would block the whole (sequential) import forever instead
+// of failing over to a retry. Abort each attempt after this long so a stall becomes a caught error.
+const EMBED_TIMEOUT_MS = 6000
+
+// Single embed fetch with a hard timeout — an abort (stall) rejects with an AbortError, which the
+// retry loop treats the same as a 504/HTTP error.
+async function fetchEmbed(id) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), EMBED_TIMEOUT_MS)
+  try {
+    return await fetch(`/api/spotify/embed/track/${id}`, { signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function resolveSpotifyUrl(url) {
   const id = url.match(TRACK_URL)?.[1]
   if (!id) throw new Error(`Not a Spotify track URL: ${url}`)
 
-  // Retry with backoff if a throttled/partial response slips through, rather than dropping
-  // the track into the unresolved bucket.
+  // Retry rather than dropping the track into the unresolved bucket when the embed request fails
+  // transiently: a 504 (gateway timeout), a request that stalls past EMBED_TIMEOUT_MS (AbortError),
+  // a 429 throttle, or a throttled/partial body. Wait 1s between attempts before giving up.
   let lastErr
   for (let attempt = 1; attempt <= 3; attempt++) {
     await pace()
     try {
-      const res = await fetch(`/api/spotify/embed/track/${id}`)
+      const res = await fetchEmbed(id)
       if (res.status === 429) throw new Error('Spotify throttled (429)')
       if (!res.ok) throw new Error(`Spotify embed HTTP ${res.status}`)
 
@@ -68,8 +86,8 @@ export async function resolveSpotifyUrl(url) {
       console.log(`[oembed] resolved: artist="${artist}" title="${title}" duration=${duration ?? 'null'} ogImage=${ogImage ?? 'null'}`)
       return { artist, title, ogImage, duration }
     } catch (err) {
-      lastErr = err
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 800 * attempt))
+      lastErr = err.name === 'AbortError' ? new Error(`Spotify embed timed out (>${EMBED_TIMEOUT_MS}ms)`) : err
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 1000))
     }
   }
   throw lastErr
