@@ -2,7 +2,7 @@
 "playlists": [
 {
 "key": "house",
-"name": "House & Tech House",
+"name": "Demo 1",
 "default": true,
 "tracks": [
 {
@@ -3269,7 +3269,7 @@
 },
 {
 "key": "melodic",
-"name": "Melodic & Euphoric",
+"name": "Demo 2",
 "default": false,
 "tracks": [
 {

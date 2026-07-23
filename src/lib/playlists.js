@@ -108,7 +108,7 @@ async function upsertDemoTracks(rows) {
 
 // Idempotently ensure BOTH demo playlists (src/data/demoLibrary.json) exist for the demo user,
 // seeding tracks from the baked JSON with no external API calls. Returns the default playlist
-// ("House & Tech House") so the caller can load it on the map; the switcher lists both.
+// ("Demo 1") so the caller can load it on the map; the switcher lists both.
 export async function ensureDemoLibrary(userId = DEMO_USER) {
   const { data: existing } = await supabase
     .from('playlists')
