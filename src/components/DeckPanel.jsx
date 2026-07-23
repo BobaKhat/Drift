@@ -727,16 +727,19 @@ function NextUp({ track, nextTrack }) {
       // Measured: 102px of content in an 88px box, so the badges ended up 2px off the bottom edge
       // against 16px above the label. The 14px is reclaimed from the internal spacing below (NOT from
       // the tile's height — this row shares its band with the disc/visualizer, and growing it would
-      // just move the squeeze onto them). `center` then splits whatever slack is left evenly.
-      display: 'flex', flexDirection: 'column', gap: 6, justifyContent: 'center',
+      // just move the squeeze onto them). `flex-start` pins the "NEXT UP" header to the tile's top
+      // edge — the same anchor Compatible Keys uses for its header — so the block below can line its
+      // art/name/artist row up with the top of that tile's recessed key box.
+      display: 'flex', flexDirection: 'column', justifyContent: 'flex-start',
     }}>
       <div style={{ fontFamily: FONT, fontSize: 10, fontWeight: 500, color: SUB, letterSpacing: '0.04em' }}>NEXT UP</div>
       {nextTrack ? (
-        // marginTop:auto bottom-anchors this block against the tile's content floor — the exact same
-        // anchor the empty state uses (flex:1 + justifyContent:flex-end below). Without it the block
-        // floated on the tile's justifyContent:center, so the populated state sat a few px higher than
-        // the empty one and its badge row drifted off the Compatible Keys badge line.
-        <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        // Top-anchored to the key box: marginTop 8 mirrors the Compatible Keys well's own marginTop,
+        // and with identical header + padding on both tiles that lands the art/name/artist row's top
+        // edge exactly on the top edge of the recessed key box next door. flex:1 + space-between then
+        // lets the badge row settle back at the tile's content floor (its previous line) rather than
+        // riding up directly under the names.
+        <div style={{ marginTop: 8, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 6 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
             <Thumb url={nextTrack.album_art_url} size={25} radius={5} />
             {/* Both lines carry an explicit lineHeight because they'd otherwise inherit the app's
