@@ -11,7 +11,6 @@ import {
   SELECTED,
 } from './import/tokens'
 import brandmark from '../assets/brandmark.png'
-import logo from '../assets/Logo.png'
 
 // Icon rail — floating rounded card (Figma node 799-4821): brand pinned top, nav icons
 // centered, profile pinned bottom. The nav icons are raised circles standing off the rail
@@ -52,8 +51,7 @@ function imageButton(src, canvas, circleW, circleCx) {
   const offset = Math.round(CIRCLE / 2 - (circleCx * size) / canvas)
   return { src, size, offset }
 }
-const BRAND_MEDIA = imageButton(brandmark, 210, 177, 92) // top — product mark
-const PROFILE_MEDIA = imageButton(logo, 204, 178, 90) // bottom — profile
+const BRAND_MEDIA = imageButton(brandmark, 210, 177, 92) // product mark — pinned top AND bottom
 
 // Crate/record-box glyph. Default is grey; active turns Spotify-green with an inner shadow.
 function PlaylistsIcon({ active }) {
@@ -520,8 +518,8 @@ export default function LeftNav() {
             ))}
           </nav>
 
-          {/* Profile (bottom) — pre-rendered glass button bitmap */}
-          <RailButton label="Profile" media={PROFILE_MEDIA} onClick={() => {}} />
+          {/* Brand mark (bottom) — same pre-rendered glass button as the top, decorative (no onClick) */}
+          <RailButton label="Drift" media={BRAND_MEDIA} />
         </div>
 
         {/* Raised-slab inner rim — faint top-left highlight + bottom-right inner shade (no border), the
