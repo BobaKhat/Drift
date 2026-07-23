@@ -104,6 +104,46 @@ function normalizeTitleForMatch(title) {
     .toLowerCase()
 }
 
+// —— Fuzzy title verification —————————————————————————————————————————————————————————————————————
+// Normalize a title down to bare comparison words: lowercase, drop parentheticals/brackets
+// (remaster/deluxe/feat tags), drop apostrophes WITHOUT a gap ("I'm" → "im"), turn every other
+// punctuation mark into a space, then collapse. "Yes I'm Changing (Remastered)" → "yes im changing".
+function normalizeTitleWords(title) {
+  return (title || '')
+    .toLowerCase()
+    .replace(/[([{][^)\]}]*[)\]}]/g, ' ') // drop (…) […] {…} — feat/remaster/deluxe tags
+    .replace(/['’`]/g, '')                // apostrophes vanish with no gap: "i'm" → "im"
+    .replace(/[^a-z0-9]+/g, ' ')          // any remaining punctuation (- . , : …) → space
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+// Word-overlap similarity between the expected title and a candidate's trackName: the fraction of
+// the SHORTER title's distinct words that also appear in the longer one. 1.0 = every word of the
+// shorter title is present (exact, or the longer just adds a subtitle/remaster tag); 0.0 = a
+// completely different song. Fails closed (0) when either side has no words.
+//   "yes im changing" vs "yes im changing"          → 3/3 = 1.0
+//   "yes im changing" vs "the moment"               → 0/2 = 0.0
+//   "the less i know the better" vs (same)          → 5/5 = 1.0
+function titleSimilarity(expectedTitle, resultTrackName) {
+  const a = new Set(normalizeTitleWords(expectedTitle).split(' ').filter(Boolean))
+  const b = new Set(normalizeTitleWords(resultTrackName).split(' ').filter(Boolean))
+  if (a.size === 0 || b.size === 0) return 0
+  let shared = 0
+  for (const w of a) if (b.has(w)) shared++
+  return shared / Math.min(a.size, b.size)
+}
+
+// A candidate must clear this word-overlap bar to count as the same song — at least half the shorter
+// title's words must match. Passes slight variations, added subtitles, and remaster tags; rejects a
+// different song by the same artist. HARD-required in both the iTunes and Deezer verifiers: an
+// artist match alone is never sufficient (a wrong song by the right artist is as bad as the wrong
+// artist).
+const TITLE_SIMILARITY_MIN = 0.5
+function titlesCorroborate(expectedTitle, resultTrackName) {
+  return titleSimilarity(expectedTitle, resultTrackName) >= TITLE_SIMILARITY_MIN
+}
+
 // —— Version-word filter (whitelist-aware) ——————————————————————————————————————————————————————————
 // A result is a DIFFERENT release from the one searched when its trackName carries a version marker
 // (remix, edit, cover, …). But legitimate EDM originals are routinely listed as "(Original Mix)" /
@@ -153,12 +193,12 @@ function isDeezerCompilationAlbum(result) {
 
 // Score one iTunes result against the expected artist(s) + title.
 //   +2 for each expected-artist name found (case-insensitive, partial) in result.artistName
-//   +3 if the expected title appears in result.trackName (both stripped of parentheticals)
+//   +3 if the title corroborates (word-overlap similarity ≥ 0.5 — see titlesCorroborate)
 //   -4 if the result looks like a compilation/"Various Artists" release (see isCompilationRelease)
-// Returns { score, artistMatches } — artistMatches drives the final artist verification.
+// Returns { score, artistMatches, titleMatch } — artistMatches AND titleMatch are BOTH hard-required
+// by the final verification (a right-artist/wrong-song +2 result must not win).
 function scoreItunesResult(result, expectedArtists, expectedTitle) {
   const artistName = (result.artistName || '').toLowerCase()
-  const trackName = normalizeTitleForMatch(result.trackName)
   let score = 0
   let artistMatches = 0
   for (const name of expectedArtists) {
@@ -167,9 +207,10 @@ function scoreItunesResult(result, expectedArtists, expectedTitle) {
       artistMatches++
     }
   }
-  if (expectedTitle && trackName.includes(expectedTitle)) score += 3
+  const titleMatch = titlesCorroborate(expectedTitle, result.trackName)
+  if (titleMatch) score += 3
   if (isCompilationRelease(result)) score -= 4
-  return { score, artistMatches }
+  return { score, artistMatches, titleMatch }
 }
 
 // Pick the best iTunes result (or null). When the user's query asks for the ORIGINAL (no version
@@ -195,8 +236,9 @@ function pickBestItunesResult(results, artist, title, expectedDurationSec) {
     .map((r) => ({ r, ...scoreItunesResult(r, expectedArtists, expectedTitle) }))
     .sort((a, b) => b.score - a.score || (b.r.trackId || 0) - (a.r.trackId || 0))
 
-  for (const { r, artistMatches } of ranked) {
-    if (artistMatches === 0) continue // final artist verification — no artist overlap, reject
+  for (const { r, artistMatches, titleMatch } of ranked) {
+    if (artistMatches === 0) continue // artist verification — no artist overlap, reject wrong artist
+    if (!titleMatch) continue // title verification — right artist but wrong song, reject (try next best)
     if (expectedDurationSec != null && r.trackTimeMillis != null) {
       const deltaSec = Math.abs(r.trackTimeMillis / 1000 - expectedDurationSec)
       if (deltaSec > 20) continue // duration cross-check — different version/song, try next best
@@ -223,9 +265,11 @@ async function itunesPreviewResults(query) {
 // original that iTunes buried under covers/remixes. Applies the SAME verification as iTunes:
 //   • version pre-filter — drop remix/edit/etc. titles unless the query itself asks for a version
 //   • artist  — result.artist.name must contain an expected artist name (case-insensitive partial)
+//   • title   — word-overlap similarity ≥ 0.5 vs the expected title (see titlesCorroborate); right
+//               artist but wrong song is rejected
 //   • duration — within 20s of the SoundNet duration when both are known (Deezer durations are in
 //                SECONDS, not ms)
-// Returns the first result that passes all three, or null.
+// Returns the first result that passes all four, or null.
 async function verifiedDeezerLookup(artist, title, expectedDurationSec) {
   let data
   try {
@@ -253,6 +297,7 @@ async function verifiedDeezerLookup(artist, title, expectedDurationSec) {
   for (const r of ranked) {
     const deezerArtist = (r.artist?.name || '').toLowerCase()
     if (!expectedArtists.some((name) => deezerArtist.includes(name))) continue // wrong artist, reject
+    if (!titlesCorroborate(title, r.title)) continue // right artist but wrong song, reject; try next
     if (expectedDurationSec != null && r.duration != null) {
       if (Math.abs(r.duration - expectedDurationSec) > 20) continue // different version/song, try next
     }
