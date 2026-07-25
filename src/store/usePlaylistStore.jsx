@@ -9,6 +9,7 @@ import {
 import { runImport, retryUnresolved } from '../lib/import'
 import { saveSet } from '../lib/sets'
 import { setArtResolvedHandler } from '../lib/preview'
+import { getUserId, hasSeenDemo, markSeenDemo } from '../lib/identity'
 
 // Central app state for the playlist model + import flow.
 // One playlist is active on the map at a time; the import flow is a small state machine:
@@ -23,6 +24,10 @@ let _groupSeq = 0
 const nextGroupId = () => `g${++_groupSeq}`
 
 export function PlaylistProvider({ children }) {
+  // Stable per-browser id for this visitor's own data — separate from the shared 'demo' bucket
+  // (Bug fix: personal imports must never be tagged 'demo', or every visitor querying 'demo' sees
+  // them, and the shared bucket's permanent rows make the welcome-screen check never fire).
+  const [userId] = useState(() => getUserId())
   const [playlists, setPlaylists] = useState([])
   const [activePlaylistId, setActivePlaylistId] = useState(null)
   const [activeTracks, setActiveTracks] = useState([])
@@ -184,7 +189,7 @@ export function PlaylistProvider({ children }) {
     setSavingSet(true)
     try {
       const tracksById = Object.fromEntries(activeTracks.map((t) => [t.id, t]))
-      await saveSet({ playlistId: activePlaylistId, name, chain, orphanGroups, tracksById })
+      await saveSet({ playlistId: activePlaylistId, name, chain, orphanGroups, tracksById, userId })
       savedRef.current = true // mark for the clear-on-re-entry effect; chain stays on screen
       return true
     } catch (err) {
@@ -193,7 +198,7 @@ export function PlaylistProvider({ children }) {
     } finally {
       setSavingSet(false)
     }
-  }, [chain, orphanGroups, activePlaylistId, activeTracks])
+  }, [chain, orphanGroups, activePlaylistId, activeTracks, userId])
 
   // Re-entering build mode after a save starts a clean slate (Slice 9 r3 #3). We clear on the
   // transition INTO 'sets' when the previous set was saved, so leaving to peek elsewhere and coming
@@ -225,23 +230,33 @@ export function PlaylistProvider({ children }) {
     return tracks
   }, [])
 
+  // Combines this browser's own rows with the shared demo bucket — the switcher (PlaylistPanel)
+  // lists both. An anonymous/incognito browser owns nothing, so this resolves to demo-only.
   const refreshPlaylists = useCallback(async () => {
-    const pls = await listPlaylists('demo')
+    const pls = await listPlaylists([userId, 'demo'])
     setPlaylists(pls)
     return pls
-  }, [])
+  }, [userId])
 
-  // Initial load: open the welcome flow if the user has no playlists yet.
+  // Initial load: welcome only fires when THIS browser (by userId) has no library of its own and
+  // hasn't previously chosen to browse demo. Must NOT be decided from the combined list above —
+  // demo's rows are permanent and shared, so checking "any rows at all" would never be empty and
+  // welcome would never show for anyone.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
         const pls = await refreshPlaylists()
         if (cancelled) return
-        if (pls.length === 0) {
-          setImportState('welcome')
+        const own = pls.filter((p) => p.user_id === userId)
+        if (own.length > 0) {
+          await activate(own[0].id)
+        } else if (hasSeenDemo()) {
+          const demoPls = pls.filter((p) => p.user_id === 'demo')
+          if (demoPls.length > 0) await activate(demoPls[0].id)
+          else setImportState('welcome')
         } else {
-          await activate(pls[0].id)
+          setImportState('welcome')
         }
       } catch (err) {
         console.error('[drift] init failed:', err)
@@ -251,7 +266,7 @@ export function PlaylistProvider({ children }) {
       }
     })()
     return () => { cancelled = true }
-  }, [refreshPlaylists, activate])
+  }, [refreshPlaylists, activate, userId])
 
   const setActivePlaylist = useCallback(async (playlistId) => {
     try {
@@ -298,6 +313,7 @@ export function PlaylistProvider({ children }) {
     setImportState('progress')
     try {
       const playlist = await ensureDemoLibrary('demo')
+      markSeenDemo()
       await refreshPlaylists()
       await activate(playlist.id)
     } catch (err) {
@@ -313,7 +329,7 @@ export function PlaylistProvider({ children }) {
       const target = importTargetRef.current
       let playlistId = target
       if (!playlistId) {
-        const playlist = await createPlaylist(name || 'Import', 'demo')
+        const playlist = await createPlaylist(name || 'Import', userId)
         playlistId = playlist.id
       }
       await linkTracks(playlistId, mappedTrackIds)
@@ -324,7 +340,7 @@ export function PlaylistProvider({ children }) {
     } finally {
       closeImport()
     }
-  }, [refreshPlaylists, activate, closeImport])
+  }, [refreshPlaylists, activate, closeImport, userId])
 
   // Retry one edited unresolved row (matched by its original pasted line); on success move
   // it into the mapped bucket. If the retry surfaces a version warning, add it to warnings.

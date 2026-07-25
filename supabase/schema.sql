@@ -1,5 +1,15 @@
 -- Run this in your Supabase SQL editor to create the tracks table.
--- RLS is disabled for dev; enable and add policies before going public.
+--
+-- RLS: enabled on every table below, table-level (no per-row auth checks — Supabase Auth
+-- isn't wired up yet, so there's no user identity for Postgres to check against). The goal
+-- right now is stopping the anon key from wiping the database, not multi-tenant isolation —
+-- that lands once real auth exists and rows can be scoped to auth.uid(). Until then:
+--   tracks, playlists, playlist_tracks  — SELECT + INSERT only (shared cache/library data,
+--                                          written by anyone's import, never edited in place).
+--   sets, set_tracks, set_connections   — SELECT + INSERT + UPDATE (set builder edits saved
+--                                          sets client-side, already scoped by user_id there).
+--   No table grants DELETE to anon/authenticated — permanently wiping rows is a service-role-
+--   only action (Supabase dashboard / migrations), never something the app itself should do.
 
 create table if not exists public.tracks (
   id                uuid          default gen_random_uuid() primary key,
@@ -27,7 +37,19 @@ create table if not exists public.tracks (
   preview_url       text
 );
 
-alter table public.tracks disable row level security;
+alter table public.tracks enable row level security;
+
+drop policy if exists "tracks_select_all" on public.tracks;
+create policy "tracks_select_all" on public.tracks
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "tracks_insert_all" on public.tracks;
+create policy "tracks_insert_all" on public.tracks
+  for insert
+  to anon, authenticated
+  with check (true);
 
 -- `tracks` may predate this column; guarded add so older environments pick up the 30-second
 -- preview URL (iTunes/Deezer) cached for Deck View playback (Slice 13, Decision #76).
@@ -41,7 +63,19 @@ create table if not exists public.playlists (
   user_id     text          default 'demo'
 );
 
-alter table public.playlists disable row level security;
+alter table public.playlists enable row level security;
+
+drop policy if exists "playlists_select_all" on public.playlists;
+create policy "playlists_select_all" on public.playlists
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "playlists_insert_all" on public.playlists;
+create policy "playlists_insert_all" on public.playlists
+  for insert
+  to anon, authenticated
+  with check (true);
 
 -- Join table linking tracks into playlists (a track can live in many playlists).
 create table if not exists public.playlist_tracks (
@@ -50,7 +84,19 @@ create table if not exists public.playlist_tracks (
   track_id     uuid   references public.tracks(id)    on delete cascade
 );
 
-alter table public.playlist_tracks disable row level security;
+alter table public.playlist_tracks enable row level security;
+
+drop policy if exists "playlist_tracks_select_all" on public.playlist_tracks;
+create policy "playlist_tracks_select_all" on public.playlist_tracks
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "playlist_tracks_insert_all" on public.playlist_tracks;
+create policy "playlist_tracks_insert_all" on public.playlist_tracks
+  for insert
+  to anon, authenticated
+  with check (true);
 
 -- Sets belong to a parent playlist (set builder only operates on the active playlist).
 -- A set is one head song + a sequential chain (Decision Log #33). Persisted on
@@ -64,7 +110,26 @@ create table if not exists public.sets (
   user_id      text          default 'demo'
 );
 
-alter table public.sets disable row level security;
+alter table public.sets enable row level security;
+
+drop policy if exists "sets_select_all" on public.sets;
+create policy "sets_select_all" on public.sets
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "sets_insert_all" on public.sets;
+create policy "sets_insert_all" on public.sets
+  for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "sets_update_all" on public.sets;
+create policy "sets_update_all" on public.sets
+  for update
+  to anon, authenticated
+  using (true)
+  with check (true);
 
 -- `sets` may have existed before this migration added its columns; guard the alter so
 -- older environments pick up playlist_id without erroring on a fresh create above.
@@ -89,7 +154,26 @@ create table if not exists public.set_tracks (
   group_id      text
 );
 
-alter table public.set_tracks disable row level security;
+alter table public.set_tracks enable row level security;
+
+drop policy if exists "set_tracks_select_all" on public.set_tracks;
+create policy "set_tracks_select_all" on public.set_tracks
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "set_tracks_insert_all" on public.set_tracks;
+create policy "set_tracks_insert_all" on public.set_tracks
+  for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "set_tracks_update_all" on public.set_tracks;
+create policy "set_tracks_update_all" on public.set_tracks
+  for update
+  to anon, authenticated
+  using (true)
+  with check (true);
 
 -- Wires: one row per socket-to-socket connection between consecutive chain songs.
 -- Slice 8 stores real bpm_delta but placeholder compatibility (tier 'strong') — real
@@ -104,7 +188,26 @@ create table if not exists public.set_connections (
   compatibility_tier text   default 'strong'
 );
 
-alter table public.set_connections disable row level security;
+alter table public.set_connections enable row level security;
+
+drop policy if exists "set_connections_select_all" on public.set_connections;
+create policy "set_connections_select_all" on public.set_connections
+  for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "set_connections_insert_all" on public.set_connections;
+create policy "set_connections_insert_all" on public.set_connections
+  for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "set_connections_update_all" on public.set_connections;
+create policy "set_connections_update_all" on public.set_connections
+  for update
+  to anon, authenticated
+  using (true)
+  with check (true);
 
 -- ---------------------------------------------------------------------------
 -- Foreign-key reconciliation. Run last; safe to re-run.

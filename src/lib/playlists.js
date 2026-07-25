@@ -2,19 +2,22 @@ import { supabase } from './supabase'
 import { DEMO_PLAYLISTS, demoTrackRow } from '../data/demoLibrary'
 
 // Playlist persistence. One playlist is active on the map at a time; switching swaps the
-// visible songs. user_id is "demo" until auth lands. The map IS the song list — these
+// visible songs. user_id is 'demo' for the shared demo library, or a per-browser id (see
+// ../lib/identity.js) for personal imports — no real auth yet. The map IS the song list — these
 // helpers just manage which track rows belong to which playlist.
 
 const DEMO_USER = 'demo'
 
 const keyOf = (artist, name) => `${(artist || '').toLowerCase()}|||${(name || '').toLowerCase()}`
 
-// List a user's playlists, each annotated with its song count.
+// List playlists visible to the given user id(s), each annotated with its song count. Pass an
+// array to combine a browser's own rows with the shared demo bucket in one query.
 export async function listPlaylists(userId = DEMO_USER) {
+  const ids = Array.isArray(userId) ? userId : [userId]
   const { data: playlists, error } = await supabase
     .from('playlists')
     .select('*')
-    .eq('user_id', userId)
+    .in('user_id', ids)
     .order('created_at', { ascending: true })
   if (error) throw new Error(`listPlaylists failed: ${error.message}`)
   if (!playlists?.length) return []
