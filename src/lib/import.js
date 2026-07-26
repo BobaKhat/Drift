@@ -94,10 +94,6 @@ async function processEntry(entry) {
 
     return { track, warning }
   } catch (err) {
-    // DIAGNOSTIC (temporary): a throw here (not a SoundNet miss) is why a resolved Spotify entry
-    // lands in the 'nodata' bucket with EMPTY artist/title — entry.artist/title don't exist for a
-    // URL entry. Surface the real error so a Supabase write failure isn't mistaken for a miss.
-    console.error(`[import] processEntry THREW for ${entry.type} "${entry.originalText}" → ${err.message}`)
     return {
       unresolved: {
         originalText: entry.originalText,

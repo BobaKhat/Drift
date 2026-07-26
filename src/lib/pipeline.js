@@ -294,11 +294,6 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
     status: features ? (features.status ?? 'analyzed') : 'unanalyzed',
   }
 
-  // DIAGNOSTIC (temporary): surface which write path runs and with what payload. The tracks
-  // table has SELECT+INSERT RLS policies but NO UPDATE policy (see supabase/schema.sql), so the
-  // UPDATE branch below is the prime suspect for a silently-thrown failure on re-imported tracks.
-  console.log(`[drift] [write] path=${cached ? 'UPDATE' : 'INSERT'} cachedStatus=${cached?.status ?? '(none)'} newStatus=${track.status} soundnet=${features ? 'HIT' : 'miss'} "${artist}" – "${title}"`)
-
   // UPDATE existing row if one already exists (avoids duplicate inserts on retry).
   let savedRow
   if (cached) {

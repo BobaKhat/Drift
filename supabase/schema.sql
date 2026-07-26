@@ -51,6 +51,17 @@ create policy "tracks_insert_all" on public.tracks
   to anon, authenticated
   with check (true);
 
+-- The importer re-analyzes tracks with an existing 'unanalyzed' row via an UPDATE (see
+-- analyzeTrackParts). Without an UPDATE policy, RLS silently filtered that PATCH to 0 rows
+-- (406 → .single() "cannot coerce to single object"), so every re-imported track threw and
+-- was mis-bucketed as a SoundNet miss. Mirror the insert policy so those updates succeed.
+drop policy if exists "tracks_update_all" on public.tracks;
+create policy "tracks_update_all" on public.tracks
+  for update
+  to anon, authenticated
+  using (true)
+  with check (true);
+
 -- `tracks` may predate this column; guarded add so older environments pick up the 30-second
 -- preview URL (iTunes/Deezer) cached for Deck View playback (Slice 13, Decision #76).
 alter table public.tracks add column if not exists preview_url text;
