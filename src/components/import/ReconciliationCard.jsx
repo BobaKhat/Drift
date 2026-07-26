@@ -8,6 +8,10 @@ function defaultName() {
   return `Import – ${d}`
 }
 
+// Cap manual retries so a persistently-missing track lands on a clear terminal state instead
+// of letting the user spin the SoundNet lookup forever. Editing artist/title resets the cap.
+const MAX_RETRIES = 2
+
 // One editable unresolved row. Prefills with the best variation attempted so the user
 // refines from the closest hit rather than the raw pasted line.
 function UnresolvedRow({ entry, onRetry }) {
@@ -16,14 +20,32 @@ function UnresolvedRow({ entry, onRetry }) {
   const [title, setTitle] = useState(entry.lastAttempt?.title ?? entry.title)
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [attempts, setAttempts] = useState(0)
+
+  const exhausted = attempts >= MAX_RETRIES
 
   async function retry() {
     if (!artist.trim() || !title.trim()) { setFailed(true); return }
     setBusy(true)
     setFailed(false)
-    const ok = await onRetry(entry.originalText, artist.trim(), title.trim())
-    if (!ok) { setFailed(true); setBusy(false) }
+    // onRetry now applies the same miss-detection + a 10s SoundNet timeout as the import path,
+    // so it always settles. Guard anyway: a thrown promise must never leave the row spinning.
+    let ok = false
+    try {
+      ok = await onRetry(entry.originalText, artist.trim(), title.trim())
+    } catch (err) {
+      console.error('[drift] retry failed:', err)
+    }
+    if (!ok) { setFailed(true); setAttempts((a) => a + 1); setBusy(false) }
     // on success this row unmounts, so no state cleanup needed
+  }
+
+  // Any edit re-arms the row: clear the failed/terminal state and reset the retry cap so a
+  // corrected artist/title can be resubmitted. The edited values are what retry() sends.
+  const onEdit = (setter) => (e) => {
+    setter(e.target.value)
+    setFailed(false)
+    setAttempts(0)
   }
 
   const smallInput = { ...wellStyle, flex: 1, fontSize: 13, padding: '8px 10px' }
@@ -45,20 +67,28 @@ function UnresolvedRow({ entry, onRetry }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ fontFamily: FONT, fontSize: 12, color: C.textSecondary }}>
           {entry.originalText}
-          {failed && <span style={{ color: C.amber }}>{'  · still not found'}</span>}
+          {exhausted
+            ? <span style={{ color: C.amber }}>{'  · not found in SoundNet — edit artist/title and resubmit'}</span>
+            : failed && <span style={{ color: C.amber }}>{'  · still not found'}</span>}
         </span>
-        {triedN > 0 && !failed && (
-          <span style={{ fontFamily: FONT, fontSize: 11, color: C.iconPrimary, whiteSpace: 'nowrap' }}>
-            {`Tried ${triedN} variation${triedN !== 1 ? 's' : ''} — edit and retry`}
-          </span>
+        {!failed && !exhausted && (
+          entry.kind === 'url'
+            ? <span style={{ fontFamily: FONT, fontSize: 11, color: C.iconPrimary, whiteSpace: 'nowrap' }}>
+                {"Couldn't resolve link — add artist & title and retry"}
+              </span>
+            : triedN > 0 && (
+                <span style={{ fontFamily: FONT, fontSize: 11, color: C.iconPrimary, whiteSpace: 'nowrap' }}>
+                  {`Tried ${triedN} variation${triedN !== 1 ? 's' : ''} — edit and retry`}
+                </span>
+              )
         )}
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input value={artist} onChange={(e) => setArtist(e.target.value)} placeholder="Artist" style={smallInput} />
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" style={smallInput} />
+        <input value={artist} onChange={onEdit(setArtist)} placeholder="Artist" style={smallInput} />
+        <input value={title} onChange={onEdit(setTitle)} placeholder="Title" style={smallInput} />
         <button
           onClick={retry}
-          disabled={busy}
+          disabled={busy || exhausted}
           style={{
             height: 38,
             padding: '0 16px',
@@ -69,7 +99,8 @@ function UnresolvedRow({ entry, onRetry }) {
             fontFamily: FONT,
             fontSize: 13,
             fontWeight: 500,
-            cursor: busy ? 'wait' : 'pointer',
+            opacity: exhausted ? 0.45 : 1,
+            cursor: busy ? 'wait' : exhausted ? 'not-allowed' : 'pointer',
             whiteSpace: 'nowrap',
           }}
         >
@@ -135,6 +166,11 @@ export default function ReconciliationCard() {
   const warnings = reconciliation?.warnings ?? []
   const canFinish = mapped.length > 0
 
+  // Split the unresolved summary so a transient link-resolution failure reads differently
+  // from a genuine SoundNet miss (they used to collapse into one "couldn't be found" line).
+  const unresolvedUrl = unresolved.filter((u) => u.kind === 'url')
+  const unresolvedData = unresolved.filter((u) => u.kind !== 'url')
+
   return (
     <ModalCard width={570} style={{ gap: 24, alignItems: 'stretch' }}>
       <h1 style={{ fontFamily: FONT, fontSize: 28, fontWeight: 600, color: C.textPrimary, letterSpacing: '-1px', margin: 0 }}>
@@ -155,9 +191,14 @@ export default function ReconciliationCard() {
             {`● ${warnings.length} song${warnings.length === 1 ? '' : 's'} matched a different version`}
           </span>
         )}
-        {unresolved.length > 0 && (
+        {unresolvedUrl.length > 0 && (
           <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
-            {`● ${unresolved.length} song${unresolved.length === 1 ? '' : 's'} couldn't be found`}
+            {`● ${unresolvedUrl.length} link${unresolvedUrl.length === 1 ? '' : 's'} couldn't be resolved — try again`}
+          </span>
+        )}
+        {unresolvedData.length > 0 && (
+          <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
+            {`● ${unresolvedData.length} song${unresolvedData.length === 1 ? '' : 's'} — no audio data available`}
           </span>
         )}
       </div>

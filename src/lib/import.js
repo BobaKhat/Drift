@@ -34,21 +34,35 @@ export function parseInput(text) {
 // Analyze a single parsed entry → { track, warning? } | { unresolved }.
 // _meta from analyzeTrackParts threads through here so callers get retry info.
 async function processEntry(entry) {
+  // `kind` splits the unresolved reasons so the UI can tell a transient URL-resolution
+  // failure apart from a genuine SoundNet miss (both used to collapse into "couldn't be found"):
+  //   'url'         — Spotify oEmbed couldn't resolve the link (transient: throttle/timeout/504)
+  //   'nodata'      — resolved fine, but SoundNet has no audio data for it (genuine miss)
+  //   'unparseable' — the pasted line isn't a URL or "Artist – Title"
   try {
     if (entry.type === 'unparseable') {
-      return { unresolved: { originalText: entry.originalText, artist: '', title: '', reason: "couldn't read this line", triedVariations: 0 } }
+      return { unresolved: { originalText: entry.originalText, artist: '', title: '', kind: 'unparseable', reason: "couldn't read this line", triedVariations: 0 } }
     }
 
     let { artist, title } = entry
     let spotifyArtUrl = null
     let spotifyDuration = null
     if (entry.type === 'spotify') {
-      const r = await resolveSpotifyUrl(entry.url)
+      // oEmbed resolution is its own failure mode (transient) — surface it as kind 'url',
+      // not as a SoundNet miss, so the retry copy and reconciliation summary stay accurate.
+      let r
+      try {
+        r = await resolveSpotifyUrl(entry.url)
+      } catch {
+        return { unresolved: { originalText: entry.originalText, artist: '', title: '', kind: 'url', reason: "couldn't resolve URL", triedVariations: 0 } }
+      }
       artist = r.artist
       title = r.title
       spotifyArtUrl = r.ogImage
       spotifyDuration = r.duration ?? null
-      if (!artist || !title) throw new Error('could not resolve Spotify link')
+      if (!artist || !title) {
+        return { unresolved: { originalText: entry.originalText, artist: '', title: '', kind: 'url', reason: "couldn't resolve URL", triedVariations: 0 } }
+      }
       console.log(`[import] spotifyArtUrl=${spotifyArtUrl ?? 'null'} spotifyDuration=${spotifyDuration ?? 'null'}`)
     }
 
@@ -61,7 +75,8 @@ async function processEntry(entry) {
           originalText: entry.originalText,
           artist,
           title,
-          reason: 'not found',
+          kind: 'nodata',
+          reason: 'no audio data available',
           // lastAttempt lets the reconciliation panel prefill the best variation attempted
           lastAttempt: {
             artist: track?._meta?.lastArtist ?? artist,
@@ -84,7 +99,8 @@ async function processEntry(entry) {
         originalText: entry.originalText,
         artist: entry.artist || '',
         title: entry.title || '',
-        reason: err.message || 'failed',
+        kind: 'nodata',
+        reason: err.message || 'no audio data available',
         triedVariations: 0,
       },
     }

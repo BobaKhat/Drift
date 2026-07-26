@@ -24,13 +24,44 @@ function parseDuration(raw) {
 // CRITICAL: SoundNet returns HTTP 200 on misses — check for `error` key in body.
 
 // SoundNet rate-limits bursts (≥6 concurrent → HTTP 429), so pace every attempt to
-// ≥220ms apart (~4.5/sec, just under the 5/sec ceiling). See rateLimit.js for why.
-const pace = createPacer(220)
+// ≥250ms apart (~4/sec, a comfortable margin under the 5/sec ceiling — the 220ms/4.5/sec
+// spacing left too little headroom under batch load). See rateLimit.js for why.
+const pace = createPacer(250)
+
+// A plain fetch has no deadline: behind our proxy SoundNet can stall a connection open
+// indefinitely, which on the manual Retry path surfaced as a spinner that never resolved.
+// Abort each attempt after this long so a stall becomes a caught (retryable) error instead.
+const SOUNDNET_TIMEOUT_MS = 10000
+
+async function fetchWithTimeout(url) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SOUNDNET_TIMEOUT_MS)
+  try {
+    return await fetch(url, { signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     await pace()
-    const res = await fetch(url)
+    let res
+    try {
+      res = await fetchWithTimeout(url)
+    } catch (err) {
+      // Timeout (AbortError) or transport error. Each attempt is bounded by SOUNDNET_TIMEOUT_MS,
+      // so retrying can never hang indefinitely. Back off and retry; give up after the last attempt.
+      if (attempt === retries) {
+        throw new Error(
+          err.name === 'AbortError'
+            ? `SoundNet timed out (>${SOUNDNET_TIMEOUT_MS}ms)`
+            : `SoundNet fetch failed: ${err.message}`,
+        )
+      }
+      await new Promise((r) => setTimeout(r, delayMs * attempt))
+      continue
+    }
     if (res.status === 429) {
       if (attempt === retries) throw new Error('SoundNet rate limit hit — wait 30s and try again')
       await new Promise((r) => setTimeout(r, delayMs * attempt))
