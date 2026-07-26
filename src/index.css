@@ -89,6 +89,17 @@ html, body, #root {
   66.67% { transform: scale(calc(var(--node-scale, 1) * 1.35)); opacity: 1; animation-timing-function: ease-in-out; }
 }
 
+/* —— Mount-suppression entrance (initial load) ————————————————————————————————————————————
+   The first non-empty population fades each song in from opacity 0 as a bare circle — the map forces
+   circle tier and hides labels + stack badges for the duration — scaling up a touch from 0.8× its
+   counter-scale for a clean pop (no bloom overshoot). `backwards` fill holds the invisible 0% state
+   through the per-node stagger (--enter-delay), so each circle stays hidden until its randomized turn.
+   The implicit 100% keyframe is the node's own resting opacity/transform, so the hand-off to normal
+   rendering is seamless. Distinct from the population bloom above, which drives later playlist switches. */
+@keyframes driftNodeEnter {
+  from { opacity: 0; transform: scale(calc(var(--node-scale, 1) * 0.8)); }
+}
+
 /* Preset switch (Slice 11.5): while the map carries this class (500ms after an axis-preset change),
    songs SLIDE to their new positions instead of teleporting. React Flow positions each node via a
    translate() on its .react-flow__node wrapper, so transitioning that wrapper's transform animates the

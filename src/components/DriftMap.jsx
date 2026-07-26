@@ -11,7 +11,7 @@ import {
   ViewportPortal,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import TrackNode, { ZOOM_CARD, ZoomTierContext, BuildContext, BloomContext, SongPreviewCard, getTier, getNodeScale, NODE_PILL_W, NODE_CARD_W, NODE_PILL_H, NODE_CARD_H } from './TrackNode'
+import TrackNode, { ZOOM_CARD, ZoomTierContext, BuildContext, BloomContext, SongPreviewCard, getTier, getNodeScale, NODE_ENTER_MS, NODE_PILL_W, NODE_CARD_W, NODE_PILL_H, NODE_CARD_H } from './TrackNode'
 import WireEdge, { FLOW_STROBE_NAME, FLOW_SPACING, FLOW_PULSE_LEN } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { computeStacks, stacksSignature } from '../lib/stacking'
@@ -244,6 +244,18 @@ function toFlowPos(track, scaleX, scaleY, xFeature, yFeature, PAD) {
 // getting rank × 15ms of delay, so songs pop in scattered rather than sweeping across the map.
 const BLOOM_STAGGER_MS = 15
 
+// Mount-suppression entrance (initial load only): the first non-empty population fades its songs in as
+// bare circles — tier morphing, labels and stack badges all suppressed — with a randomized per-node
+// stagger in [50,80]ms accumulated in a random order, so songs appear scattered rather than on a
+// metronome. Once the last node has landed the map flips `entering` off and normal behavior switches on.
+const ENTER_STAGGER_MIN_MS = 50
+const ENTER_STAGGER_MAX_MS = 80
+// Hard cap on the total stagger span, whatever the library size: if the accumulated 50–80ms steps
+// overrun this, every delay is scaled down proportionally so the entrance stays a quick bloom (~25ms/
+// node at 100 songs, ~50ms at 50) instead of a slideshow. Small libraries never hit it and keep the
+// roomier 50–80ms/node feel.
+const ENTER_TOTAL_CAP_MS = 2500
+
 function buildNodes(tracks, presetConfig, PAD) {
   const { xFeature = 'mood', yFeature = 'energy' } = presetConfig ?? {}
   const scaleX = buildAxisScale(tracks.map((t) => getFeatureValue(t, xFeature)))
@@ -263,6 +275,7 @@ function buildNodes(tracks, presetConfig, PAD) {
         camelot: track.camelot ?? null,
         highlighted: false,
         bloomDelay: 0,
+        enterDelay: 0,
       },
       draggable: false,
       selectable: false,
@@ -275,7 +288,19 @@ function buildNodes(tracks, presetConfig, PAD) {
     const j = Math.floor(Math.random() * (i + 1))
     ;[order[i], order[j]] = [order[j], order[i]]
   }
-  order.forEach((nodeIdx, rank) => { nodes[nodeIdx].data.bloomDelay = rank * BLOOM_STAGGER_MS })
+  // bloomDelay: even 15ms steps for the population bloom. enterDelay: cumulative randomized 50–80ms
+  // steps for the initial-load entrance, so songs fade in scattered in time as well as in order.
+  const rawEnter = new Array(nodes.length)
+  let enterAcc = 0
+  order.forEach((nodeIdx, rank) => {
+    nodes[nodeIdx].data.bloomDelay = rank * BLOOM_STAGGER_MS
+    rawEnter[nodeIdx] = enterAcc
+    enterAcc += ENTER_STAGGER_MIN_MS + Math.random() * (ENTER_STAGGER_MAX_MS - ENTER_STAGGER_MIN_MS)
+  })
+  // Compress the whole stagger span into ENTER_TOTAL_CAP_MS when it overruns, scaling every delay by the
+  // same factor so the random scatter is preserved but the last song still lands by the cap.
+  const enterScale = enterAcc > ENTER_TOTAL_CAP_MS ? ENTER_TOTAL_CAP_MS / enterAcc : 1
+  order.forEach((nodeIdx) => { nodes[nodeIdx].data.enterDelay = Math.round(rawEnter[nodeIdx] * enterScale) })
   return nodes
 }
 
@@ -1255,7 +1280,14 @@ function DriftMapInner({ tracks }) {
   // switch can fade the old set out (200ms) before swapping. `bloom.gen` bumps per population to
   // restart the stagger animation; `bloom.active` gates it to the bloom window only.
   const [stagedTracks, setStagedTracks] = useState(tracks)
-  const [bloom, setBloom] = useState({ gen: 0, active: true })
+  // Bloom starts INACTIVE: the initial load plays the mount-suppression entrance (`entering` below)
+  // instead of the population bloom. Later playlist switches arm the bloom (see the staging effect).
+  const [bloom, setBloom] = useState({ gen: 0, active: false })
+  // Mount-suppression entrance: `entering` is true only while the first non-empty population fades in as
+  // bare circles. enteredRef makes it fire exactly once — seed both from the initial prop so a library
+  // that's already present at mount still gets the entrance (with no one-commit flash of assembled UI).
+  const [entering, setEntering] = useState(() => tracks.length > 0)
+  const enteredRef = useRef(tracks.length > 0)
   const [previewNodeId, setPreviewNodeId] = useState(null) // hover-preview node (raised z-index)
 
   // Canvas width tracks the card's aspect ratio (set in the resize effect below); all W-dependent
@@ -1284,7 +1316,11 @@ function DriftMapInner({ tracks }) {
     if (prevTracksRef.current === tracks) return
     prevTracksRef.current = tracks
     setStagedTracks(tracks)
-    setBloom((b) => ({ gen: b.gen + 1, active: true }))
+    // The FIRST non-empty population plays the mount-suppression entrance (see `entering`), NOT the
+    // population bloom — so only bump + arm the bloom for populations after that (playlist switches).
+    if (enteredRef.current || tracks.length === 0) {
+      setBloom((b) => ({ gen: b.gen + 1, active: true }))
+    }
   }, [tracks])
 
   // Close the bloom window once the last node's stagger + its 400ms animation have elapsed, so nodes
@@ -1294,6 +1330,28 @@ function DriftMapInner({ tracks }) {
     const t = setTimeout(() => setBloom((b) => (b.active ? { ...b, active: false } : b)), windowMs)
     return () => clearTimeout(t)
   }, [bloom.gen, stagedTracks.length])
+
+  // Mount-suppression entrance, one-shot: the FIRST non-empty population fades its songs in as bare
+  // circles (see the ZoomTierContext + BloomContext providers below, which force circle tier and pass
+  // `entering` down). enteredRef guards it so later populations skip straight to normal behavior.
+  useEffect(() => {
+    if (enteredRef.current || stagedTracks.length === 0) return
+    enteredRef.current = true
+    setEntering(true)
+  }, [stagedTracks])
+
+  // Close the entrance once the last node's (randomized) stagger + its fade have elapsed, then flip
+  // normal tier/badge behavior on. Upper-bounded by the max per-node step (×count) so it can never
+  // release before the slowest node has landed, whatever the random delays came out to.
+  useEffect(() => {
+    if (!entering) return
+    // Max stagger delay is bounded by the smaller of the uncompressed span and the cap (see buildNodes),
+    // plus one node's fade + a small buffer — so this never releases before the slowest node has landed.
+    const staggerSpan = Math.min(stagedTracks.length * ENTER_STAGGER_MAX_MS, ENTER_TOTAL_CAP_MS)
+    const windowMs = staggerSpan + NODE_ENTER_MS + 150
+    const t = setTimeout(() => setEntering(false), windowMs)
+    return () => clearTimeout(t)
+  }, [entering, stagedTracks.length])
 
   // Build graph: derive the wires + per-node socket assignments from the ordered chain, the orphan
   // groups, and the songs' canvas positions (taken from initialNodes so this never depends on the
@@ -1867,6 +1925,9 @@ function DriftMapInner({ tracks }) {
   }, [stacks, popover])
 
   const buildCtx = useMemo(() => ({ buildMode, flowMode, flowTiming, startWireDrag, setHoverGroup, unplugSocket, onWireClick, setArtColor, showPreview, hidePreview }), [buildMode, flowMode, flowTiming, startWireDrag, unplugSocket, onWireClick, setArtColor, showPreview, hidePreview])
+  // Broadcast bloom + entrance state together. During the entrance the tier is forced to 'circle'
+  // below, so nodes suppress morphing/labels and play the entrance fade instead of the population bloom.
+  const bloomCtx = useMemo(() => ({ ...bloom, entering }), [bloom, entering])
 
   return (
     <div
@@ -1890,9 +1951,11 @@ function DriftMapInner({ tracks }) {
     >
       {/* Broadcast the current tier to every node. Tier changes only on a threshold crossing, so
           this re-renders nodes rarely; between crossings they hold steady while the --node-scale
-          CSS var (set on this wrapper) rescales them with no React work. */}
-      <ZoomTierContext.Provider value={tier}>
-        <BloomContext.Provider value={bloom}>
+          CSS var (set on this wrapper) rescales them with no React work. During the mount-suppression
+          entrance the tier is pinned to 'circle' regardless of zoom, so songs fade in as bare circles
+          (no morphing/labels) until `entering` flips off. */}
+      <ZoomTierContext.Provider value={entering ? 'circle' : tier}>
+        <BloomContext.Provider value={bloomCtx}>
         <BuildContext.Provider value={buildCtx}>
           <ReactFlow
             nodes={nodes}
@@ -1950,7 +2013,7 @@ function DriftMapInner({ tracks }) {
           counter-scaled by --axis-scale (1/zoom) to a constant screen size, and lifted BADGE_FLOAT px
           above the representative's centre — a constant screen offset, since 1/zoom cancels the pane's
           zoom. Only at pill tier and above (circle tier yields no stacks). */}
-      {tier !== 'circle' && stacks.length > 0 && !flowMode && (
+      {tier !== 'circle' && stacks.length > 0 && !flowMode && !entering && (
         <ViewportPortal>
           {stacks.map((s) => (
             <div key={s.reprId} style={{ position: 'absolute', left: s.x, top: s.y, transformOrigin: '0 0', transform: 'scale(var(--axis-scale, 1))', pointerEvents: 'none', zIndex: 6 }}>

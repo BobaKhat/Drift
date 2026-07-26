@@ -91,6 +91,10 @@ const NODE_PIN_EXP = 0.85 // 1 = constant footprint, <1 = dampened growth (canva
 const EASING = 'cubic-bezier(0.16, 1, 0.3, 1)'
 const DUR = '400ms'
 
+// Mount-suppression entrance (initial load): per-node opacity+scale fade duration. The map holds the
+// entrance open for (last node's stagger + this) before flipping to normal behavior. See DriftMap.
+export const NODE_ENTER_MS = 420
+
 // Circle is sized in *screen* pixels (Google Maps pin behavior): the counter-scale below holds its
 // on-screen diameter ~constant regardless of zoom, up until the pill morph threshold. 32px base.
 const CIRCLE_SIZE = 32
@@ -129,7 +133,7 @@ export const BuildContext = createContext({ buildMode: false, startWireDrag: nul
 // Node population bloom (Slice 11.5): `gen` bumps on each population (initial load / playlist switch)
 // so nodes flip animation-name and re-bloom; `active` is true only during the bloom window, so nodes
 // that mount later (culling remount on pan) appear instantly instead of blooming again.
-export const BloomContext = createContext({ gen: 0, active: false })
+export const BloomContext = createContext({ gen: 0, active: false, entering: false })
 
 export function getTier(zoom) {
   if (zoom >= ZOOM_CARD) return 'card'
@@ -294,10 +298,10 @@ function AnchorIcon() {
 }
 
 function TrackNode({ id, data }) {
-  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId, glow, snapTarget, artColor, bloomDelay, selected } = data
+  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId, glow, snapTarget, artColor, bloomDelay, enterDelay, selected } = data
   const tier = useContext(ZoomTierContext)
   const { buildMode, flowMode, startWireDrag, setHoverGroup, unplugSocket, setArtColor, showPreview, hidePreview } = useContext(BuildContext)
-  const { gen: bloomGen, active: bloomActive } = useContext(BloomContext)
+  const { gen: bloomGen, active: bloomActive, entering } = useContext(BloomContext)
   const isCircle = tier === 'circle'
   const isPill = tier === 'pill'
   const isCard = tier === 'card'
@@ -537,6 +541,14 @@ function TrackNode({ id, data }) {
     ? `${bloomGen % 2 ? 'driftNodeBloomB' : 'driftNodeBloomA'} 600ms var(--bloom-delay, 0ms) backwards`
     : undefined
 
+  // Mount-suppression entrance (initial load only): a clean opacity+scale fade from 0, held invisible
+  // via `backwards` fill until this node's randomized --enter-delay. While the map is `entering` the
+  // tier context is forced to 'circle', so this always plays on a bare circle (no labels/morph). Normal
+  // populations use the bloom above instead. See index.css @keyframes driftNodeEnter.
+  const enterAnim = entering
+    ? `driftNodeEnter ${NODE_ENTER_MS}ms var(--enter-delay, 0ms) backwards`
+    : undefined
+
   return (
     <div
       title={effCircle ? `${artist} – ${name}` : undefined}
@@ -548,7 +560,10 @@ function TrackNode({ id, data }) {
       style={{
         position: 'relative',
         '--bloom-delay': `${bloomDelay ?? 0}ms`,
-        animation: bloomAnim,
+        '--enter-delay': `${enterDelay ?? 0}ms`,
+        // Entrance wins over the population bloom while the map is entering (they never overlap in
+        // practice — entering is the first load, bloom is later switches).
+        animation: entering ? enterAnim : bloomAnim,
         // Hover-preview node lifts above its neighbours (the map also raises the RF wrapper z-index).
         zIndex: previewActive ? 50 : undefined,
         display: 'flex', flexDirection: 'row', alignItems: 'center',
