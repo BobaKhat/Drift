@@ -24,9 +24,25 @@ function parseDuration(raw) {
 // CRITICAL: SoundNet returns HTTP 200 on misses — check for `error` key in body.
 
 // SoundNet rate-limits bursts (≥6 concurrent → HTTP 429), so pace every attempt to
-// ≥250ms apart (~4/sec, a comfortable margin under the 5/sec ceiling — the 220ms/4.5/sec
-// spacing left too little headroom under batch load). See rateLimit.js for why.
-const pace = createPacer(250)
+// ≥350ms apart (~2.85/sec, comfortable headroom under the 5/sec ceiling). The earlier
+// 250ms/~4-per-sec spacing left too little slack under batch load and kept tripping the
+// 30-second 429 penalty. See rateLimit.js for why.
+const pace = createPacer(350)
+
+// Errors carry a `kind` so the cascade can distinguish a genuine miss ("SoundNet doesn't
+// know this track") from a transient rate-limit/timeout. Only a genuine miss should advance
+// the cascade to the next variation; a transient error must halt it, since firing more
+// variations only deepens an in-progress 429 penalty.
+//   'miss'       → SoundNet returned 200 with an error body (track not found)
+//   'rate-limit' → HTTP 429 after all retries
+//   'timeout'    → request aborted at SOUNDNET_TIMEOUT_MS
+//   'transport'  → network/fetch failure
+//   'http'       → other non-OK HTTP status
+function soundnetError(message, kind) {
+  const err = new Error(message)
+  err.kind = kind
+  return err
+}
 
 // A plain fetch has no deadline: behind our proxy SoundNet can stall a connection open
 // indefinitely, which on the manual Retry path surfaced as a spinner that never resolved.
@@ -53,21 +69,22 @@ async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
       // Timeout (AbortError) or transport error. Each attempt is bounded by SOUNDNET_TIMEOUT_MS,
       // so retrying can never hang indefinitely. Back off and retry; give up after the last attempt.
       if (attempt === retries) {
-        throw new Error(
+        throw soundnetError(
           err.name === 'AbortError'
             ? `SoundNet timed out (>${SOUNDNET_TIMEOUT_MS}ms)`
             : `SoundNet fetch failed: ${err.message}`,
+          err.name === 'AbortError' ? 'timeout' : 'transport',
         )
       }
       await new Promise((r) => setTimeout(r, delayMs * attempt))
       continue
     }
     if (res.status === 429) {
-      if (attempt === retries) throw new Error('SoundNet rate limit hit — wait 30s and try again')
+      if (attempt === retries) throw soundnetError('SoundNet rate limit hit — wait 30s and try again', 'rate-limit')
       await new Promise((r) => setTimeout(r, delayMs * attempt))
       continue
     }
-    if (!res.ok) throw new Error(`SoundNet HTTP ${res.status}`)
+    if (!res.ok) throw soundnetError(`SoundNet HTTP ${res.status}`, 'http')
     return res
   }
 }
@@ -88,7 +105,7 @@ export async function getAudioFeatures(artist, title) {
   // Full response body so we can compare against RapidAPI test UI output
   console.log(`[soundnet] full response body:`, JSON.stringify(data, null, 2))
 
-  if (data.error) throw new Error(`SoundNet miss: ${data.error}`)
+  if (data.error) throw soundnetError(`SoundNet miss: ${data.error}`, 'miss')
 
   // Normalize field names from SoundNet response to Drift schema:
   //   tempo → bpm  |  happiness → mood (valence)

@@ -19,17 +19,9 @@ export async function analyzeTrack(trackString, opts = {}) {
 // —— Query variation generators ——————————————————————————————————————————————————
 // Each transform addresses a common SoundNet miss pattern.
 //
-// comma-split is distinct from strip-feat: Spotify oEmbed returns multi-artist tracks
-// as "Artist1, Artist2" with NO "feat." indicator, so strip-feat leaves them unchanged.
 // comma-split takes the first comma-delimited segment in its original case, which is what
-// SoundNet expects (e.g. "Kayzo" not "kayzo, riot" or "kayzo").
-
-function stripFeaturedArtist(artist) {
-  return artist
-    .replace(/\s*\b(feat\.?|ft\.?|featuring|with)\b\s+.*/i, '')
-    .replace(/\s+[x&]\s+.*/i, '')
-    .trim()
-}
+// SoundNet expects: Spotify oEmbed returns multi-artist tracks as "Artist1, Artist2" with
+// NO "feat." indicator (e.g. "Kayzo" not "kayzo, riot").
 
 function stripParentheticals(title) {
   return title
@@ -49,32 +41,32 @@ function firstArtistOnly(artist) {
 // Ordered retry variations, each with a label for console logging.
 // Deduplication against the original (and prior variants) happens in runCascade
 // so identical queries never consume rate-limit budget.
+//
+// Trimmed to the three highest-yield transforms (comma-split → lowercase → all-combined);
+// the rest were diminishing returns that only burned rate-limit budget. Combined with the
+// halt-on-penalty logic in runCascade, this keeps SoundNet calls per track well bounded.
 function buildRetryVariations(artist, title) {
-  const aLow        = artist.toLowerCase()
-  const tLow        = title.toLowerCase()
-  const aStrip      = stripFeaturedArtist(artist)
-  const tStrip      = stripParentheticals(title)
-  const aParens     = stripParentheticals(artist)     // "Malaa (Alter Ego)" → "Malaa"
-  const aFirst      = firstArtistOnly(artist)         // original case — critical for SoundNet
-  const aFirstClean = stripParentheticals(aFirst)     // comma-split then strip parens: "Malaa (Alter Ego), ÆON:MODE" → "Malaa"
-  const aFirstLow   = aFirst.toLowerCase()
-  const tStripLow   = tStrip.toLowerCase()
+  const aLow      = artist.toLowerCase()
+  const tLow      = title.toLowerCase()
+  const aFirst    = firstArtistOnly(artist)                 // original case — critical for SoundNet
+  const aFirstLow = aFirst.toLowerCase()
+  const tStripLow = stripParentheticals(title).toLowerCase()
   return [
-    { label: 'lowercase',          artist: aLow,        title: tLow      },
-    { label: 'strip-feat',         artist: aStrip,      title            },
-    { label: 'strip-parens',       artist,              title: tStrip    },
-    { label: 'strip-artist-parens',artist: aParens,     title            }, // Spotify disambiguation tags in artist e.g. "Malaa (Alter Ego)"
-    { label: 'comma-split',        artist: aFirst,      title            },
-    { label: 'comma-clean',        artist: aFirstClean, title            }, // comma-split + strip artist parens combined
-    { label: 'comma-split+low',    artist: aFirstLow,   title: tLow      },
-    { label: 'all-combined',       artist: aFirstLow,   title: tStripLow },
+    { label: 'comma-split',  artist: aFirst,    title            },
+    { label: 'lowercase',    artist: aLow,      title: tLow      },
+    { label: 'all-combined', artist: aFirstLow, title: tStripLow },
   ]
 }
 
 const RETRY_DELAY_MS = 300
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// Cascade: try original + up to 8 variations, with iTunes corroboration at each SoundNet hit.
+// Cascade: try original + up to 3 variations, with iTunes corroboration at each SoundNet hit.
+//
+// Short-circuit policy: stop the moment SoundNet returns an accepted hit. Advance to the
+// next variation ONLY on a genuine miss (SoundNet 200 with an error body — the track isn't
+// in its catalog). A rate-limit or timeout is NOT a miss: firing more variations only
+// deepens the 30-second 429 penalty, so we halt the cascade and let the track go unresolved.
 //
 // Corroboration rules (per hit):
 //   iTunes no result → accept (underground/niche track iTunes doesn't carry)
@@ -137,8 +129,15 @@ async function runCascade(artist, title, spotifyDuration = null) {
     try {
       features = await getAudioFeatures(step.artist, step.title)
     } catch (err) {
-      console.log(`[drift]   ${pad} SoundNet miss  (${err.message})`)
-      continue
+      // Only a genuine miss (track not in SoundNet's catalog) advances the cascade.
+      // Rate-limit / timeout / transport / HTTP errors are transient — queuing the next
+      // variation would just deepen a 429 penalty, so halt and leave the track unresolved.
+      if (err.kind === 'miss') {
+        console.log(`[drift]   ${pad} SoundNet miss  (${err.message})`)
+        continue
+      }
+      console.log(`[drift]   ${pad} SoundNet ${err.kind ?? 'error'} — halting cascade  (${err.message})`)
+      break
     }
 
     // SoundNet hit — corroborate with iTunes before accepting
