@@ -90,14 +90,16 @@ html, body, #root {
 }
 
 /* —— Mount-suppression entrance (initial load) ————————————————————————————————————————————
-   The first non-empty population fades each song in from opacity 0 as a bare circle — the map forces
-   circle tier and hides labels + stack badges for the duration — scaling up a touch from 0.8× its
-   counter-scale for a clean pop (no bloom overshoot). `backwards` fill holds the invisible 0% state
-   through the per-node stagger (--enter-delay), so each circle stays hidden until its randomized turn.
-   The implicit 100% keyframe is the node's own resting opacity/transform, so the hand-off to normal
-   rendering is seamless. Distinct from the population bloom above, which drives later playlist switches. */
+   The first non-empty population pops each song in from scale(0)+opacity(0) as a bare circle — the map
+   forces circle tier and hides labels + stack badges for the duration. It overshoots to 1.15× its
+   counter-scale by 70% (ease-out), then eases back down to the resting size — the little bounce is what
+   makes the entrance feel alive. `backwards` fill holds the invisible 0% state through the per-node
+   stagger (--enter-delay), so each circle stays hidden until its randomized turn. The implicit 100%
+   keyframe is the node's own resting opacity/transform, so the hand-off to normal rendering is seamless.
+   Distinct from the population bloom above, which drives later playlist switches. */
 @keyframes driftNodeEnter {
-  from { opacity: 0; transform: scale(calc(var(--node-scale, 1) * 0.8)); }
+  0%   { transform: scale(0); opacity: 0; animation-timing-function: ease-out; }
+  70%  { transform: scale(calc(var(--node-scale, 1) * 1.15)); opacity: 1; animation-timing-function: ease-in-out; }
 }
 
 /* Preset switch (Slice 11.5): while the map carries this class (500ms after an axis-preset change),
