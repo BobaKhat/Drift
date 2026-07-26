@@ -5,11 +5,12 @@ import { isSpotifyTrackUrl, resolveSpotifyUrl } from './oembed'
 // into mapped (plotted), warnings (version-mismatch flagged), and unresolved (shown on
 // reconciliation).
 
-// Bounded concurrency: process 2 entries at a time with a 300ms gap between pairs. This lets
-// two slow SoundNet round-trips overlap (≈halving wall-clock vs strictly sequential) while
-// staying well under Spotify/SoundNet throttle thresholds — the per-service pacing gates in
-// oembed.js/soundnet.js still space the actual requests, so a pair never truly fires at once.
-const CONCURRENCY = 2
+// Bounded concurrency: process 4 entries at a time with a 300ms gap between batches. This lets
+// four slow SoundNet round-trips overlap (keeping the pipeline filled instead of idling on
+// network latency) while staying well under Spotify/SoundNet throttle thresholds — the
+// per-service pacing gates in oembed.js/soundnet.js (SoundNet at 350ms) still space the actual
+// requests, so a batch never truly fires at once and higher concurrency won't cause 429s.
+const CONCURRENCY = 4
 const PAIR_DELAY = 300
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
