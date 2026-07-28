@@ -1651,18 +1651,24 @@ function DriftMapInner({ tracks }) {
   }, [applyExtent])
   useThrottledZoom(applyZoom)
 
-  // Scroll the grid with the map. The grid is a fixed 22px CSS background (constant density, so it's
-  // visible at any zoom), so to give it motion reference we write the viewport PAN into the card's
-  // background-position on every transform change — panning by N screen px shifts the translate by N at
-  // any zoom, so the grid tracks the map 1:1. Guarded to skip no-op frames; a background-position write
-  // is a cheap paint with no React re-render, so this can ride every transform update.
+  // Scroll the grid with the map — but ONLY on pan, never on zoom. The grid is a fixed 22px CSS
+  // background (constant screen spacing at any zoom), so it should read as a steady surface you slide
+  // across: panning shifts its background-position 1:1, while zooming leaves it visually put. React Flow
+  // folds BOTH the pan and the zoom focal-point shift into one translate, so writing that translate
+  // straight into background-position (as this used to) made the grid swim sideways ~12 cells on every
+  // zoom step — the disorienting "inflate/deflate". Instead we accumulate ONLY the pan delta (the
+  // translate change on frames where zoom is unchanged) and freeze the position while zoom is changing.
+  // A background-position write is a cheap paint with no React re-render, so this can ride every frame.
   useEffect(() => {
-    let px = null, py = null
+    let px = null, py = null, pz = null
+    let bx = 0, by = 0
     const apply = () => {
-      const [x, y] = store.getState().transform
-      if (x === px && y === py) return
-      px = x; py = y
-      if (wrapperRef.current) wrapperRef.current.style.backgroundPosition = `${x}px ${y}px`
+      const [x, y, z] = store.getState().transform
+      if (x === px && y === py && z === pz) return
+      // Pure pan (zoom unchanged) shifts the grid by the pan delta; a zoom change leaves it put.
+      if (pz !== null && z === pz) { bx += x - px; by += y - py }
+      px = x; py = y; pz = z
+      if (wrapperRef.current) wrapperRef.current.style.backgroundPosition = `${bx}px ${by}px`
     }
     apply()
     return store.subscribe(apply)
