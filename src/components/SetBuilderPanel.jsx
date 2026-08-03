@@ -188,7 +188,7 @@ function CopyIcon({ color }) {
 
 export default function SetBuilderPanel() {
   const {
-    chain, orphanGroups, activeTracks, focusTrack, saveCurrentSet, savingSet,
+    chain, orphanGroups, activeTracks, focusTrack, openDeck, saveCurrentSet, savingSet,
     unlinkAfter, reorderChain, dissolveGroup, newSet, toggleSetBuilderMinimized,
   } = usePlaylistStore()
   const [query, setQuery] = useState('')
@@ -225,7 +225,8 @@ export default function SetBuilderPanel() {
     setQuery('')
     setOpen(false)
     focusTrack(track.id) // pan + highlight on the map (Decision Log #56)
-  }, [focusTrack])
+    openDeck(track.id)   // and open its Deck so it can be previewed/played (build mode included)
+  }, [focusTrack, openDeck])
 
   // —— Drag-to-reorder with native lift + gap animation (Slice 9 #6/#7) ————————————————
   // The dragged row lifts (scale + shadow) and follows the cursor; the others translate to open a
@@ -316,11 +317,13 @@ export default function SetBuilderPanel() {
 
   useEffect(() => () => cancelAnimationFrame(scrollRaf.current), [])
 
-  // Clicking a row locates the song on the map (Slice 9 #4) — unless a drag just happened.
+  // Clicking a row locates the song on the map (Slice 9 #4) AND opens its Deck so it can be previewed/
+  // played straight from the list while building — unless a drag just happened.
   const openOnMap = useCallback((trackId) => {
     if (suppressClick.current) return
     focusTrack(trackId)
-  }, [focusTrack])
+    openDeck(trackId)
+  }, [focusTrack, openDeck])
 
   // Bottom button is a small state machine (Slice 9 r2 #6 / r3 #3): build → saving → saved →
   // copyable. On a successful save the chain STAYS on screen (r3 #3); the button just becomes

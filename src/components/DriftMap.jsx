@@ -1773,11 +1773,11 @@ function DriftMapInner({ tracks }) {
   // clicks are ignored. Outside build mode it opens that song's Deck View (Decision Log #6, #69).
   const handleNodeClick = useCallback((_e, node) => {
     setSelectedWire(null) // clicking a song dismisses the compatibility card
-    if (buildMode) {
-      if (chain.length === 0) addHead(node.id)
-    } else {
-      toggleDeck(node.id) // clicking the open song again closes the deck
-    }
+    // Seat the head on the first click while building; in EVERY mode a click also opens the song's Deck
+    // so it can be previewed/played (Decision Log #6, #69) — build mode included. Set additions still
+    // happen by wiring, so a plain click never conflicts with building the chain.
+    if (buildMode && chain.length === 0) addHead(node.id)
+    toggleDeck(node.id) // clicking the open song again closes the deck
   }, [buildMode, chain.length, addHead, toggleDeck])
 
   // The set-builder panel isn't closeable while building (Decision Log #53), so a pane click only
@@ -1874,12 +1874,15 @@ function DriftMapInner({ tracks }) {
   const onStackRowSelect = useCallback((song) => {
     setPopover((p) => {
       const mode = p?.mode
+      // Mirror the map-click behavior: connect completes a wire; head seats the first song AND opens its
+      // Deck; select just opens the Deck — in every mode, so a clustered song can be previewed/played
+      // while building too.
       if (mode === 'connect') connectSong(song.id)
-      else if (mode === 'head') addHead(song.id)
-      else if (mode === 'select' && !buildMode) toggleDeck(song.id)
+      else if (mode === 'head') { addHead(song.id); toggleDeck(song.id) }
+      else if (mode === 'select') toggleDeck(song.id)
       return null // dismiss after selection
     })
-  }, [buildMode, connectSong, addHead, toggleDeck])
+  }, [connectSong, addHead, toggleDeck])
 
   // Keep the popover glued to its badge as the map pans/zooms, clamped inside the card so it never clips
   // the viewport edge (the panel repositions instead of panning the map). Placed to the right of the
