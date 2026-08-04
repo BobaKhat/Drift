@@ -10,7 +10,6 @@ import {
   NEO_BTN_RAISED, NEO_BTN_HOVER, NEO_BTN_PRESS,
   SELECTED,
 } from './import/tokens'
-import brandmark from '../assets/brandmark.png'
 
 // Icon rail — floating rounded card (Figma node 799-4821): brand pinned top, nav icons
 // centered, profile pinned bottom. The nav icons are raised circles standing off the rail
@@ -42,16 +41,41 @@ const ICON_SPRING = { type: 'spring', stiffness: 400, damping: 15 }
 // Symmetric scale-pulse tween shared by the mini-bar's maximize glyph (matches the toolbar's recipe).
 const PULSE_TWEEN = { duration: 0.4, ease: 'easeInOut' }
 
-// The logo/profile PNGs bake the whole button (well + glyph + shadow) onto a canvas with the
-// circle slightly inset toward the top-left (shadow padding bottom-right). Given the canvas
-// size and the measured circle (width + center), scale so the circle ≈ CIRCLE and offset so the
-// circle — not the padded canvas — lines up with the nav circles.
-function imageButton(src, canvas, circleW, circleCx) {
-  const size = Math.round((CIRCLE * canvas) / circleW)
-  const offset = Math.round(CIRCLE / 2 - (circleCx * size) / canvas)
-  return { src, size, offset }
+// Brand mark — the product's four-dot diamond. It used to be a pre-rendered glass-circle button PNG,
+// which read as a clickable control on the rail; now it's just the four accent-orange dots, each
+// neomorphically extruded (a raised dome: outer dark drop + inner top-left highlight / bottom-right
+// shade), sitting directly on the channel floor so it reads as a mark, not a button. Purely decorative —
+// no onClick. Keeps the CIRCLE footprint so the rail's top/bottom vertical rhythm is unchanged.
+const BRAND_DOT = 8   // dot diameter
+const BRAND_REACH = 9 // mark centre → dot centre (the diamond's radius)
+// NEO_BTN_RAISED scaled to dot size: outer dark drop + inner light top-left / dark bottom-right for a
+// domed extrusion. On the orange fill the inset white reads as a peach highlight, the inset black as shade.
+const BRAND_DOT_SHADOW =
+  '1.5px 1.5px 3px 0px rgba(0,0,0,0.7), inset 1px 1px 1px 0px rgba(255,255,255,0.35), inset -1px -1px 1px 0px rgba(0,0,0,0.35)'
+
+function BrandDots() {
+  // N / W / E / S around an empty centre — the brandmark's diamond.
+  const dots = [
+    `translate(-50%, calc(-50% - ${BRAND_REACH}px))`, // top
+    `translate(calc(-50% - ${BRAND_REACH}px), -50%)`, // left
+    `translate(calc(-50% + ${BRAND_REACH}px), -50%)`, // right
+    `translate(-50%, calc(-50% + ${BRAND_REACH}px))`, // bottom
+  ]
+  return (
+    <div role="img" aria-label="Drift" style={{ width: CIRCLE, height: CIRCLE, position: 'relative', flexShrink: 0 }}>
+      {dots.map((transform, i) => (
+        <span
+          key={i}
+          style={{
+            position: 'absolute', top: '50%', left: '50%',
+            width: BRAND_DOT, height: BRAND_DOT, borderRadius: '50%',
+            background: ACCENT, boxShadow: BRAND_DOT_SHADOW, transform,
+          }}
+        />
+      ))}
+    </div>
+  )
 }
-const BRAND_MEDIA = imageButton(brandmark, 210, 177, 92) // product mark — pinned top AND bottom
 
 // Crate/record-box glyph. Default is grey; active turns Spotify-green with an inner shadow.
 function PlaylistsIcon({ active }) {
@@ -308,10 +332,8 @@ const NAV_ITEMS = [
   { id: 'explore', label: 'Explore By', Icon: ExploreIcon },
 ]
 
-// Circular icon button. Two modes:
-//  • media: a pre-rendered glass-button PNG (logo / profile) — static, no active/hover states.
-//  • default: recessed well with an orange active ring and a glyph that brightens on hover.
-function RailButton({ label, Icon, isActive, onClick, media, pinActiveHover }) {
+// Circular icon button — a recessed well with an orange active ring and a glyph that brightens on hover.
+function RailButton({ label, Icon, isActive, onClick, pinActiveHover }) {
   const [hover, setHover] = useState(false)
   // After a click the pointer is still over the button, so whileHover would keep the glyph pinned to its
   // "hover" (open) state — meaning clicking an ACTIVE icon to close its panel leaves the glyph open until
@@ -321,45 +343,6 @@ function RailButton({ label, Icon, isActive, onClick, media, pinActiveHover }) {
   // Reduced motion drops the whileHover trigger so the glyph transforms never fire; the colour/shadow
   // hover state below (driven by the `hover` flag) is unaffected.
   const reduce = useReducedMotion()
-
-  // Pre-rendered button image (well + glyph + shadow baked in) — render the bitmap directly,
-  // recentered on its circle so it aligns with the other buttons.
-  if (media) {
-    return (
-      <button
-        title={label}
-        onClick={onClick}
-        style={{
-          width: CIRCLE,
-          height: CIRCLE,
-          padding: 0,
-          border: 'none',
-          background: 'transparent',
-          flexShrink: 0,
-          position: 'relative',
-          overflow: 'visible',
-          cursor: onClick ? 'pointer' : 'default',
-        }}
-      >
-        <img
-          src={media.src}
-          alt={label}
-          draggable={false}
-          style={{
-            position: 'absolute',
-            width: media.size,
-            height: media.size,
-            maxWidth: 'none', // override Tailwind preflight's img { max-width: 100% }, which squeezed it
-            objectFit: 'contain', // keep the source's 1:1 ratio — a perfect circle, never an oval
-            left: media.offset,
-            top: media.offset,
-            display: 'block',
-            pointerEvents: 'none',
-          }}
-        />
-      </button>
-    )
-  }
 
   const style = {
     width: CIRCLE,
@@ -501,8 +484,8 @@ export default function LeftNav() {
             padding: '14px 0',
           }}
         >
-          {/* Brand mark (top) — pre-rendered glass button bitmap */}
-          <RailButton label="Drift" media={BRAND_MEDIA} />
+          {/* Brand mark (top) — the four accent dots, extruded, no button chrome */}
+          <BrandDots />
 
           {/* Nav icons (centered) */}
           <nav style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: GAP }}>
@@ -518,8 +501,8 @@ export default function LeftNav() {
             ))}
           </nav>
 
-          {/* Brand mark (bottom) — same pre-rendered glass button as the top, decorative (no onClick) */}
-          <RailButton label="Drift" media={BRAND_MEDIA} />
+          {/* Brand mark (bottom) — same four extruded dots as the top, decorative */}
+          <BrandDots />
         </div>
 
         {/* Raised-slab inner rim — faint top-left highlight + bottom-right inner shade (no border), the
