@@ -1,0 +1,174 @@
+import { useMemo, useState, useRef, useEffect } from 'react'
+import { generateJourneyNarrative } from '../lib/journey'
+
+// Journey — a small HUD readout in the bottom-right of the map that opens a deterministic text summary
+// of the connected set's energy arc (2–4 sentences). It only appears in set-builder mode once the
+// connected chain has 2+ tracks that carry both energy AND mood; generateJourneyNarrative returns null
+// otherwise and this renders nothing (Decision Log data source: skip null-feature tracks, hide below 2).
+//
+// This is the UI shell only — all the arc math lives in src/lib/journey.js so it stays testable. The
+// component recomputes the summary whenever the chain (order/membership) or track features change; it's
+// local math over data already in memory, so it's instant and re-runs freely.
+//
+// Visual language is the map's HUD/instrument aesthetic (Decision Log #71): near-black fill, single
+// accent, mono-style caps label + corner brackets — NOT the bento/neomorphic panel material. Interaction
+// mirrors the stack-badge popover (Decision Log #19): click the pill to open, click outside to dismiss.
+
+const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
+const ACCENT1 = '#F27F37'
+const TEXT_SECONDARY = '#848484'
+const EDGE = 16 // matches the map's HUD corner inset (brackets, coord readout)
+
+// The map's HUD surface — the same near-black slab + recessed inner glow the pole pills and zone chip
+// wear (DriftMap pillBase / zoneChipStyle), so the trigger reads as one of the crosshair's instruments.
+const HUD_SURFACE = {
+  background: '#0f0f0f',
+  border: '1px solid #000000',
+  boxShadow: '0px 0px 2.5px 0px #000000, inset 0px 0px 5px 0px rgba(80,80,80,0.5)',
+}
+
+// Small L-bracket at one corner of the popover — the HUD's corner-bracket motif (#71). `corner` is one
+// of tl/tr/bl/br; each is two 1px accent arms meeting at that corner, inset a few px.
+function CornerBracket({ corner }) {
+  const len = 9
+  const inset = 6
+  const v = corner[0] === 't' ? { top: inset } : { bottom: inset }
+  const h = corner[1] === 'l' ? { left: inset } : { right: inset }
+  const arm = { position: 'absolute', background: 'rgba(242,127,55,0.55)' }
+  return (
+    <>
+      <div style={{ ...arm, ...v, ...h, width: len, height: 1 }} />
+      <div style={{ ...arm, ...v, ...h, width: 1, height: len }} />
+    </>
+  )
+}
+
+// The compressed one-line arc rendered as spaced-out mono caps, e.g. "CHILL → INTENSE → CHILL".
+function ArcLine({ text, style }) {
+  return (
+    <span
+      style={{
+        fontFamily: FONT, fontSize: 11, fontWeight: 500, letterSpacing: '0.1em',
+        textTransform: 'uppercase', color: TEXT_SECONDARY, whiteSpace: 'nowrap', ...style,
+      }}
+    >
+      {text}
+    </span>
+  )
+}
+
+export default function JourneyTrigger({ tracks, hidden = false }) {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef(null)
+
+  // Recompute on any change to the chain's membership/order or the tracks' features. `tracks` is the
+  // ordered connected chain; identity changes when the map rebuilds it, which is exactly the recompute
+  // trigger the spec asks for (add / remove / reorder / unlink / rewire).
+  const journey = useMemo(() => generateJourneyNarrative(tracks), [tracks])
+
+  // Close the popover if the chain shrinks below the threshold or the trigger otherwise disappears.
+  useEffect(() => { if (!journey) setOpen(false) }, [journey])
+
+  // Dismiss on click outside — same intent as the stack popover / zone chip (Decision Log #19). Listen
+  // in the CAPTURE phase: React Flow's pane calls stopPropagation on mousedown to drive panning, which
+  // would swallow a bubble-phase document listener, so a click on the map canvas would never close us.
+  useEffect(() => {
+    if (!open) return
+    const handler = (e) => { if (!rootRef.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler, true)
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', handler, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  if (!journey || hidden) return null
+
+  return (
+    <div
+      ref={rootRef}
+      style={{
+        position: 'absolute', right: EDGE, bottom: EDGE + 26, zIndex: 4,
+        display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10,
+        pointerEvents: 'none', // children re-enable; keeps the empty column from eating pans
+      }}
+    >
+      {/* Popover — opens ABOVE the pill (the pill sits at the card's bottom edge). Near-black HUD
+          material, dark and instrument-like, NOT the bento panel. Text is 13.5px secondary, 2–4
+          sentences. Corner brackets echo the map's HUD framing. */}
+      {open && (
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'relative', width: 300, boxSizing: 'border-box',
+            padding: '16px 18px', borderRadius: 12,
+            ...HUD_SURFACE,
+            pointerEvents: 'auto',
+            display: 'flex', flexDirection: 'column', gap: 10,
+          }}
+        >
+          <CornerBracket corner="tl" />
+          <CornerBracket corner="tr" />
+          <CornerBracket corner="bl" />
+          <CornerBracket corner="br" />
+
+          {/* Header: accent dot + label + the compressed arc as a mono readout. The arc can be longer
+              than the fixed-width popover, so it shrinks and ellipsizes here rather than clipping mid-
+              glyph — the full arc always stays legible on the trigger pill below. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1, flexShrink: 0 }} />
+            <span style={{
+              fontFamily: FONT, fontSize: 11, fontWeight: 600, letterSpacing: '0.14em',
+              textTransform: 'uppercase', color: '#fff', flexShrink: 0,
+            }}>
+              Journey
+            </span>
+            <ArcLine text={journey.compressed} style={{ marginLeft: 'auto', minWidth: 0, flexShrink: 1, overflow: 'hidden', textOverflow: 'ellipsis' }} />
+          </div>
+
+          {/* Divider — a faint hairline, matching the map HUD's quiet rules. */}
+          <div style={{ height: 1, background: 'rgba(255,255,255,0.07)', width: '100%' }} />
+
+          {/* The narrative. */}
+          <p style={{
+            margin: 0, fontFamily: FONT, fontSize: 13.5, lineHeight: 1.5,
+            color: TEXT_SECONDARY, letterSpacing: '0.005em',
+          }}>
+            {journey.summary}
+          </p>
+        </div>
+      )}
+
+      {/* Trigger pill — accent dot + JOURNEY caps, with the compressed arc appended when it fits. */}
+      <div
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+        role="button"
+        aria-expanded={open}
+        title="Journey — the energy arc of your set"
+        style={{
+          pointerEvents: 'auto', cursor: 'pointer', userSelect: 'none',
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          padding: '7px 14px', borderRadius: 100,
+          ...HUD_SURFACE,
+          // Lift the accent dot + a faint outer glow when the popover is open, so the pill reads "active".
+          boxShadow: open
+            ? '0px 0px 2.5px 0px #000000, inset 0px 0px 5px 0px rgba(80,80,80,0.5), 0 0 10px 0 rgba(242,127,55,0.35)'
+            : HUD_SURFACE.boxShadow,
+          transition: 'box-shadow 140ms ease',
+        }}
+      >
+        <span style={{ width: 6, height: 6, borderRadius: '50%', background: ACCENT1, flexShrink: 0 }} />
+        <span style={{
+          fontFamily: FONT, fontSize: 11, fontWeight: 600, letterSpacing: '0.14em',
+          textTransform: 'uppercase', color: '#fff',
+        }}>
+          Journey
+        </span>
+        <ArcLine text={journey.compressed} />
+      </div>
+    </div>
+  )
+}

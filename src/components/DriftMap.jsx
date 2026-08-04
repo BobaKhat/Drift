@@ -24,6 +24,7 @@ import NebulaLayer from './NebulaLayer'
 import CompassPreview from './CompassPreview'
 import CompatibilityCard from './CompatibilityCard'
 import FlowToggle from './FlowToggle'
+import JourneyTrigger from './JourneyTrigger'
 import {
   SELECTED,
   NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE,
@@ -1369,6 +1370,11 @@ function DriftMapInner({ tracks }) {
   // Raw track records keyed by id — feeds per-wire compatibility scoring (colors + card).
   const tracksById = useMemo(() => Object.fromEntries(tracks.map((t) => [t.id, t])), [tracks])
 
+  // The connected chain as ordered track records — the sole input to the Journey summary (orphan groups
+  // are excluded by construction). Rebuilt on any chain edit (add/remove/reorder/unlink/rewire) or track
+  // update, which is exactly when the Journey narrative must recompute.
+  const chainTracks = useMemo(() => chain.map((id) => tracksById[id]).filter(Boolean), [chain, tracksById])
+
   // The wire whose compatibility card is open (Decision Log #31): { source, target } | null. Set on
   // wire click, cleared on any pane click / chain edit / mode change so a stale card never lingers.
   const [selectedWire, setSelectedWire] = useState(null)
@@ -2039,6 +2045,9 @@ function DriftMapInner({ tracks }) {
       {selectedTracks && (
         <CompatibilityCard sourceTrack={selectedTracks.s} targetTrack={selectedTracks.t} />
       )}
+      {/* Journey — bottom-right HUD readout summarizing the set's energy arc (build mode + 2+ connected
+          songs with features). Hidden while the compatibility card owns the same corner. */}
+      {buildMode && <JourneyTrigger tracks={chainTracks} hidden={!!selectedTracks} />}
       {/* Hover preview (Slice 11.5): the detail card floats above (or below, near the top edge) the
           hovered circle — a separate, non-interactive layer in the map container. Fades in 150 / out 100. */}
       {preview && (
