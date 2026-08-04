@@ -1779,11 +1779,15 @@ function DriftMapInner({ tracks }) {
   // clicks are ignored. Outside build mode it opens that song's Deck View (Decision Log #6, #69).
   const handleNodeClick = useCallback((_e, node) => {
     setSelectedWire(null) // clicking a song dismisses the compatibility card
-    // Seat the head on the first click while building; in EVERY mode a click also opens the song's Deck
-    // so it can be previewed/played (Decision Log #6, #69) — build mode included. Set additions still
-    // happen by wiring, so a plain click never conflicts with building the chain.
-    if (buildMode && chain.length === 0) addHead(node.id)
-    toggleDeck(node.id) // clicking the open song again closes the deck
+    // Seating the anchor is its own gesture: the first click on an empty chain seats the head (Decision
+    // Log #38, #42) and does NOT open the Deck — that click means "start my set here," not "inspect this
+    // song." Every other click opens/toggles the song's Deck (Decision Log #6, #69), including later
+    // build-mode clicks, since set additions happen by wiring rather than clicking.
+    if (buildMode && chain.length === 0) {
+      addHead(node.id)
+    } else {
+      toggleDeck(node.id) // clicking the open song again closes the deck
+    }
   }, [buildMode, chain.length, addHead, toggleDeck])
 
   // The set-builder panel isn't closeable while building (Decision Log #53), so a pane click only
