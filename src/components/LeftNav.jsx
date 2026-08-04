@@ -42,14 +42,14 @@ const ICON_SPRING = { type: 'spring', stiffness: 400, damping: 15 }
 const PULSE_TWEEN = { duration: 0.4, ease: 'easeInOut' }
 
 // Brand mark — the product's four-dot diamond. It used to be a pre-rendered glass-circle button PNG,
-// which read as a clickable control on the rail; now it's just the four accent-orange dots, each
-// neomorphically extruded (a raised dome: outer dark drop + inner top-left highlight / bottom-right
-// shade), sitting directly on the channel floor so it reads as a mark, not a button. Purely decorative —
-// no onClick. Keeps the CIRCLE footprint so the rail's top/bottom vertical rhythm is unchanged.
+// which read as a clickable control on the rail; now it's just the four dots in the icons' rest grey
+// (ICON_REST), each neomorphically extruded (a raised dome: outer dark drop + inner top-left highlight /
+// bottom-right shade), sitting directly on the channel floor so it reads as a mark, not a button. Purely
+// decorative — no onClick. Keeps the CIRCLE footprint so the rail's top/bottom vertical rhythm is unchanged.
 const BRAND_DOT = 8   // dot diameter
 const BRAND_REACH = 9 // mark centre → dot centre (the diamond's radius)
 // NEO_BTN_RAISED scaled to dot size: outer dark drop + inner light top-left / dark bottom-right for a
-// domed extrusion. On the orange fill the inset white reads as a peach highlight, the inset black as shade.
+// domed extrusion. On the grey fill the inset white reads as a lit top edge, the inset black as shade.
 const BRAND_DOT_SHADOW =
   '1.5px 1.5px 3px 0px rgba(0,0,0,0.7), inset 1px 1px 1px 0px rgba(255,255,255,0.35), inset -1px -1px 1px 0px rgba(0,0,0,0.35)'
 
@@ -69,7 +69,7 @@ function BrandDots() {
           style={{
             position: 'absolute', top: '50%', left: '50%',
             width: BRAND_DOT, height: BRAND_DOT, borderRadius: '50%',
-            background: ACCENT, boxShadow: BRAND_DOT_SHADOW, transform,
+            background: ICON_REST, boxShadow: BRAND_DOT_SHADOW, transform,
           }}
         />
       ))}
