@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
+import { motion, useReducedMotion } from 'framer-motion'
 import { generateJourneyNarrative } from '../lib/journey'
 
 // Journey — a small HUD readout in the bottom-right of the map that opens a deterministic text summary
@@ -43,6 +44,28 @@ function CornerBracket({ corner }) {
   )
 }
 
+// Affordance chevron on the trigger pill — same glyph as the zone chip's dropdown caret. The popover
+// opens ABOVE the pill, so it points UP at rest (there's more above) and flips DOWN when open (collapse),
+// and the glyph lights accent while open. It carries the toolbar chevron's hover microinteraction: the
+// bounce lives on a wrapper motion.div (variants driven by the pill's whileHover — see below) so the
+// open/close rotate can stay an independent CSS transform on the svg without the two transforms fighting.
+// The nudge is a couple px UPWARD, toward the drawer this one drops (the toolbar's drops down, so it
+// nudges down; this one rises, so it nudges up).
+const CHEV_BOUNCE = { rest: { y: 0 }, hover: { y: [0, -2, 0], transition: { duration: 0.3, ease: 'easeOut' } } }
+
+function ChevronIcon({ open }) {
+  return (
+    <motion.div style={{ display: 'flex', flexShrink: 0 }} variants={CHEV_BOUNCE}>
+      <svg
+        width="9" height="5" viewBox="0 0 9 5" fill="none"
+        style={{ transition: 'transform 200ms ease', transform: open ? 'rotate(0deg)' : 'rotate(180deg)' }}
+      >
+        <path d="M1 1L4.5 4.5L8 1" stroke={open ? ACCENT1 : '#9a9a9a'} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </motion.div>
+  )
+}
+
 // The compressed one-line arc rendered as spaced-out mono caps, e.g. "CHILL → INTENSE → CHILL".
 function ArcLine({ text, style }) {
   return (
@@ -60,6 +83,8 @@ function ArcLine({ text, style }) {
 export default function JourneyTrigger({ tracks, hidden = false }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef(null)
+  // Gate the hover bounce on reduced-motion, exactly as the toolbar chevron does.
+  const reduce = useReducedMotion()
 
   // Recompute on any change to the chain's membership/order or the tracks' features. `tracks` is the
   // ordered connected chain; identity changes when the map rebuilds it, which is exactly the recompute
@@ -142,8 +167,10 @@ export default function JourneyTrigger({ tracks, hidden = false }) {
         </div>
       )}
 
-      {/* Trigger pill — accent dot + JOURNEY caps, with the compressed arc appended when it fits. */}
-      <div
+      {/* Trigger pill — accent dot + JOURNEY caps, with the compressed arc appended when it fits. A
+          motion.div so hovering the pill drives the chevron's bounce variant (same as the toolbar). */}
+      <motion.div
+        initial="rest" animate="rest" whileHover={reduce ? undefined : 'hover'}
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
         role="button"
         aria-expanded={open}
@@ -168,7 +195,8 @@ export default function JourneyTrigger({ tracks, hidden = false }) {
           Journey
         </span>
         <ArcLine text={journey.compressed} />
-      </div>
+        <ChevronIcon open={open} />
+      </motion.div>
     </div>
   )
 }
