@@ -318,7 +318,7 @@ function buildAscending(a, energies, clusters) {
       `A set that builds.`,
       `Opens ${start} and keeps pushing harder from there without leaving that lane.`,
       sharpIsDistinct(a) ? `The steepest climb comes ${positional(sharp.idx + 1, n)} — a ${magnitude(sharp.delta)}.` : null,
-      `Finishes at the top with nowhere left to climb.`,
+      null,
     ]
   }
 
@@ -334,7 +334,7 @@ function buildAscending(a, energies, clusters) {
     `A set that builds.`,
     `Opens ${start} and ${verbToCluster(energies[0], energies[n - 1], end)} ${end} by the end.`,
     jump,
-    `Finishes at the top with nowhere left to climb.`,
+    null,
   ]
 }
 
@@ -425,7 +425,7 @@ function buildSteady(a, energies, clusters, moods, dances) {
   const shift = detectVibeShift(energies, moods, dances)
   return [
     `This set picks a lane and stays there — ${dom} from open to close, no big swings.`,
-    shift ? `The energy holds but ${shiftPhrase(shift, a.n)}.` : `Consistent energy, consistent vibe.`,
+    shift ? `The energy holds but ${shiftPhrase(shift, a.n)}.` : null,
   ]
 }
 
@@ -485,7 +485,7 @@ function buildOscillating(a, energies, clusters) {
     `This set can't sit still — ${N} direction changes, always moving.`,
     runSentence(a, energies, clusters, 'Its longest run'),
     flipSentence(a, energies, clusters),
-    `A set built on contrast — this one keeps you guessing.`,
+    null,
   ]
 }
 
