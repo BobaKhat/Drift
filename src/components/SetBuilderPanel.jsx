@@ -64,11 +64,27 @@ function UnlinkGlyph() {
   )
 }
 
+// Trash glyph shown at the right edge of a LONE anchor row — the head with nothing wired after it
+// (chain length 1). Removes the anchor from the set (it returns to the map). The instant a second song
+// latches on, this slot becomes the unlink glyph instead, so the affordance reads as "delete this
+// one-song set" only while the set truly is one song. #4B4B4B stroke to match GripDots / UnlinkGlyph.
+function TrashGlyph() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+      <path
+        d="M3 4.5H13 M6.25 4.5V3.25C6.25 2.7 6.7 2.25 7.25 2.25H8.75C9.3 2.25 9.75 2.7 9.75 3.25V4.5 M4.5 4.5L4.95 12.75C4.98 13.3 5.43 13.75 5.98 13.75H10.02C10.57 13.75 11.02 13.3 11.05 12.75L11.5 4.5 M6.75 7V11.25 M9.25 7V11.25"
+        stroke="#4B4B4B" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 // A connected-song row. The head (position 1) gets the orange accent (Decision Log #55). The grip
 // drags to reorder; the unlink glyph severs the wire after this song (hidden on the tail); clicking
 // the row body pans + highlights the song on the map (Slice 9 #4). `shift` slides the row to open a
-// gap during a reorder; `lifted` styles the row being carried.
-function ChainRow({ track, index, isHead, isTail, shift, lifted, onGripDown, onUnlink, onOpen }) {
+// gap during a reorder; `lifted` styles the row being carried. When the row is the whole set (a single
+// anchor, `isSolo`), the right-edge slot is a trash glyph that removes it instead of an unlink.
+function ChainRow({ track, index, isHead, isTail, isSolo, shift, lifted, onGripDown, onUnlink, onRemove, onOpen }) {
   return (
     <div
       onClick={onOpen}
@@ -91,7 +107,15 @@ function ChainRow({ track, index, isHead, isTail, shift, lifted, onGripDown, onU
       <SongThumb url={track?.album_art_url} />
       <RowText track={track} />
       <TrackMeta track={track} />
-      {isTail ? (
+      {isSolo ? (
+        <div
+          onClick={(e) => { e.stopPropagation(); onRemove() }}
+          title="Remove anchor — clears the set"
+          style={{ display: 'flex', cursor: 'pointer', opacity: 0.85, flexShrink: 0 }}
+        >
+          <TrashGlyph />
+        </div>
+      ) : isTail ? (
         <div style={{ width: 16, flexShrink: 0 }} />
       ) : (
         <div
@@ -189,7 +213,7 @@ function CopyIcon({ color }) {
 export default function SetBuilderPanel() {
   const {
     chain, orphanGroups, activeTracks, focusTrack, openDeck, saveCurrentSet, savingSet,
-    unlinkAfter, reorderChain, dissolveGroup, newSet, toggleSetBuilderMinimized,
+    unlinkAfter, reorderChain, dissolveGroup, removeHead, newSet, toggleSetBuilderMinimized,
   } = usePlaylistStore()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -459,10 +483,12 @@ export default function SetBuilderPanel() {
                 index={i}
                 isHead={i === 0}
                 isTail={i === chainTracks.length - 1}
+                isSolo={chainTracks.length === 1}
                 shift={dragIndex != null ? (view?.shifts?.[i] ?? 0) + (i === dragIndex ? (view?.translate ?? 0) : 0) : 0}
                 lifted={i === dragIndex}
                 onGripDown={onGripDown}
                 onUnlink={unlinkAfter}
+                onRemove={removeHead}
                 onOpen={() => openOnMap(chain[i])}
               />
             </div>
