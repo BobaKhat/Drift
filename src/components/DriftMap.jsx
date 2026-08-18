@@ -1114,8 +1114,25 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
   const stroke = ICON_PRIMARY
   const [compassOpen, setCompassOpen] = useState(false)
   const [chevHover, setChevHover] = useState(false)
+  const toolbarRef = useRef(null)
   // See ToolButton: gate every hover variant on reduced-motion so the transforms are skipped outright.
   const reduce = useReducedMotion()
+
+  // Dismiss the compass dropdown on any click outside the toolbar (or Escape) — same intent as the
+  // Journey pill and stack popover. Listen in the CAPTURE phase: React Flow's pane calls stopPropagation
+  // on mousedown to drive panning, so a bubble-phase document listener would never see a click that
+  // lands on the map canvas, and the compass would stay open.
+  useEffect(() => {
+    if (!compassOpen) return
+    const onDown = (e) => { if (!toolbarRef.current?.contains(e.target)) setCompassOpen(false) }
+    const onKey = (e) => { if (e.key === 'Escape') setCompassOpen(false) }
+    document.addEventListener('mousedown', onDown, true)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown, true)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [compassOpen])
 
   // Fit the axis box, not the nodes — same framing the map opens with, so this button always
   // returns you to the full crosshair with its four poles in view.
@@ -1127,7 +1144,7 @@ function ToolBar({ rf, presetName = 'Vibe', activePreset, geom }) {
   const handleZoomOut = useCallback(() => rf.zoomOut({ duration: 200 }), [rf])
 
   return (
-    <div style={{
+    <div ref={toolbarRef} style={{
       position: 'absolute', right: 20, top: 20, zIndex: 4,
       display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10,
     }}>

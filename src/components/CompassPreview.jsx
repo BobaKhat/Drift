@@ -10,6 +10,9 @@ const ACCENT2 = '#4B6AE5'
 // <img> 404'd, showing broken-image icons + white boxes where the crosshair/rings should be. Self-
 // contained rendering keeps the compass alive forever.
 const BRACKET = '1.5px solid rgba(255,255,255,0.25)' // corner HUD L-shape
+// Softly-rounded joint on each corner bracket — matched to the Journey pill's brackets by radius-to-stroke
+// ratio (Journey: 4px radius on a 1px stroke; this stroke is 1.5px → 6px keeps the same roundness).
+const BRACKET_RADIUS = 6
 const sectorTrans = { transition: 'opacity 300ms ease' }
 
 // Quadrant sector size (matches the active-quadrant highlight geometry: 66.283px arm from centre).
@@ -79,10 +82,10 @@ export default function CompassPreview({ presetKey, locked = false }) {
 
       {/* ── Corner brackets (CSS L-shapes; self-contained) ────────────── */}
       {[
-        { k: 'tl', s: { left: 20, top: 20, borderTop: BRACKET, borderLeft: BRACKET, borderTopLeftRadius: 3 } },
-        { k: 'tr', s: { right: 20, top: 20, borderTop: BRACKET, borderRight: BRACKET, borderTopRightRadius: 3 } },
-        { k: 'bl', s: { left: 20, bottom: 20, borderBottom: BRACKET, borderLeft: BRACKET, borderBottomLeftRadius: 3 } },
-        { k: 'br', s: { right: 20, bottom: 20, borderBottom: BRACKET, borderRight: BRACKET, borderBottomRightRadius: 3 } },
+        { k: 'tl', s: { left: 20, top: 20, borderTop: BRACKET, borderLeft: BRACKET, borderTopLeftRadius: BRACKET_RADIUS } },
+        { k: 'tr', s: { right: 20, top: 20, borderTop: BRACKET, borderRight: BRACKET, borderTopRightRadius: BRACKET_RADIUS } },
+        { k: 'bl', s: { left: 20, bottom: 20, borderBottom: BRACKET, borderLeft: BRACKET, borderBottomLeftRadius: BRACKET_RADIUS } },
+        { k: 'br', s: { right: 20, bottom: 20, borderBottom: BRACKET, borderRight: BRACKET, borderBottomRightRadius: BRACKET_RADIUS } },
       ].map(({ k, s }) => (
         <div key={k} style={{ position: 'absolute', width: 20, height: 20, pointerEvents: 'none', ...s }} />
       ))}

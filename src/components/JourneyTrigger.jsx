@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { generateJourneyNarrative } from '../lib/journey'
+import { NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE } from './import/tokens'
 
 // Journey — a small HUD readout in the bottom-right of the map that opens a deterministic text summary
 // of the connected set's energy arc (2–4 sentences). It only appears in set-builder mode once the
@@ -11,36 +12,47 @@ import { generateJourneyNarrative } from '../lib/journey'
 // component recomputes the summary whenever the chain (order/membership) or track features change; it's
 // local math over data already in memory, so it's instant and re-runs freely.
 //
-// Visual language is the map's HUD/instrument aesthetic (Decision Log #71): near-black fill, single
-// accent, mono-style caps label + corner brackets — NOT the bento/neomorphic panel material. Interaction
-// mirrors the stack-badge popover (Decision Log #19): click the pill to open, click outside to dismiss.
+// Interaction mirrors the stack-badge popover (Decision Log #19): click the pill to open, click outside
+// to dismiss. The single accent + mono-style caps label + corner brackets carry the instrument identity.
 
 const FONT = "'DM Sans', system-ui, -apple-system, sans-serif"
 const ACCENT1 = '#F27F37'
 const TEXT_SECONDARY = '#848484'
 const EDGE = 16 // matches the map's HUD corner inset (brackets, coord readout)
 
-// The map's HUD surface — the same near-black slab + recessed inner glow the pole pills and zone chip
-// wear (DriftMap pillBase / zoneChipStyle), so the trigger reads as one of the crosshair's instruments.
+// Surface material — the same raised neomorphic slab the top-right toolbar pill wears (NEO_BAR_BG face +
+// the outer light/dark pair + the NEO_BAR_EDGE inner bevel), so the Journey pill and its popover read as
+// the same instrument family as the toolbar. Composed into one boxShadow since these are flat divs (the
+// toolbar layers the bevel as a separate overlay).
 const HUD_SURFACE = {
-  background: '#0f0f0f',
-  border: '1px solid #000000',
-  boxShadow: '0px 0px 2.5px 0px #000000, inset 0px 0px 5px 0px rgba(80,80,80,0.5)',
+  background: NEO_BAR_BG,
+  boxShadow: `${NEO_BAR_SHADOW}, ${NEO_BAR_EDGE}`,
 }
 
 // Small L-bracket at one corner of the popover — the HUD's corner-bracket motif (#71). `corner` is one
-// of tl/tr/bl/br; each is two 1px accent arms meeting at that corner, inset a few px.
+// of tl/tr/bl/br. Drawn as one box carrying only its two corner-facing borders, with the joining corner
+// rounded so the arms meet in a soft curve rather than a hard right angle.
 function CornerBracket({ corner }) {
   const len = 9
   const inset = 6
-  const v = corner[0] === 't' ? { top: inset } : { bottom: inset }
-  const h = corner[1] === 'l' ? { left: inset } : { right: inset }
-  const arm = { position: 'absolute', background: 'rgba(242,127,55,0.55)' }
+  const radius = 4
+  const isTop = corner[0] === 't'
+  const isLeft = corner[1] === 'l'
   return (
-    <>
-      <div style={{ ...arm, ...v, ...h, width: len, height: 1 }} />
-      <div style={{ ...arm, ...v, ...h, width: 1, height: len }} />
-    </>
+    <div
+      style={{
+        position: 'absolute', width: len, height: len,
+        [isTop ? 'top' : 'bottom']: inset,
+        [isLeft ? 'left' : 'right']: inset,
+        borderStyle: 'solid', borderColor: 'rgba(242,127,55,0.55)', borderWidth: 0,
+        borderTopWidth: isTop ? 1 : 0,
+        borderBottomWidth: isTop ? 0 : 1,
+        borderLeftWidth: isLeft ? 1 : 0,
+        borderRightWidth: isLeft ? 0 : 1,
+        borderRadius: 0,
+        [`border${isTop ? 'Top' : 'Bottom'}${isLeft ? 'Left' : 'Right'}Radius`]: radius,
+      }}
+    />
   )
 }
 
@@ -180,9 +192,10 @@ export default function JourneyTrigger({ tracks, hidden = false }) {
           display: 'inline-flex', alignItems: 'center', gap: 8,
           padding: '7px 14px', borderRadius: 100,
           ...HUD_SURFACE,
-          // Lift the accent dot + a faint outer glow when the popover is open, so the pill reads "active".
+          // A faint accent outer glow when the popover is open, so the pill reads "active" — layered on
+          // top of the toolbar-slab shadow the pill wears at rest.
           boxShadow: open
-            ? '0px 0px 2.5px 0px #000000, inset 0px 0px 5px 0px rgba(80,80,80,0.5), 0 0 10px 0 rgba(242,127,55,0.35)'
+            ? `${HUD_SURFACE.boxShadow}, 0 0 10px 0 rgba(242,127,55,0.35)`
             : HUD_SURFACE.boxShadow,
           transition: 'box-shadow 140ms ease',
         }}

@@ -56,8 +56,12 @@ export default function CompatibilityCard({ sourceTrack, targetTrack }) {
         position: 'absolute', right: 20, bottom: 20, width: 235, zIndex: 7,
         display: 'flex', flexDirection: 'column', gap: 15,
         padding: '15px 20px', borderRadius: RADIUS.well,
-        background: C.card,
-        boxShadow: '4px 4px 2.5px 0px rgba(0,0,0,1), inset 1px 1.5px 3px 0px #373737',
+        // Same HUD/instrument material as the Journey pill and the map's axis pills (DriftMap pillBase):
+        // near-black fill, a black hairline border, and a recessed inner glow. Reads as one of the map's
+        // floating readouts rather than a bento/neomorphic panel.
+        background: '#0f0f0f',
+        border: '1px solid #000000',
+        boxShadow: '0px 0px 2.5px 0px #000000, inset 0px 0px 5px 0px rgba(80,80,80,0.5)',
         fontFamily: FONT,
       }}
     >
