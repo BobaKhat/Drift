@@ -81,7 +81,10 @@ async function processEntry(entry) {
           // The panel prefills with the ORIGINAL artist/title (above). The variation list is
           // carried through only as hover detail so the user can see what was already tried.
           variations: track?._meta?.variations ?? [],
-          triedVariations: track?._meta?.retriedCount ?? 0,
+          // Distinct queries actually attempted, including the original (up to 4). Counting the
+          // distinct set — not retriedCount — means a comma track whose V3/V4 dedup away still
+          // shows the primary-artist split was tried, and a V4-reaching track can report 4.
+          triedVariations: track?._meta?.variations?.length ?? 0,
         },
       }
     }
@@ -144,6 +147,20 @@ export async function runImport(text, onProgress = () => {}) {
     )
     if (i + CONCURRENCY < entries.length) await sleep(PAIR_DELAY)
   }
+
+  // Variation-hit distribution: which V-slot produced each accepted match, so per-variation
+  // hit rate is readable straight from one log line. Cache hits return no _meta (they never
+  // ran the cascade) and are tallied separately.
+  const hitDist = { V1: 0, V2: 0, V3: 0, V4: 0 }
+  let cachedHits = 0
+  for (const t of mapped) {
+    const vi = t._meta?.variationIndex
+    if (vi >= 1 && vi <= 4) hitDist[`V${vi}`]++
+    else cachedHits++
+  }
+  console.log(
+    `[drift] import hit distribution — V1:${hitDist.V1} V2:${hitDist.V2} V3:${hitDist.V3} V4:${hitDist.V4} | cached:${cachedHits} | unresolved:${unresolved.length}`,
+  )
 
   return { mapped, unresolved, warnings }
 }

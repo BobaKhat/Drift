@@ -107,6 +107,7 @@ async function runCascade(artist, title, spotifyDuration = null) {
 
   const tried = new Set()
   const variations = []   // ordered unique {artist, title} actually queried — hover detail
+  const firedSlots = []   // the V-slot indices (1–4) that ran as distinct queries — for logs
   let retriedCount = 0
 
   for (const [i, step] of steps.entries()) {
@@ -116,11 +117,17 @@ async function runCascade(artist, title, spotifyDuration = null) {
     const pad = step.label.padEnd(14)
 
     if (tried.has(key)) {
-      console.log(`[drift]   ${pad} skip  (duplicate)`)
+      // A duplicate query — e.g. V3 (primary+orig) == V2 (primary+strip) when the title has
+      // no strippable suffix, or V4 (orig+strip) == V1. Dedup and ADVANCE to the next slot;
+      // this is NOT a halt, and any genuinely-different later variation still runs. For a
+      // comma-containing artist, V2 is always distinct from V1, so the primary-artist split
+      // is always attempted.
+      console.log(`[drift]   ${pad} deduped (same query as an earlier variation) — advancing`)
       continue
     }
     tried.add(key)
     variations.push({ artist: step.artist, title: step.title })
+    firedSlots.push(index)
 
     if (!isOrig) {
       retriedCount++
@@ -194,7 +201,12 @@ async function runCascade(artist, title, spotifyDuration = null) {
 
   // All steps exhausted without an accepted hit
   await resolveItunes()
-  console.log(`[drift]   all ${retriedCount} unique variation(s) tried, none accepted → unresolved`)
+  // Report DISTINCT queries actually attempted (includes V1), out of the 4 variation slots —
+  // so a comma track whose V3/V4 collapse into earlier slots still shows the primary split was
+  // tried, and a comma+suffix track that reaches V4 reports 4.
+  console.log(
+    `[drift]   attempted ${variations.length} distinct quer${variations.length === 1 ? 'y' : 'ies'} of 4 variation slots (fired V${firedSlots.join(', V')}), none accepted → unresolved`,
+  )
   return { features: null, itunes, usedArtist: artist, usedTitle: title, retriedCount, variationIndex: null, variations }
 }
 

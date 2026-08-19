@@ -57,6 +57,8 @@ function UnresolvedRow({ entry, onRetry }) {
   }
 
   const smallInput = { ...wellStyle, flex: 1, fontSize: 13, padding: '8px 10px' }
+  // triedVariations now counts distinct queries including the original, so only advertise
+  // when a real variation beyond the original actually ran (> 1).
   const triedN = entry.triedVariations ?? 0
 
   return (
@@ -84,9 +86,9 @@ function UnresolvedRow({ entry, onRetry }) {
             ? <span style={{ fontFamily: FONT, fontSize: 11, color: C.iconPrimary, whiteSpace: 'nowrap' }}>
                 {"Couldn't resolve link — add artist & title and retry"}
               </span>
-            : triedN > 0 && (
+            : triedN > 1 && (
                 <span style={{ fontFamily: FONT, fontSize: 11, color: C.iconPrimary, whiteSpace: 'nowrap' }}>
-                  {`Tried ${triedN} variation${triedN !== 1 ? 's' : ''} — edit and retry`}
+                  {`Tried ${triedN} variations — edit and retry`}
                 </span>
               )
         )}
