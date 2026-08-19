@@ -29,13 +29,17 @@ function parseDuration(raw) {
 // 30-second 429 penalty. See rateLimit.js for why.
 const pace = createPacer(350)
 
-// Errors carry a `kind` so the cascade can distinguish a genuine miss ("SoundNet doesn't
-// know this track") from a transient rate-limit/timeout. Only a genuine miss should advance
-// the cascade to the next variation; a transient error must halt it, since firing more
-// variations only deepens an in-progress 429 penalty.
-//   'miss'       → SoundNet returned 200 with an error body (track not found)
+// Errors carry a `kind` so the cascade can decide whether to advance to the next variation
+// or halt. Two kinds mean "no exact match for this query" and ADVANCE the cascade:
+//   'miss'    → SoundNet returned 200 with an error body (track not in catalog)
+//   'timeout' → request aborted at SOUNDNET_TIMEOUT_MS. At the tightened 6s threshold a
+//               timeout is a reliable "no exact match" signal, not a stall to wait out:
+//               exact matches return in under 4s, while fallback searches grind for 42–45s
+//               before failing anyway (see scripts/probe-output.json). Advancing beats
+//               waiting on a search that won't resolve.
+// The remaining kinds are genuinely transient and HALT the cascade — firing more variations
+// would only deepen an in-progress 429 penalty:
 //   'rate-limit' → HTTP 429 after all retries
-//   'timeout'    → request aborted at SOUNDNET_TIMEOUT_MS
 //   'transport'  → network/fetch failure
 //   'http'       → other non-OK HTTP status
 function soundnetError(message, kind) {
@@ -45,9 +49,11 @@ function soundnetError(message, kind) {
 }
 
 // A plain fetch has no deadline: behind our proxy SoundNet can stall a connection open
-// indefinitely, which on the manual Retry path surfaced as a spinner that never resolved.
-// Abort each attempt after this long so a stall becomes a caught (retryable) error instead.
-const SOUNDNET_TIMEOUT_MS = 10000
+// indefinitely. Abort each attempt after this long so a stall becomes a caught error the
+// cascade can act on. Set just above the ~4s ceiling for exact matches and well below the
+// 42–45s a fallback search burns before failing — so a timeout here reliably means
+// "no exact match" rather than a transient stall. See scripts/probe-output.json.
+const SOUNDNET_TIMEOUT_MS = 6000
 
 async function fetchWithTimeout(url) {
   const controller = new AbortController()
@@ -66,15 +72,16 @@ async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
     try {
       res = await fetchWithTimeout(url)
     } catch (err) {
-      // Timeout (AbortError) or transport error. Each attempt is bounded by SOUNDNET_TIMEOUT_MS,
-      // so retrying can never hang indefinitely. Back off and retry; give up after the last attempt.
+      // A timeout (AbortError) now means "no exact match" (see kind docs above), so don't
+      // spend retries re-firing the same query — surface it at once and let the cascade
+      // advance to the next variation.
+      if (err.name === 'AbortError') {
+        throw soundnetError(`SoundNet timed out (>${SOUNDNET_TIMEOUT_MS}ms)`, 'timeout')
+      }
+      // Genuine transport error — transient. Each attempt is bounded by SOUNDNET_TIMEOUT_MS,
+      // so retrying can never hang indefinitely. Back off and retry; give up after the last.
       if (attempt === retries) {
-        throw soundnetError(
-          err.name === 'AbortError'
-            ? `SoundNet timed out (>${SOUNDNET_TIMEOUT_MS}ms)`
-            : `SoundNet fetch failed: ${err.message}`,
-          err.name === 'AbortError' ? 'timeout' : 'transport',
-        )
+        throw soundnetError(`SoundNet fetch failed: ${err.message}`, 'transport')
       }
       await new Promise((r) => setTimeout(r, delayMs * attempt))
       continue

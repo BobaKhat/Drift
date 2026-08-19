@@ -12,12 +12,20 @@ function defaultName() {
 // of letting the user spin the SoundNet lookup forever. Editing artist/title resets the cap.
 const MAX_RETRIES = 2
 
-// One editable unresolved row. Prefills with the best variation attempted so the user
-// refines from the closest hit rather than the raw pasted line.
+// One editable unresolved row. Prefills with the ORIGINAL artist/title (not the last
+// variation SoundNet tried) so the user edits from what they actually pasted; the list of
+// variations already attempted is available as hover detail on the row.
 function UnresolvedRow({ entry, onRetry }) {
-  // Prefill from lastAttempt (the best variation tried), falling back to parsed values
-  const [artist, setArtist] = useState(entry.lastAttempt?.artist ?? entry.artist)
-  const [title, setTitle] = useState(entry.lastAttempt?.title ?? entry.title)
+  // Prefill from the original parsed artist/title.
+  const [artist, setArtist] = useState(entry.artist)
+  const [title, setTitle] = useState(entry.title)
+
+  // Hover detail: the exact queries the cascade already tried, so a manual edit doesn't
+  // repeat one. Native title tooltip — undefined when there's nothing to show.
+  const variations = entry.variations ?? []
+  const triedTooltip = variations.length
+    ? `Already tried:\n${variations.map((v) => `${v.artist} – ${v.title}`).join('\n')}`
+    : undefined
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const [attempts, setAttempts] = useState(0)
@@ -28,7 +36,7 @@ function UnresolvedRow({ entry, onRetry }) {
     if (!artist.trim() || !title.trim()) { setFailed(true); return }
     setBusy(true)
     setFailed(false)
-    // onRetry now applies the same miss-detection + a 10s SoundNet timeout as the import path,
+    // onRetry now applies the same miss-detection + a 6s SoundNet timeout as the import path,
     // so it always settles. Guard anyway: a thrown promise must never leave the row spinning.
     let ok = false
     try {
@@ -63,9 +71,9 @@ function UnresolvedRow({ entry, onRetry }) {
         gap: 8,
       }}
     >
-      {/* Original pasted line + retry hint */}
+      {/* Original pasted line + retry hint (hover shows the variations already tried) */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-        <span style={{ fontFamily: FONT, fontSize: 12, color: C.textSecondary }}>
+        <span title={triedTooltip} style={{ fontFamily: FONT, fontSize: 12, color: C.textSecondary, cursor: triedTooltip ? 'help' : 'default' }}>
           {entry.originalText}
           {exhausted
             ? <span style={{ color: C.amber }}>{'  · not found in SoundNet — edit artist/title and resubmit'}</span>
@@ -212,7 +220,7 @@ export default function ReconciliationCard() {
         </div>
       )}
 
-      {/* Unresolved rows — prefilled with best variation attempted */}
+      {/* Unresolved rows — prefilled with the original artist/title, variations on hover */}
       {unresolved.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
           {unresolved.map((u) => (

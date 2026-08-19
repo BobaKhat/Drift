@@ -78,11 +78,9 @@ async function processEntry(entry) {
           title,
           kind: 'nodata',
           reason: 'no audio data available',
-          // lastAttempt lets the reconciliation panel prefill the best variation attempted
-          lastAttempt: {
-            artist: track?._meta?.lastArtist ?? artist,
-            title: track?._meta?.lastTitle ?? title,
-          },
+          // The panel prefills with the ORIGINAL artist/title (above). The variation list is
+          // carried through only as hover detail so the user can see what was already tried.
+          variations: track?._meta?.variations ?? [],
           triedVariations: track?._meta?.retriedCount ?? 0,
         },
       }
