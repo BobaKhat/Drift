@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { usePlaylistStore } from '../../store/usePlaylistStore'
 import { C, FONT, RADIUS } from './tokens'
-import { ModalCard, PrimaryButton, SecondaryButton, wellStyle } from './pieces'
+import { ModalCard, PrimaryButton, wellStyle } from './pieces'
 
 function defaultName() {
   const d = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -122,8 +122,10 @@ function UnresolvedRow({ entry, onRetry }) {
   )
 }
 
-// Amber warning card for a track where SoundNet matched via a variation and the returned
-// duration differs from iTunes' duration for the original query by more than 15 seconds.
+// Amber warning card for a track SoundNet matched via a query VARIATION (primary-artist split or
+// suffix strip, i.e. V2/V3/V4 rather than the original V1) — it may be a different cut, so it's
+// flagged for the user to verify. Non-blocking: the song still plots. Shows what was searched vs.
+// what SoundNet matched, plus the duration figures when the two sources also disagree (>15s).
 function VersionWarningRow({ w }) {
   return (
     <div
@@ -146,7 +148,9 @@ function VersionWarningRow({ w }) {
       <div style={{ fontFamily: FONT, fontSize: 12, color: C.textSecondary, lineHeight: 1.6 }}>
         <div>
           <span style={{ color: C.iconPrimary }}>Searched for: </span>
-          <span style={{ color: C.textPrimary }}>{w.originalTitle ?? w.originalText}</span>
+          <span style={{ color: C.textPrimary }}>
+            {w.originalArtist ? `${w.originalArtist} – ${w.originalTitle}` : (w.originalTitle ?? w.originalText)}
+          </span>
           {w.itunesDurationFmt && (
             <span style={{ color: C.iconPrimary }}>{`  (iTunes: ${w.itunesDurationFmt})`}</span>
           )}
@@ -167,15 +171,23 @@ function VersionWarningRow({ w }) {
   )
 }
 
-// Reconciliation summary (composed from toolkit song-row + match-card patterns).
+// Final-misses panel (two-pass import). By the time this shows, the mapped tracks are already linked
+// and plotted on the live map — pass 1 and pass 2 wrote them as they landed. So this panel's job is
+// narrower than the old commit gate: report the pass-1 / pass-2 hit split, let the user rename the
+// auto-created playlist, and give the leftover misses a place to be retried (each retry links + plots
+// live). It only appears when something's left to sort out; a fully-resolved import shows no panel.
 export default function ReconciliationCard() {
-  const { reconciliation, finishReconcile, goImportStep, retry } = usePlaylistStore()
-  const [name, setName] = useState(defaultName)
+  const { reconciliation, finishReconcile, retry, playlists, activePlaylistId } = usePlaylistStore()
 
-  const mapped = reconciliation?.mapped ?? []
+  // Prefill the rename field with the playlist's current (auto-assigned) name.
+  const currentName = playlists.find((p) => p.id === activePlaylistId)?.name
+  const [name, setName] = useState(() => currentName || defaultName())
+
+  const mappedCount = reconciliation?.mappedCount ?? 0
+  const pass1Hits = reconciliation?.pass1Hits ?? 0
+  const pass2Hits = reconciliation?.pass2Hits ?? 0
   const unresolved = reconciliation?.unresolved ?? []
   const warnings = reconciliation?.warnings ?? []
-  const canFinish = mapped.length > 0
 
   // Split the unresolved summary so a transient link-resolution failure reads differently
   // from a genuine SoundNet miss (they used to collapse into one "couldn't be found" line).
@@ -194,8 +206,11 @@ export default function ReconciliationCard() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {/* Mapped total, with the pass-1 / pass-2 split reported separately (pass 2 = the songs the
+            slow background cascade recovered that the fast first pass had missed). */}
         <span style={{ fontFamily: FONT, fontSize: 14, color: C.green }}>
-          {`● ${mapped.length} song${mapped.length === 1 ? '' : 's'} mapped`}
+          {`● ${mappedCount} song${mappedCount === 1 ? '' : 's'} mapped`}
+          <span style={{ color: C.textSecondary }}>{`  (${pass1Hits} fast · ${pass2Hits} deep search)`}</span>
         </span>
         {warnings.length > 0 && (
           <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
@@ -223,7 +238,8 @@ export default function ReconciliationCard() {
         </div>
       )}
 
-      {/* Unresolved rows — prefilled with the original artist/title, variations on hover */}
+      {/* Unresolved rows — prefilled with the original artist/title, variations on hover. A successful
+          retry links + plots the song on the map live and drops it from this list. */}
       {unresolved.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
           {unresolved.map((u) => (
@@ -233,12 +249,8 @@ export default function ReconciliationCard() {
       )}
 
       <div style={{ display: 'flex', gap: 15 }}>
-        <SecondaryButton onClick={() => goImportStep('steps')} style={{ flex: 1 }}>
-          Back
-        </SecondaryButton>
         <PrimaryButton
-          onClick={() => finishReconcile(name.trim() || defaultName(), mapped.map((t) => t.id))}
-          disabled={!canFinish}
+          onClick={() => finishReconcile(name.trim() || currentName || defaultName())}
           style={{ flex: 1 }}
         >
           Done

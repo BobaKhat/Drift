@@ -298,7 +298,7 @@ function AnchorIcon() {
 }
 
 function TrackNode({ id, data }) {
-  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId, glow, snapTarget, artColor, bloomDelay, enterDelay, selected } = data
+  const { albumArtUrl, artist, name, bpm, camelot, highlighted, sockets, isHead, dimmed, isTail, isOrphan, orphanBright, orphanGroupId, glow, snapTarget, artColor, bloomDelay, enterDelay, appearing, selected } = data
   const tier = useContext(ZoomTierContext)
   const { buildMode, flowMode, startWireDrag, setHoverGroup, unplugSocket, setArtColor, showPreview, hidePreview } = useContext(BuildContext)
   const { gen: bloomGen, active: bloomActive, entering } = useContext(BloomContext)
@@ -549,6 +549,14 @@ function TrackNode({ id, data }) {
     ? `driftNodeEnter ${NODE_ENTER_MS}ms var(--enter-delay, 0ms) backwards`
     : undefined
 
+  // Incremental append (two-pass import): a node that lands mid-import plays the SAME entrance fade,
+  // but driven per-node by its own `appearing` flag instead of the global `entering` window — so only
+  // the freshly-arrived song animates while everything already on the map stays put. Uses the same
+  // --enter-delay var (set to 0 for appended nodes, so they pop in promptly rather than on a stagger).
+  const appearAnim = appearing
+    ? `driftNodeEnter ${NODE_ENTER_MS}ms var(--enter-delay, 0ms) backwards`
+    : undefined
+
   return (
     <div
       title={effCircle ? `${artist} – ${name}` : undefined}
@@ -561,9 +569,10 @@ function TrackNode({ id, data }) {
         position: 'relative',
         '--bloom-delay': `${bloomDelay ?? 0}ms`,
         '--enter-delay': `${enterDelay ?? 0}ms`,
-        // Entrance wins over the population bloom while the map is entering (they never overlap in
-        // practice — entering is the first load, bloom is later switches).
-        animation: entering ? enterAnim : bloomAnim,
+        // A per-node append entrance (import) wins over both the global entering and the population
+        // bloom — during a live import only the newly-arrived node carries `appearing`, so the rest
+        // stay animation-free. Otherwise: entrance (first load) over bloom (later switches).
+        animation: appearing ? appearAnim : (entering ? enterAnim : bloomAnim),
         // Hover-preview node lifts above its neighbours (the map also raises the RF wrapper z-index).
         zIndex: previewActive ? 50 : undefined,
         display: 'flex', flexDirection: 'row', alignItems: 'center',
@@ -602,6 +611,10 @@ function TrackNode({ id, data }) {
         // the compatibility-glow songs (glow strong/mild), and NOT the song the dragged wire is snapped
         // to (`snapTarget`), which brightens to 100% as the pre-connect target.
         filter: (!flowMode && dimmed && !glow && !snapTarget) ? 'brightness(0.45)' : undefined,
+        // Flow ON hides every non-chain song (opacity 0, above). A hidden song must also stop taking the
+        // pointer, or hovering/clicking what looks like blank map actually lands on the invisible node
+        // sitting there — previewing or opening a song that isn't shown. Only the lit chain stays live.
+        pointerEvents: flowMode && (isOrphan || dimmed) ? 'none' : undefined,
         // Counter the pane's zoom. The factor lives in the --node-scale CSS var, written by the map
         // once per throttled frame, so zooming rescales every node via CSS with no React re-render.
         // Out of the transition (tracks zoom instantly, no rubber-banding); the 400ms morph below

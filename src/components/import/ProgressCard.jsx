@@ -68,7 +68,7 @@ function RotatingCopy() {
 // Loading state for an import. Layout top-to-bottom: heading → mini-map canvas → rotating copy →
 // progress text → orange progress bar. Import logic/progress tracking are untouched — this is purely
 // the visual presentation of the `progress` the store already emits. `name` is already resolved
-// Artist–Title (or the raw URL while still resolving) upstream in runImport, so it renders as-is.
+// Artist–Title (or the raw URL while still resolving) upstream in the import passes, so it renders as-is.
 // The mini-map is a purely decorative "your map is being built" animation — no connection to the
 // actual tracks or progress.
 export default function ProgressCard() {

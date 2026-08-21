@@ -4,9 +4,10 @@ import {
   getPlaylistTracks,
   createPlaylist,
   linkTracks,
+  renamePlaylist,
   ensureDemoLibrary,
 } from '../lib/playlists'
-import { runImport, retryUnresolved } from '../lib/import'
+import { parseInput, runImportPass1, runImportPass2, retryUnresolved } from '../lib/import'
 import { saveSet } from '../lib/sets'
 import { setArtResolvedHandler } from '../lib/preview'
 import { getUserId, hasSeenDemo, markSeenDemo } from '../lib/identity'
@@ -22,6 +23,14 @@ const PlaylistContext = createContext(null)
 // don't shift when a group is added or dissolved.
 let _groupSeq = 0
 const nextGroupId = () => `g${++_groupSeq}`
+
+// Default title for the playlist a paste-import auto-creates up front (the user can rename it from the
+// reconciliation panel if one shows). Matches the old reconcile card's default: "Import – Aug 20".
+const defaultImportName = () =>
+  `Import – ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+
+// How long the status chip holds its completion read ("N of TOTAL mapped") before dismissing.
+const DONE_CHIP_MS = 1800
 
 export function PlaylistProvider({ children }) {
   // Stable per-browser id for this visitor's own data — separate from the shared 'demo' bucket
@@ -46,6 +55,25 @@ export function PlaylistProvider({ children }) {
   const [importState, setImportState] = useState(null) // null|'welcome'|'steps'|'progress'|'reconcile'
   const [progress, setProgress] = useState({ current: 0, total: 0, name: '' })
   const [reconciliation, setReconciliation] = useState(null) // { mapped, unresolved }
+
+  // Two-pass live import (see runPaste): `importing` flips the map into incremental-append mode so
+  // each resolved track lands as its own animated node instead of a whole-map repopulation.
+  //
+  // The status chip is driven by ONE monotonic counter so the two-pass structure is invisible to the
+  // user: `importMapped` = songs actually plotted on the map so far (never decreases), out of
+  // `importTotal` = songs pasted (fixed for the run). Pass 1 shows "N of TOTAL"; pass 2 shows
+  // "(TOTAL − N) left" (songs not yet on the map) — both read off the same counter, so the number
+  // never resets or jumps at the pass boundary. `plottedIdsRef` dedups the count against duplicate
+  // input lines. pass2Ctl holds the AbortController so navigating away stops the background pass;
+  // importPlaylistIdRef records which playlist the run belongs to (a playlist switch = "navigated away").
+  const [importing, setImporting] = useState(false)
+  const [importPhase, setImportPhase] = useState(null) // null|'pass1'|'pass2'|'done'
+  const [importTotal, setImportTotal] = useState(0)
+  const [importMapped, setImportMapped] = useState(0)
+  const pass2Ctl = useRef(null)
+  const importPlaylistIdRef = useRef(null)
+  const plottedIdsRef = useRef(new Set())
+  const doneChipTimer = useRef(null)
 
   // Active axis preset. 'custom' uses customXFeature/customYFeature.
   const [activePanel, setActivePanel] = useState(null)
@@ -246,6 +274,48 @@ export function PlaylistProvider({ children }) {
     return pls
   }, [userId])
 
+  // Live map append (two-pass import): link a freshly-resolved track into the import playlist and push
+  // it onto the map so it renders as its own node with the entrance animation. Deduped by id — a
+  // cascade can re-resolve a row that's already plotted, and a track must never double-plot.
+  const appendTrackLive = useCallback(async (playlistId, track) => {
+    try {
+      await linkTracks(playlistId, [track.id])
+    } catch (err) {
+      console.error('[drift] live link failed:', err)
+    }
+    setActiveTracks((prev) => (prev.some((t) => t.id === track.id) ? prev : [...prev, track]))
+  }, [])
+
+  // Plot a track AND advance the status-chip's monotonic "mapped" counter — but only once per unique
+  // track id (duplicate pasted lines resolve to the same row and must not double-count). This is the
+  // sole path that increments importMapped, so the chip's "N of TOTAL" reflects songs truly on the map.
+  const plotAndCount = useCallback((playlistId, track) => {
+    appendTrackLive(playlistId, track)
+    if (!plottedIdsRef.current.has(track.id)) {
+      plottedIdsRef.current.add(track.id)
+      setImportMapped((n) => n + 1)
+    }
+  }, [appendTrackLive])
+
+  // Navigating away stops the background pass-2 cascade — no in-flight state is kept (the spec's
+  // "if the user navigates away, pass 2 stops"). Switching the active playlist away from the import's
+  // playlist is the navigate-away signal; the effect only aborts when a pass is actually in flight.
+  useEffect(() => {
+    if (pass2Ctl.current && activePlaylistId !== importPlaylistIdRef.current) {
+      pass2Ctl.current.abort()
+      pass2Ctl.current = null
+      setImporting(false)
+      setImportPhase(null) // chip disappears immediately on navigate-away — no completion flash
+      clearTimeout(doneChipTimer.current)
+      // Refresh the switcher so the import playlist shows the song count it reached before we left
+      // (the count was fetched at creation, before any track was linked live).
+      refreshPlaylists()
+    }
+  }, [activePlaylistId, refreshPlaylists])
+
+  // Abort any background pass if the whole app unmounts.
+  useEffect(() => () => { pass2Ctl.current?.abort(); clearTimeout(doneChipTimer.current) }, [])
+
   // Initial load: welcome only fires when THIS browser (by userId) has no library of its own and
   // hasn't previously chosen to browse demo. Must NOT be decided from the combined list above —
   // demo's rows are permanent and shared, so checking "any rows at all" would never be empty and
@@ -299,21 +369,94 @@ export function PlaylistProvider({ children }) {
   // Pure view transition between welcome ↔ steps (preserves import target/reconciliation).
   const goImportStep = useCallback((state) => setImportState(state), [])
 
-  // Paste → analyze → reconcile.
-  const runPaste = useCallback(async (text) => {
-    setProgress({ current: 0, total: 0, name: '' })
-    setImportState('progress')
-    try {
-      const result = await runImport(text, setProgress)
-      // result shape: { mapped, unresolved, warnings }
-      setReconciliation(result)
-      setImportState('reconcile')
-    } catch (err) {
-      console.error('[drift] import failed:', err)
-      setReconciliation({ mapped: [], unresolved: [], warnings: [] })
+  // Wrap up an import: report the pass-1 / pass-2 hit counts, leave the map (already populated) as
+  // the interactive surface, and surface any final leftovers (unresolved + version warnings) in the
+  // reconciliation panel. A fully-resolved import shows no panel — the map is the result.
+  const finishImport = useCallback(({ pass1Hits, pass2Hits, unresolved, warnings }) => {
+    console.log(`[drift] import complete — pass 1 hits: ${pass1Hits}, pass 2 hits: ${pass2Hits}, unresolved: ${unresolved.length}`)
+    setImporting(false)
+    // Hold the chip on its completion read ("N of TOTAL mapped") for a beat, then dismiss it.
+    setImportPhase('done')
+    clearTimeout(doneChipTimer.current)
+    doneChipTimer.current = setTimeout(() => setImportPhase(null), DONE_CHIP_MS)
+    // The song counts in the switcher were fetched at creation (before live linking) — refresh so the
+    // import playlist shows its real count now that every hit has been linked.
+    refreshPlaylists()
+    if (unresolved.length > 0 || warnings.length > 0) {
+      setReconciliation({ mappedCount: pass1Hits + pass2Hits, pass1Hits, pass2Hits, unresolved, warnings })
       setImportState('reconcile')
     }
-  }, [])
+  }, [refreshPlaylists])
+
+  // Paste → live two-pass import. Pass 1 (fast V1) plots hits on the map as they land; when it
+  // finishes the map is fully interactive. Pass 2 (background full cascade) fills in the misses
+  // without blocking, each resolved track animating onto the map. See src/lib/import.js.
+  const runPaste = useCallback(async (text) => {
+    // A new import supersedes any still-running background pass and its completion chip.
+    if (pass2Ctl.current) { pass2Ctl.current.abort(); pass2Ctl.current = null }
+    clearTimeout(doneChipTimer.current)
+    setReconciliation(null)
+
+    // Seed the status chip's counter: TOTAL = songs pasted (fixed), mapped = 0 (climbs as songs plot).
+    const total = parseInput(text).length
+    plottedIdsRef.current = new Set()
+    setImportTotal(total)
+    setImportMapped(0)
+
+    try {
+      // Create (or reuse, for "import more") the playlist up front so pass-1 hits can link + plot.
+      const target = importTargetRef.current
+      let playlistId = target
+      if (!playlistId) {
+        const playlist = await createPlaylist(defaultImportName(), userId)
+        playlistId = playlist.id
+      }
+      importPlaylistIdRef.current = playlistId
+      setImporting(true)         // map switches into incremental-append mode
+      setImportPhase('pass1')
+      await activate(playlistId) // the map's live destination (empty for a fresh playlist)
+      await refreshPlaylists()
+      setImportState(null)       // dismiss the paste modal — the map is the surface now
+
+      // —— Pass 1: fast V1 sweep. Each hit plots + advances the chip's "N of TOTAL". ——
+      const p1 = await runImportPass1(text, {
+        onTrack: (track) => plotAndCount(playlistId, track),
+      })
+
+      // —— Pass 2: background cascade over the pass-1 nodata misses ——
+      if (p1.misses.length === 0) {
+        finishImport({ pass1Hits: p1.mapped.length, pass2Hits: 0, unresolved: p1.unresolved, warnings: p1.warnings })
+        return
+      }
+
+      // Pass 2 shows "(TOTAL − mapped) left" — derived from the same counter, so no reset at the
+      // boundary. Each pass-2 hit plots + bumps mapped, which lowers "left" in lock-step.
+      setImportPhase('pass2')
+      const ctl = new AbortController()
+      pass2Ctl.current = ctl
+
+      const p2 = await runImportPass2(p1.misses, {
+        signal: ctl.signal,
+        onTrack: (track) => plotAndCount(playlistId, track),
+      })
+      if (pass2Ctl.current === ctl) pass2Ctl.current = null
+
+      // Aborted (navigated away) → the navigate-away effect already cleared import state; leave it.
+      if (p2.aborted) return
+
+      finishImport({
+        pass1Hits: p1.mapped.length,
+        pass2Hits: p2.mapped.length,
+        unresolved: [...p1.unresolved, ...p2.unresolved],
+        warnings: [...p1.warnings, ...p2.warnings],
+      })
+    } catch (err) {
+      console.error('[drift] import failed:', err)
+      setImporting(false)
+      setImportPhase(null)
+      setImportState(null)
+    }
+  }, [userId, activate, refreshPlaylists, plotAndCount, finishImport])
 
   // Demo path: instant, persisted, tagged user_id='demo'.
   const loadDemo = useCallback(async () => {
@@ -331,37 +474,40 @@ export function PlaylistProvider({ children }) {
     }
   }, [refreshPlaylists, activate, closeImport])
 
-  // Reconciliation "Done": persist the new (or targeted) playlist and load it on the map.
-  const finishReconcile = useCallback(async (name, mappedTrackIds) => {
+  // Reconciliation "Done" (two-pass import): the playlist is already created, populated and on the
+  // map — the panel only exists to review leftovers. So Done just applies a rename (if the user
+  // retitled the auto-created playlist) and closes. Mapped tracks were linked live as they resolved.
+  const finishReconcile = useCallback(async (name) => {
     try {
-      const target = importTargetRef.current
-      let playlistId = target
-      if (!playlistId) {
-        const playlist = await createPlaylist(name || 'Import', userId)
-        playlistId = playlist.id
+      const playlistId = importPlaylistIdRef.current ?? activePlaylistId
+      const current = playlists.find((p) => p.id === playlistId)?.name
+      if (playlistId && name && name !== current) {
+        await renamePlaylist(playlistId, name)
+        await refreshPlaylists()
       }
-      await linkTracks(playlistId, mappedTrackIds)
-      await refreshPlaylists()
-      await activate(playlistId)
     } catch (err) {
-      console.error('[drift] finishReconcile failed:', err)
+      console.error('[drift] finishReconcile rename failed:', err)
     } finally {
       closeImport()
     }
-  }, [refreshPlaylists, activate, closeImport, userId])
+  }, [activePlaylistId, playlists, refreshPlaylists, closeImport])
 
-  // Retry one edited unresolved row (matched by its original pasted line); on success move
-  // it into the mapped bucket. If the retry surfaces a version warning, add it to warnings.
+  // Retry one edited unresolved row (matched by its original pasted line). On success the track
+  // links + plots on the map live (same path as a pass-2 hit), leaves the unresolved list, and any
+  // version warning it surfaced is added to the panel.
   const retry = useCallback(async (originalText, artist, title) => {
     const track = await retryUnresolved(artist, title)
     if (!track) return false
+    const playlistId = importPlaylistIdRef.current ?? activePlaylistId
+    if (playlistId) await appendTrackLive(playlistId, track)
     setReconciliation((prev) => {
       if (!prev) return prev
       const newWarning = track._meta?.versionWarning
         ? { originalText, ...track._meta.versionWarning }
         : null
       return {
-        mapped: [...prev.mapped, track],
+        ...prev,
+        mappedCount: (prev.mappedCount ?? 0) + 1,
         unresolved: prev.unresolved.filter((u) => u.originalText !== originalText),
         warnings: newWarning
           ? [...(prev.warnings ?? []), newWarning]
@@ -369,7 +515,7 @@ export function PlaylistProvider({ children }) {
       }
     })
     return true
-  }, [])
+  }, [activePlaylistId, appendTrackLive])
 
   const value = {
     playlists,
@@ -379,6 +525,10 @@ export function PlaylistProvider({ children }) {
     importState,
     progress,
     reconciliation,
+    importing,
+    importPhase,
+    importTotal,
+    importMapped,
     setActivePlaylist,
     openImport,
     closeImport,

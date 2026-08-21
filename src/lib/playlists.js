@@ -42,6 +42,13 @@ export async function createPlaylist(name, userId = DEMO_USER) {
   return data
 }
 
+// Rename a playlist (used when the two-pass import lets the user retitle the auto-created playlist
+// from the reconciliation panel). No-op-safe: callers guard on an actual name change.
+export async function renamePlaylist(playlistId, name) {
+  const { error } = await supabase.from('playlists').update({ name }).eq('id', playlistId)
+  if (error) throw new Error(`renamePlaylist failed: ${error.message}`)
+}
+
 // Resolve the full track rows for a playlist (via the join table).
 export async function getPlaylistTracks(playlistId) {
   const { data, error } = await supabase

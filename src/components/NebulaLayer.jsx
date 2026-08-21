@@ -11,7 +11,12 @@ import { useStoreApi, ViewportPortal } from '@xyflow/react'
 // The one colour knob. Warm white, so the cloud lands on the same side of neutral as the album art
 // and the accents instead of reading as cold grey fog over them.
 const NEBULA_COLOR = '255, 235, 210'
-const NEBULA_BASE_OPACITY = 0.06 // per-song contribution, at a library of NEBULA_REF_COUNT songs
+// Per-song contribution at a library of NEBULA_REF_COUNT songs. Lifted 1.5× from the original 0.06 to
+// brighten the cloud at the breath's PEAK (see driftNebulaBreathe in index.css). The breath's trough
+// was dropped to 1/3 (0.333) in the same change so the low end of the breath still lands at the SAME
+// absolute brightness it always did (0.09 × 0.333 = 0.03, matching the old 0.06 × 0.5) — the boost is
+// applied only at the top of the breath, not the bottom.
+const NEBULA_BASE_OPACITY = 0.09
 const NEBULA_REF_COUNT = 30       // the library size the base is tuned against
 const NEBULA_RADIUS = 400         // canvas units — reach of a single song's cloud
 const [NR, NG, NB] = NEBULA_COLOR.split(',').map(Number)

@@ -127,7 +127,9 @@ export default function JourneyTrigger({ tracks, hidden = false }) {
     <div
       ref={rootRef}
       style={{
-        position: 'absolute', right: EDGE, bottom: EDGE + 26, zIndex: 4,
+        // Sits flush at the bottom-right corner now that the lat/long readout (which used to own the
+        // corner, so the pill was lifted 26px above it) has been removed.
+        position: 'absolute', right: EDGE, bottom: EDGE, zIndex: 4,
         display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10,
         pointerEvents: 'none', // children re-enable; keeps the empty column from eating pans
       }}
@@ -189,8 +191,10 @@ export default function JourneyTrigger({ tracks, hidden = false }) {
         title="Journey — the energy arc of your set"
         style={{
           pointerEvents: 'auto', cursor: 'pointer', userSelect: 'none',
+          // Height matched to the import status chip (40px); horizontal padding keeps the dot / label /
+          // arc / chevron from crowding the pill ends.
           display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '7px 14px', borderRadius: 100,
+          height: 40, boxSizing: 'border-box', padding: '0 16px', borderRadius: 100,
           ...HUD_SURFACE,
           // A faint accent outer glow when the popover is open, so the pill reads "active" — layered on
           // top of the toolbar-slab shadow the pill wears at rest.

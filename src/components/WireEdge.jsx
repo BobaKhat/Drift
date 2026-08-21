@@ -36,10 +36,31 @@ export const FLOW_PULSE_LEN = 240    // canvas-unit length of the bright comet d
 // this period, which (with the per-wire offsets from DriftMap) keeps all pulses locked into one wave.
 export const FLOW_PERIOD_S = FLOW_SPACING / FLOW_SPEED
 export const FLOW_STROBE_NAME = 'driftFlowStrobe'
-// The pulse is a soft dash gliding via ONE continuous linear stroke-dashoffset animation — no offset-path,
-// no per-frame SVG mask, no JS timers — so it stays perfectly smooth and display-synced. Two blurred
-// layers (a wide dim halo + a narrow bright core, same dash so they move locked together) feather it into
-// an orange-core → dark-edge glow that blends into the cable.
+// The pulse is a soft dash gliding via ONE continuous linear stroke-dashoffset animation per layer — no
+// offset-path, no per-frame SVG mask, no JS timers — so it stays perfectly smooth and display-synced.
+//
+// LONGITUDINAL taper: rather than one flat bright dash, the pulse is a stack of CONCENTRIC dashes, each
+// shorter, all CENTERED on the same moving point (DriftMap shifts each layer's dash-offset by half its
+// length gap so their midpoints coincide). Where they overlap — the centre — the summed opacity is hot
+// orange; toward the ends fewer layers reach, so the pulse fades to the dark cable at BOTH ends.
+//
+// The count matters: a FEW flat-opacity dashes read as distinct bands (each is a plateau with a hard
+// step to the next — the "3 phases" artifact). MANY thin layers with a SMALL equal opacity instead sum
+// into a continuous ramp with no visible steps — the discrete plateaus shrink below perception. So the
+// taper is built from FLOW_TAPER_N evenly-shortening layers of low opacity, plus one wide, softly
+// blurred halo underneath for the ambient glow. `lenFrac` = dash length ÷ FLOW_PULSE_LEN.
+// (FLOW_TAPER_N trades smoothness for the number of animated paths per wire — lower it if a very long
+// chain ever janks; the look degrades gracefully toward faint banding.)
+const FLOW_TAPER_N = 12
+export const FLOW_LAYERS = [
+  { lenFrac: 0.9, width: 12, blur: 8, opacity: 0.1 }, // wide dim halo — the ambient glow
+  ...Array.from({ length: FLOW_TAPER_N }, (_, k) => ({
+    lenFrac: 1 - (k / FLOW_TAPER_N) * (1 - 0.04), // 1.0 (full pulse) → ~0.12 (bright centre)
+    width: 3,
+    blur: 1.6,
+    opacity: 0.13,
+  })),
+]
 
 // Half-size of the node along the socket's axis (width for E/W, height for N/S), scaled the same
 // way the node's DOM is: counter-scale × the circle-tier head bump. Returned in flow units, which
@@ -103,27 +124,21 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
     // evenly-spaced stream. Both blurred layers share it so the halo and hot core glide locked together.
     const i = data?.flowIndex ?? 0
     const t = flowTiming?.[i]
-    const comet = t ? { animation: `${FLOW_STROBE_NAME}-${i} ${FLOW_PERIOD_S}s linear infinite` } : undefined
     return (
       <>
         <path d={path} fill="none" stroke={DARK_WIRE} strokeWidth={2.5} strokeLinecap="round" />
-        {t && (
-          <>
-            {/* A soft comet: a wide dim halo + a narrow hot core, both the same sliding dash so they move
-                locked together. Round caps + blur feather the dash's leading/trailing ends so each pulse
-                fades and blends into the cable on its sides rather than reading as a hard segment. */}
-            <path
-              d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={11} strokeLinecap="round"
-              strokeOpacity={0.32} pathLength={1} strokeDasharray={t.dash}
-              style={{ ...comet, filter: 'blur(7px)' }}
-            />
-            <path
-              d={path} fill="none" stroke={FLOW_STROBE_COLOR} strokeWidth={3.5} strokeLinecap="round"
-              pathLength={1} strokeDasharray={t.dash}
-              style={{ ...comet, filter: 'blur(2.5px)' }}
-            />
-          </>
-        )}
+        {/* Concentric centered dashes (widest/dimmest → narrowest/hottest), each on its own sliding
+            offset keyframe but locked to the same period, so together they read as one pulse that's hot
+            in the centre and fades to the dark cable at both ends (see FLOW_LAYERS). */}
+        {t?.layers && FLOW_LAYERS.map((ly, li) => (
+          <path
+            key={li}
+            d={path} fill="none" stroke={FLOW_STROBE_COLOR}
+            strokeWidth={ly.width} strokeLinecap="round" strokeOpacity={ly.opacity}
+            pathLength={1} strokeDasharray={t.layers[li].dash}
+            style={{ animation: `${FLOW_STROBE_NAME}-${i}-${li} ${FLOW_PERIOD_S}s linear infinite`, filter: `blur(${ly.blur}px)` }}
+          />
+        ))}
         <path
           d={path} fill="none" stroke="transparent" strokeWidth={20} strokeLinecap="round"
           style={{ pointerEvents: 'stroke', cursor: 'pointer' }}

@@ -85,8 +85,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // unique {artist, title} queries actually attempted (hover detail on unresolved rows).
 // itunes is always resolved before return (used for album art even on failure).
 // Does NOT touch Supabase — the caller owns caching so failed variants aren't stored.
-async function runCascade(artist, title, spotifyDuration = null, timeoutMs = undefined) {
-  console.log(`[drift] [cascade] "${artist}" – "${title}"`)
+//
+// v1Only (import pass 1): run ONLY the unmodified original (V1) and stop — no variation cascade.
+// This is a gate on how many of the existing steps run, NOT a change to the V2–V4 variation logic
+// or the acceptance/dedup rules below: a V1 miss simply returns unresolved so pass 2 can retry it
+// later with the full cascade. Everything else (corroboration, duration guard, self-verify) is
+// identical whether one step runs or four.
+async function runCascade(artist, title, spotifyDuration = null, timeoutMs = undefined, v1Only = false) {
+  console.log(`[drift] [cascade] "${artist}" – "${title}"${v1Only ? ' (V1 only)' : ''}`)
 
   // iTunes starts immediately and runs in parallel with SoundNet calls.
   // We only await it when a SoundNet hit arrives — so parallel time is free.
@@ -99,11 +105,14 @@ async function runCascade(artist, title, spotifyDuration = null, timeoutMs = und
     return itunes
   }
 
-  // Full step list: V1 unmodified original first, then the V2–V4 variations.
-  const steps = [
-    { label: 'V1 orig',       artist,      title       },
-    ...buildRetryVariations(artist, title),
-  ]
+  // Full step list: V1 unmodified original first, then the V2–V4 variations. Pass 1 (v1Only) runs
+  // just V1 — the fast exact-match probe — and leaves the variations to pass 2.
+  const steps = v1Only
+    ? [{ label: 'V1 orig', artist, title }]
+    : [
+        { label: 'V1 orig',       artist,      title       },
+        ...buildRetryVariations(artist, title),
+      ]
 
   const tried = new Set()
   const variations = []   // ordered unique {artist, title} actually queried — hover detail
@@ -224,7 +233,7 @@ function fmtDuration(sec) {
 //
 // Returns the Supabase row augmented with _meta: { versionWarning, retriedCount,
 // variationIndex, variations } for the reconciliation layer. _meta is NOT stored in the DB.
-export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs } = {}) {
+export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs, v1Only = false } = {}) {
   // Return cached result if available (.limit(1) tolerates duplicate rows gracefully)
   const { data: rows } = await supabase
     .from('tracks')
@@ -246,7 +255,7 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
 
   // Cascade handles SoundNet (original + variations) and iTunes corroboration together.
   // iTunes runs in parallel inside runCascade; result is always resolved before return.
-  const cascade = await runCascade(artist, title, spotifyDuration, timeoutMs)
+  const cascade = await runCascade(artist, title, spotifyDuration, timeoutMs, v1Only)
   const { itunes } = cascade
   const features = cascade.features  // null if all variations failed/rejected
   // _matchedTitle/_matchedArtist are self-verification fields used inside runCascade only.
@@ -255,26 +264,40 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
     ? Object.fromEntries(Object.entries(features).filter(([k]) => !k.startsWith('_')))
     : {}
 
-  // Duration mismatch: variation succeeded + iTunes duration for original query differs >15s
-  // → SoundNet likely matched a different version (radio edit, extended mix, etc.)
+  // Version flag (track-level, non-blocking): a hit accepted on a VARIATION (V2/V3/V4) rather than
+  // the unmodified original (V1) means SoundNet matched a modified query — a primary-artist split
+  // and/or a stripped version/collab suffix — so it may be a different cut (radio edit, extended mix,
+  // solo vs collab, etc.). Flag it for the user to verify; the song still plots. A duration mismatch
+  // (SoundNet vs iTunes >15s) is folded in as extra evidence when present, but is no longer REQUIRED
+  // to raise the flag — the variation match itself is the trigger now.
   let versionWarning = null
-  if (features && cascade.retriedCount > 0) {
+  if (features && cascade.variationIndex > 1) {
     const soundnetDur = features.duration
     const itunesDur = itunes?.durationMs != null ? itunes.durationMs / 1000 : null
-    if (soundnetDur != null && itunesDur != null && Math.abs(soundnetDur - itunesDur) > 15) {
-      versionWarning = {
-        message: 'Matched a different version — verify this is correct',
-        originalTitle: title,
-        matchedQuery: { artist: cascade.usedArtist, title: cascade.usedTitle },
-        soundnetDuration: soundnetDur,
-        itunesDuration: itunesDur,
-        soundnetDurationFmt: fmtDuration(soundnetDur),
-        itunesDurationFmt: fmtDuration(itunesDur),
-      }
-      console.warn(
-        `[drift] version mismatch: iTunes ${fmtDuration(itunesDur)} vs SoundNet ${fmtDuration(soundnetDur)}`,
-      )
+    const durationMismatch = soundnetDur != null && itunesDur != null && Math.abs(soundnetDur - itunesDur) > 15
+    versionWarning = {
+      message: 'Matched a different version — verify this is correct',
+      variationIndex: cascade.variationIndex, // which V-slot hit (2–4) — audit/debug context
+      // What was searched (the original request) vs. what SoundNet matched (the variation query).
+      originalArtist: artist,
+      originalTitle: title,
+      matchedQuery: { artist: cascade.usedArtist, title: cascade.usedTitle },
+      // Duration detail only when the two sources actually disagree — keeps the card's duration line
+      // meaningful (a pure variation match with matching durations shows no duration figures).
+      ...(durationMismatch
+        ? {
+            soundnetDuration: soundnetDur,
+            itunesDuration: itunesDur,
+            soundnetDurationFmt: fmtDuration(soundnetDur),
+            itunesDurationFmt: fmtDuration(itunesDur),
+          }
+        : {}),
     }
+    console.warn(
+      `[drift] version flag: matched on V${cascade.variationIndex} — searched "${artist} – ${title}", ` +
+        `SoundNet matched "${cascade.usedArtist} – ${cascade.usedTitle}"` +
+        (durationMismatch ? ` (iTunes ${fmtDuration(itunesDur)} vs SoundNet ${fmtDuration(soundnetDur)})` : ''),
+    )
   }
 
   // Album art + 30-second preview (Slice 13) both come from ONE verified iTunes result — the match

@@ -3,6 +3,7 @@ import DriftMap from './components/DriftMap'
 import LeftNav from './components/LeftNav'
 import DeckPanel from './components/DeckPanel'
 import ImportFlow from './components/import/ImportFlow'
+import ImportStatus from './components/import/ImportStatus'
 import { PlaylistProvider, usePlaylistStore } from './store/usePlaylistStore'
 import { AudioProvider } from './store/useAudioStore'
 import { backfillMissingArt } from './lib/backfill'
@@ -24,6 +25,9 @@ function DriftApp() {
       {/* Deck View — right-side bento panel, opens on a song click (Slice 12). */}
       <DeckPanel />
       <ImportFlow />
+      {/* Non-blocking two-pass import status chip — lives outside ImportFlow's modal scrim so it can
+          show over the live, interactive map during the background pass. */}
+      <ImportStatus />
     </AudioProvider>
   )
 }

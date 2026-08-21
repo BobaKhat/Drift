@@ -12,7 +12,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import TrackNode, { ZOOM_CARD, ZoomTierContext, BuildContext, BloomContext, SongPreviewCard, getTier, getNodeScale, NODE_ENTER_MS, NODE_PILL_W, NODE_CARD_W, NODE_PILL_H, NODE_CARD_H } from './TrackNode'
-import WireEdge, { FLOW_STROBE_NAME, FLOW_SPACING, FLOW_PULSE_LEN } from './WireEdge'
+import WireEdge, { FLOW_STROBE_NAME, FLOW_SPACING, FLOW_PULSE_LEN, FLOW_LAYERS } from './WireEdge'
 import WireDragLayer from './WireDragLayer'
 import { computeStacks, stacksSignature } from '../lib/stacking'
 import { StackBadge, StackPopover, BADGE_FLOAT } from './StackBadges'
@@ -521,7 +521,6 @@ function AxisLayer({ preset, geom }) {
   const rootRef = useRef(null)
   const chipRef = useRef(null)
   const chipLabelRef = useRef(null)
-  const coordRef = useRef(null)
   const dimsRef = useRef({ w: 0, h: 0 })
   const [chipOpen, setChipOpen] = useState(false)
 
@@ -549,19 +548,6 @@ function AxisLayer({ preset, geom }) {
     // Canvas coordinate under the card centre — feeds both the quadrant label and the compass store.
     const cxCanvas = (w / 2 - x) / zoom
     const cyCanvas = (h / 2 - y) / zoom
-
-    // Lat/long readout: where the viewport centre sits, as geographic coordinates. The crosshair
-    // intersection (canvas W/2,H/2) is the origin; mood axis → longitude (Bright E / Dark W), energy
-    // axis → latitude (Intense N / Chill S, and canvas Y is inverted so low Y = north). Fractions off
-    // centre are clamped to the axis half-span and mapped to the real ±90°/±180° ranges, so panning to
-    // an edge reads as a pole/dateline rather than running off. Set imperatively — no per-frame re-render.
-    if (coordRef.current) {
-      const lonF = Math.max(-1, Math.min(1, (cxCanvas - W / 2) / (W / 2)))
-      const latF = Math.max(-1, Math.min(1, (H / 2 - cyCanvas) / (H / 2)))
-      const lat = (Math.abs(latF) * 90).toFixed(1)
-      const lon = (Math.abs(lonF) * 180).toFixed(1)
-      coordRef.current.textContent = `${lat}°${latF >= 0 ? 'N' : 'S'}  ${lon}°${lonF >= 0 ? 'E' : 'W'}`
-    }
 
     if (chipRef.current && chipLabelRef.current) {
       const { yHigh, yLow, xHigh, xLow } = labelsRef.current
@@ -726,18 +712,6 @@ function AxisLayer({ preset, geom }) {
         )}
       </div>
 
-      {/* Lat/long readout — a quiet HUD coordinate at the bottom-right corner telling you where the
-          viewport centre sits on the map. Text is set imperatively per frame in applyViewport; tabular
-          figures keep the width from jittering as digits change. */}
-      <div
-        ref={coordRef}
-        style={{
-          position: 'absolute', right: EDGE, bottom: EDGE,
-          fontFamily: FONT, fontSize: 10, fontWeight: 500, letterSpacing: '0.08em',
-          color: 'rgba(255,255,255,0.4)', fontVariantNumeric: 'tabular-nums',
-          whiteSpace: 'nowrap', pointerEvents: 'none', zIndex: 3,
-        }}
-      />
     </div>
   )
 }
@@ -1287,8 +1261,13 @@ function DriftMapInner({ tracks }) {
   const {
     activePreset, customXFeature, customYFeature, setActivePanel,
     buildMode, flowMode, chain, orphanGroups, addHead, connectSong, unlinkAfter, registerMapControls,
-    toggleDeck, closeDeck, deckTrackId,
+    toggleDeck, closeDeck, deckTrackId, importing,
   } = usePlaylistStore()
+  // Read live inside the track effects without adding `importing` to their dep arrays — flipping it
+  // must not re-run the population/rebuild effects (that would refit or re-bloom); the dedicated
+  // settle effect below handles the import→idle transition instead.
+  const importingRef = useRef(importing)
+  importingRef.current = importing
   const presetConfig = useMemo(
     () => resolvePreset(activePreset, customXFeature, customYFeature),
     [activePreset, customXFeature, customYFeature]
@@ -1334,6 +1313,10 @@ function DriftMapInner({ tracks }) {
     if (prevTracksRef.current === tracks) return
     prevTracksRef.current = tracks
     setStagedTracks(tracks)
+    // Live import (incremental append): each landing track just stages in — the rebuild effect adds
+    // it as its own `appearing` node. NO whole-map bloom or entrance, which would re-animate every
+    // song already on the map on every single arrival.
+    if (importingRef.current) return
     // The FIRST non-empty population plays the mount-suppression entrance (see `entering`), NOT the
     // population bloom — so only bump + arm the bloom for populations after that (playlist switches).
     if (enteredRef.current || tracks.length === 0) {
@@ -1353,6 +1336,9 @@ function DriftMapInner({ tracks }) {
   // circles (see the ZoomTierContext + BloomContext providers below, which force circle tier and pass
   // `entering` down). enteredRef guards it so later populations skip straight to normal behavior.
   useEffect(() => {
+    // During a live import the per-node `appearing` animation covers each arrival, so the whole-map
+    // entrance must never fire — mark entered so it also won't fire once the import ends.
+    if (importingRef.current) { enteredRef.current = true; return }
     if (enteredRef.current || stagedTracks.length === 0) return
     enteredRef.current = true
     setEntering(true)
@@ -1457,11 +1443,19 @@ function DriftMapInner({ tracks }) {
     for (let i = 0; i < chain.length - 1; i++) {
       const a = posById.get(chain[i]), b = posById.get(chain[i + 1])
       const L = (a && b ? Math.hypot(b.x - a.x, b.y - a.y) : 1) || 1
-      const dashN = FLOW_PULSE_LEN / L
-      const gapN = Math.max(0.0001, (FLOW_SPACING - FLOW_PULSE_LEN) / L)
+      const spacingN = FLOW_SPACING / L
       const from = cum / L
-      const to = from - FLOW_SPACING / L
-      out.push({ dash: `${dashN.toFixed(4)} ${gapN.toFixed(4)}`, from: from.toFixed(4), to: to.toFixed(4) })
+      const to = from - spacingN
+      // One dash per FLOW_LAYER — the same pulse period, but each shorter layer's offset is shifted by
+      // half its length gap so all their midpoints coincide (concentric). The full-length layer keeps the
+      // base offset; the summed layers give the hot-centre → dark-ends taper. See FLOW_LAYERS / WireEdge.
+      const layers = FLOW_LAYERS.map((ly) => {
+        const dashN = (FLOW_PULSE_LEN * ly.lenFrac) / L
+        const gapN = Math.max(0.0001, spacingN - dashN)
+        const shift = (FLOW_PULSE_LEN * (1 - ly.lenFrac)) / (2 * L) // centres the shorter dash on the pulse
+        return { dash: `${dashN.toFixed(4)} ${gapN.toFixed(4)}`, from: (from - shift).toFixed(4), to: (to - shift).toFixed(4) }
+      })
+      out.push({ layers })
       cum += L
     }
     return out
@@ -1607,15 +1601,68 @@ function DriftMapInner({ tracks }) {
   }, [stagedTracks, presetConfig, geom.PAD, litSet])
   useEffect(() => {
     const prev = prevBuildRef.current
+    const wasEmpty = prev.tracks.length === 0
     const tracksChanged = prev.tracks !== stagedTracks
     const presetChanged = prev.preset !== presetConfig
     const widthChanged = prev.pad !== geom.PAD
     prevBuildRef.current = { tracks: stagedTracks, preset: presetConfig, pad: geom.PAD }
     const built = buildNodes(stagedTracks, presetConfig, geom.PAD)
-    setNodes(built)
+
+    // —— Live import: incremental append (a NEW-TRACK arrival, and NOTHING else) ————————————————————
+    // Keep every node already on the map exactly where it is (no reposition/reflow/re-fit) and only
+    // APPEND the newcomer, tagged `appearing` so TrackNode plays the entrance fade for it alone. The
+    // map re-rules to density-correct positions once, with a glide, when the import finishes (settle
+    // effect below). Dropping removed ids covers the empty-playlist activate that opens a fresh import.
+    //
+    // Crucially this fast-path is taken ONLY when the sole change is a landing track. A preset/axis or
+    // width change re-rules every coordinate, so freezing the import nodes here would leave them behind
+    // while the nebula recomputes — they'd visibly separate. Those changes fall through to the full
+    // rebuild below even mid-import: the two cases are distinguished by which dependency changed.
+    const appendOnly = importingRef.current && tracksChanged && !presetChanged && !widthChanged
+    if (appendOnly) {
+      const builtById = new Map(built.map((n) => [n.id, n]))
+      // Functional updater so the diff runs against the latest committed nodes — rapid pass-1 arrivals
+      // can commit faster than a read-back would reflect, and a stale read would re-add (duplicate) an id.
+      setNodes((live) => {
+        const liveIds = new Set(live.map((n) => n.id))
+        const kept = live.filter((n) => builtById.has(n.id))
+        const added = built
+          .filter((n) => !liveIds.has(n.id))
+          .map((n) => ({ ...n, data: { ...n.data, appearing: true, enterDelay: 0 } }))
+        return added.length || kept.length !== live.length ? [...kept, ...added] : live
+      })
+      // Best-effort stack refresh (a no-op at the circle tier the import opens at). Frame the axis box
+      // once, when the first songs land on an empty map — the box is track-independent, so every later
+      // arrival lands in view without another fit.
+      recomputeRef.current?.(rf.getViewport().zoom, built, true)
+      if (wasEmpty && built.length > 0) hasFit.current = false
+      return
+    }
+
+    // —— Full rebuild (playlist swap, preset/axis change, resize — INCLUDING mid-import) —————————————
+    // Every node moves to its freshly-ruled position. Mid-import we merge the new positions onto the
+    // LIVE nodes — preserving each song's data and any in-flight `appearing` fade — instead of replacing
+    // them wholesale, so an axis change re-rules the map in place without interrupting arrivals; a track
+    // that happens to land in the same commit still appears. Outside import, a plain rebuild is fine.
+    if (importingRef.current) {
+      setNodes((live) => {
+        const liveById = new Map(live.map((n) => [n.id, n]))
+        return built.map((n) => {
+          const l = liveById.get(n.id)
+          return l
+            ? { ...l, position: n.position }
+            : { ...n, data: { ...n.data, appearing: true, enterDelay: 0 } }
+        })
+      })
+    } else {
+      setNodes(built)
+    }
     // Positions changed → re-cluster from the fresh list (the store still holds the old positions), and
     // force the commit so the rebuilt (all-visible) nodes get re-hidden even if the grouping is unchanged.
     recomputeRef.current?.(rf.getViewport().zoom, built, true)
+    // A track/width change re-fits the axis box; a preset-only change glides in place with the viewport
+    // held. Mid-import only preset/width reach here (a pure track change took the append path), so a
+    // preset change correctly glides without yanking the map the user is interacting with.
     if (tracksChanged || widthChanged) {
       hasFit.current = false
     } else if (presetChanged) {
@@ -1625,6 +1672,28 @@ function DriftMapInner({ tracks }) {
       repositionTimer.current = setTimeout(() => el?.classList.remove('drift-repositioning'), 520)
     }
   }, [stagedTracks, presetConfig, geom.PAD, setNodes, rf])
+
+  // Import settle: when a live import ends, re-rule the whole map to density-correct positions in one
+  // glide and clear any lingering `appearing` flags — so the layout the songs land in during streaming
+  // (each placed against a partial library) resolves to the real density map once everything's in.
+  const wasImportingRef = useRef(importing)
+  useEffect(() => {
+    const was = wasImportingRef.current
+    wasImportingRef.current = importing
+    if (!was || importing) return
+    const built = buildNodes(stagedTracks, presetConfig, geom.PAD)
+    const builtById = new Map(built.map((n) => [n.id, n]))
+    const el = wrapperRef.current
+    el?.classList.add('drift-repositioning')
+    clearTimeout(repositionTimer.current)
+    repositionTimer.current = setTimeout(() => el?.classList.remove('drift-repositioning'), 520)
+    setNodes((prev) => prev.map((n) => {
+      const b = builtById.get(n.id)
+      const data = n.data.appearing ? { ...n.data, appearing: false } : n.data
+      return b ? { ...n, position: b.position, data } : (data === n.data ? n : { ...n, data })
+    }))
+    recomputeRef.current?.(rf.getViewport().zoom, built, true)
+  }, [importing, stagedTracks, presetConfig, geom.PAD, setNodes, rf])
 
   const handleWheel = useCallback((e) => {
     // ctrlKey is true for pinch-to-zoom and ctrl+scroll — the zoom gesture
@@ -1795,6 +1864,11 @@ function DriftMapInner({ tracks }) {
   // as the head (Decision Log #38, #42), and once a head exists songs join only by wiring, so further
   // clicks are ignored. Outside build mode it opens that song's Deck View (Decision Log #6, #69).
   const handleNodeClick = useCallback((_e, node) => {
+    // Flow ON shows only the connected chain; every other song is invisible (opacity 0). React Flow
+    // still fires onNodeClick on the node wrapper even though the node's own content is pointer-events:
+    // none, so a click on the empty-looking map lands on the hidden node underneath. Ignore it — a song
+    // you can't see must not open or seat on click.
+    if (flowMode && !chainSet.has(node.id)) return
     setSelectedWire(null) // clicking a song dismisses the compatibility card
     // Seating the anchor is its own gesture: the first click on an empty chain seats the head (Decision
     // Log #38, #42) and does NOT open the Deck — that click means "start my set here," not "inspect this
@@ -1805,7 +1879,7 @@ function DriftMapInner({ tracks }) {
     } else {
       toggleDeck(node.id) // clicking the open song again closes the deck
     }
-  }, [buildMode, chain.length, addHead, toggleDeck])
+  }, [buildMode, flowMode, chainSet, chain.length, addHead, toggleDeck])
 
   // The set-builder panel isn't closeable while building (Decision Log #53), so a pane click only
   // dismisses panels outside build mode. It always dismisses an open compatibility card (Decision
@@ -2031,12 +2105,12 @@ function DriftMapInner({ tracks }) {
       {buildMode && (
         <WireDragLayer ref={dragRef} containerRef={wrapperRef} chainSet={chainSet} onConnect={connectSong} stacksRef={stacksRef} onReleaseStack={onReleaseStack} onSnapTargetChange={setSnapTargetId} />
       )}
-      {/* Strobe keyframes — one continuous linear stroke-dashoffset animation PER wire. Each wire slides
-          its dash pattern from `from` to `to` (a drop of exactly one FLOW_SPACING, so the loop is
-          seamless) over FLOW_PERIOD_S. The per-wire `from` bakes in cumulative chain distance, so all
-          wires' dashes stay locked into one constant-speed, evenly-spaced marching wave (Decision Log #51). */}
+      {/* Strobe keyframes — one continuous linear stroke-dashoffset animation per wire PER LAYER. Each
+          slides its dash from `from` to `to` (a drop of exactly one FLOW_SPACING, so the loop is seamless)
+          over FLOW_PERIOD_S. The per-wire `from` bakes in cumulative chain distance and each layer adds its
+          centering shift, so all wires' layers stay locked into one constant-speed marching wave (#51). */}
       {buildMode && flowMode && flowTiming && (
-        <style>{flowTiming.map((w, i) => `@keyframes ${FLOW_STROBE_NAME}-${i}{from{stroke-dashoffset:${w.from}}to{stroke-dashoffset:${w.to}}}`).join('')}</style>
+        <style>{flowTiming.map((w, i) => w.layers.map((ly, li) => `@keyframes ${FLOW_STROBE_NAME}-${i}-${li}{from{stroke-dashoffset:${ly.from}}to{stroke-dashoffset:${ly.to}}}`).join('')).join('')}</style>
       )}
       {/* Density nebula — canvas-space gas under the songs. Rendered before AxisLayer so its portal
           content is inserted first and the crosshair stays on top of the cloud; both sit below the

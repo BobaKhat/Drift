@@ -136,9 +136,12 @@ html, body, #root {
    Gated on no-preference rather than switched off under reduce, so the fallback is the ABSENCE of a
    rule: with no animation the element just sits at its natural opacity 1 and reduced-motion users get
    the identical cloud, held still. Nothing to undo, and no way for the two paths to disagree. */
+/* Breath trough is 0.333 (not 0.5) so it cancels the 1.5× lift baked into NEBULA_BASE_OPACITY: the peak
+   (opacity 1) reads at 1.5× brightness, while the trough (0.09 base × 0.333) lands at 0.03 — exactly
+   where the old 0.06 base × 0.5 trough sat. Highest 1.5×, lowest unchanged. */
 @keyframes driftNebulaBreathe {
   0%, 100% { opacity: 1; }
-  50%      { opacity: 0.5; }
+  50%      { opacity: 0.333; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .drift-nebula-breath {
@@ -174,4 +177,20 @@ html, body, #root {
     transform: translateX(-140%);
     animation: driftProgressStrobe 4.6s linear infinite;
   }
+}
+
+/* —— Import status chip (two-pass import) —————————————————————————————————————————————————————
+   The little dot on the non-blocking status chip pulses while the background pass-2 cascade runs, so
+   the chip reads as "still working" without a spinner. Reduced-motion keeps it a steady lit dot. */
+@keyframes driftStatusPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.82); }
+  50%      { opacity: 1;    transform: scale(1); }
+}
+.drift-status-chip { animation: driftStatusIn 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+@keyframes driftStatusIn {
+  0% { opacity: 0; transform: translate(-50%, 12px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .drift-status-dot { animation: none !important; }
+  .drift-status-chip { animation: none !important; }
 }

@@ -66,9 +66,24 @@ async function fetchEmbed(id) {
   }
 }
 
+// —— TEMP DIAGNOSTIC (import oEmbed regression) ————————————————————————————————————————————————
+// The 257-track run failed 100% at oEmbed, but a 3-track run resolves fine and Spotify's embed
+// endpoint doesn't 429 under an 80-request burst — so the failure is volume-dependent and starts
+// PAST the first few tracks. This logs at two levels so the real 257 run shows exactly where and how
+// it breaks:
+//   • full request URL + status + full body for the first 3 tracks (per the original ask), and
+//   • a one-line status/exception for EVERY track (`[oembed-status]`), so the onset of 429s / stalls
+//     / empty bodies is visible however deep into the run it begins.
+// `_trackSeq` is the 1-based index of each track across the whole run. Remove once diagnosed.
+// Diagnostic only — no behaviour change (the body is read once and reused; the throws are unchanged).
+let _trackSeq = 0
+
 export async function resolveSpotifyUrl(url) {
   const id = url.match(TRACK_URL)?.[1]
   if (!id) throw new Error(`Not a Spotify track URL: ${url}`)
+
+  const seq = ++_trackSeq
+  const fullDump = seq <= 3 // first three tracks get the full-body dump
 
   // Retry rather than dropping the track into the unresolved bucket when the embed request fails
   // transiently: a 504 (gateway timeout), a request that stalls past EMBED_TIMEOUT_MS (AbortError),
@@ -76,16 +91,27 @@ export async function resolveSpotifyUrl(url) {
   let lastErr
   for (let attempt = 1; attempt <= 3; attempt++) {
     await pace()
+    const reqUrl = `/api/spotify/embed/track/${id}`
     try {
       const res = await fetchEmbed(id)
+      // Read the body once, up front, so the diagnostic can dump it even on a 429/error status
+      // (the checks below still throw exactly as before — this only moves the read earlier).
+      const body = await res.text()
+      // One-line status for EVERY track — this is what reveals where throttling begins in a big run.
+      console.log(`[oembed-status] #${seq} attempt ${attempt} status=${res.status} ok=${res.ok} bodyLength=${body.length} hasNextData=${/__NEXT_DATA__/.test(body)}`)
+      if (fullDump) {
+        console.log(`[oembed-diag #${seq}] url=${reqUrl} inputUrl=${url} contentType=${res.headers.get('content-type') ?? 'n/a'}`)
+        console.log(`[oembed-diag #${seq}] full body ↓\n${body}`)
+      }
       if (res.status === 429) throw new Error('Spotify throttled (429)')
       if (!res.ok) throw new Error(`Spotify embed HTTP ${res.status}`)
 
-      const { artist, title, ogImage, duration } = parseEmbed(await res.text())
+      const { artist, title, ogImage, duration } = parseEmbed(body)
       if (!artist || !title) throw new Error('could not resolve Spotify link')
       console.log(`[oembed] resolved: artist="${artist}" title="${title}" duration=${duration ?? 'null'} ogImage=${ogImage ?? 'null'}`)
       return { artist, title, ogImage, duration }
     } catch (err) {
+      console.log(`[oembed-status] #${seq} attempt ${attempt} EXCEPTION name=${err.name} message=${err.message}`)
       lastErr = err.name === 'AbortError' ? new Error(`Spotify embed timed out (>${EMBED_TIMEOUT_MS}ms)`) : err
       if (attempt < 3) await new Promise((r) => setTimeout(r, 1000))
     }
