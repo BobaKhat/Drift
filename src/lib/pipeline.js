@@ -17,44 +17,45 @@ export async function analyzeTrack(trackString, opts = {}) {
 }
 
 // —— Query variation generators ——————————————————————————————————————————————————
-// Each transform addresses a common SoundNet miss pattern.
-//
-// comma-split takes the first comma-delimited segment in its original case, which is what
-// SoundNet expects: Spotify oEmbed returns multi-artist tracks as "Artist1, Artist2" with
-// NO "feat." indicator (e.g. "Kayzo" not "kayzo, riot").
+// Each transform addresses a common SoundNet miss pattern, and the probe (scripts/probe-
+// output.json) drives the specifics: SoundNet matches accented spellings FAST but stalls
+// 42–45s on stripped/lowercased ones, so we neither lowercase nor fold diacritics — those
+// only slow the lookup. The two levers that actually help are taking the primary artist
+// (SoundNet expects one artist; Spotify oEmbed returns "Artist1, Artist2") and stripping
+// version/collab suffixes off the title.
 
-function stripParentheticals(title) {
+// Primary artist: the text before the first comma, in its original case. Nothing else is
+// split off (no feat./&/slash handling) — a comma is the only reliable multi-artist delimiter
+// Spotify emits, and over-splitting risks dropping a real part of a single artist's name.
+function primaryArtist(artist) {
+  return artist.split(',')[0].trim()
+}
+
+// Strip version/collab noise from a title, preserving case and diacritics:
+//   • everything from " - " onward (e.g. "Track - Original Mix" → "Track")
+//   • a trailing parenthetical naming a collab or version — (feat. …), (with …),
+//     (… Remix), (… Edit), (… Mix), (… Version). Keywords match case-insensitively.
+function stripSuffixes(title) {
   return title
-    .replace(/\s*[\(\[][^\)\]]*[\)\]]\s*/g, ' ')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/\s-\s.*$/, '')
+    .replace(/\s*\((?=[^)]*(?:\bfeat\.?|\bwith\b|\bremix\b|\bedit\b|\bmix\b|\bversion\b))[^)]*\)\s*$/i, '')
     .trim()
 }
 
-// Splits on comma, semicolon, slash, or feat./ft. indicators and returns the first segment.
-// Used for both comma-split (original case) and all-combined (lowercased) variations.
-function firstArtistOnly(artist) {
-  return artist
-    .split(/\s*[,;\/]\s*|\s+(?:feat\.?|ft\.?|featuring|with|x|&)\s+/i)[0]
-    .trim()
-}
-
-// Ordered retry variations, each with a label for console logging.
-// Deduplication against the original (and prior variants) happens in runCascade
-// so identical queries never consume rate-limit budget.
+// Ordered retry variations (V2–V4; V1 is the unmodified original, prepended in runCascade),
+// each with a label for console logging. Deduplication against the original (and prior
+// variants) happens in runCascade so identical queries never consume rate-limit budget.
 //
-// Trimmed to the three highest-yield transforms (comma-split → lowercase → all-combined);
-// the rest were diminishing returns that only burned rate-limit budget. Combined with the
-// halt-on-penalty logic in runCascade, this keeps SoundNet calls per track well bounded.
+//   V2: primary artist + suffix-stripped title  (both levers at once — highest yield)
+//   V3: primary artist + original title
+//   V4: original artist + suffix-stripped title
 function buildRetryVariations(artist, title) {
-  const aLow      = artist.toLowerCase()
-  const tLow      = title.toLowerCase()
-  const aFirst    = firstArtistOnly(artist)                 // original case — critical for SoundNet
-  const aFirstLow = aFirst.toLowerCase()
-  const tStripLow = stripParentheticals(title).toLowerCase()
+  const aPrimary = primaryArtist(artist)
+  const tStrip   = stripSuffixes(title)
   return [
-    { label: 'comma-split',  artist: aFirst,    title            },
-    { label: 'lowercase',    artist: aLow,      title: tLow      },
-    { label: 'all-combined', artist: aFirstLow, title: tStripLow },
+    { label: 'primary+strip', artist: aPrimary, title: tStrip },
+    { label: 'primary+orig',  artist: aPrimary, title         },
+    { label: 'orig+strip',    artist,           title: tStrip },
   ]
 }
 
@@ -64,9 +65,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // Cascade: try original + up to 3 variations, with iTunes corroboration at each SoundNet hit.
 //
 // Short-circuit policy: stop the moment SoundNet returns an accepted hit. Advance to the
-// next variation ONLY on a genuine miss (SoundNet 200 with an error body — the track isn't
-// in its catalog). A rate-limit or timeout is NOT a miss: firing more variations only
-// deepens the 30-second 429 penalty, so we halt the cascade and let the track go unresolved.
+// next variation on a "no exact match" signal — a genuine miss (200 + error body) OR a
+// timeout (at the 6s threshold a timeout reliably means no exact match; see soundnet.js).
+// A rate-limit, transport, or HTTP error IS transient: firing more variations only deepens
+// the 30-second 429 penalty, so we halt the cascade and let the track go unresolved.
 //
 // Corroboration rules (per hit):
 //   iTunes no result → accept (underground/niche track iTunes doesn't carry)
@@ -77,10 +79,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // is also checked against SoundNet's returned duration. Delta > 15s → reject and continue.
 // This catches SoundNet returning a different version (e.g. extended mix) on the first try.
 //
-// Returns { features, itunes, usedArtist, usedTitle, retriedCount, lastArtist, lastTitle }.
+// Returns { features, itunes, usedArtist, usedTitle, retriedCount, variationIndex, variations }.
+// variationIndex is the 1-based index of the step that produced the accepted hit (null on
+// failure) so per-variation hit rate can be measured. variations is the ordered list of
+// unique {artist, title} queries actually attempted (hover detail on unresolved rows).
 // itunes is always resolved before return (used for album art even on failure).
 // Does NOT touch Supabase — the caller owns caching so failed variants aren't stored.
-async function runCascade(artist, title, spotifyDuration = null) {
+async function runCascade(artist, title, spotifyDuration = null, timeoutMs = undefined) {
   console.log(`[drift] [cascade] "${artist}" – "${title}"`)
 
   // iTunes starts immediately and runs in parallel with SoundNet calls.
@@ -94,32 +99,38 @@ async function runCascade(artist, title, spotifyDuration = null) {
     return itunes
   }
 
-  // Full step list: original first, then named variations.
+  // Full step list: V1 unmodified original first, then the V2–V4 variations.
   const steps = [
-    { label: 'orig',         artist,      title       },
+    { label: 'V1 orig',       artist,      title       },
     ...buildRetryVariations(artist, title),
   ]
 
   const tried = new Set()
-  let lastArtist = artist
-  let lastTitle = title
+  const variations = []   // ordered unique {artist, title} actually queried — hover detail
+  const firedSlots = []   // the V-slot indices (1–4) that ran as distinct queries — for logs
   let retriedCount = 0
 
-  for (const step of steps) {
-    const isOrig = step.label === 'orig'
+  for (const [i, step] of steps.entries()) {
+    const index = i + 1   // 1-based variation index, logged on hit for per-variation hit rate
+    const isOrig = i === 0
     const key = `${step.artist}|${step.title}`
     const pad = step.label.padEnd(14)
 
     if (tried.has(key)) {
-      console.log(`[drift]   ${pad} skip  (duplicate)`)
+      // A duplicate query — e.g. V3 (primary+orig) == V2 (primary+strip) when the title has
+      // no strippable suffix, or V4 (orig+strip) == V1. Dedup and ADVANCE to the next slot;
+      // this is NOT a halt, and any genuinely-different later variation still runs. For a
+      // comma-containing artist, V2 is always distinct from V1, so the primary-artist split
+      // is always attempted.
+      console.log(`[drift]   ${pad} deduped (same query as an earlier variation) — advancing`)
       continue
     }
     tried.add(key)
+    variations.push({ artist: step.artist, title: step.title })
+    firedSlots.push(index)
 
     if (!isOrig) {
       retriedCount++
-      lastArtist = step.artist
-      lastTitle = step.title
       await sleep(RETRY_DELAY_MS)
       console.log(`[drift]   ${pad} try   "${step.artist}" – "${step.title}"`)
     }
@@ -127,13 +138,13 @@ async function runCascade(artist, title, spotifyDuration = null) {
     // SoundNet lookup
     let features
     try {
-      features = await getAudioFeatures(step.artist, step.title)
+      features = await getAudioFeatures(step.artist, step.title, { timeoutMs })
     } catch (err) {
-      // Only a genuine miss (track not in SoundNet's catalog) advances the cascade.
-      // Rate-limit / timeout / transport / HTTP errors are transient — queuing the next
+      // "No exact match" — a genuine miss or a timeout — advances the cascade to the next
+      // variation. Rate-limit / transport / HTTP errors are transient; queuing another
       // variation would just deepen a 429 penalty, so halt and leave the track unresolved.
-      if (err.kind === 'miss') {
-        console.log(`[drift]   ${pad} SoundNet miss  (${err.message})`)
+      if (err.kind === 'miss' || err.kind === 'timeout') {
+        console.log(`[drift]   ${pad} SoundNet ${err.kind} — next variation  (${err.message})`)
         continue
       }
       console.log(`[drift]   ${pad} SoundNet ${err.kind ?? 'error'} — halting cascade  (${err.message})`)
@@ -162,16 +173,16 @@ async function runCascade(artist, title, spotifyDuration = null) {
                        svArtist.toLowerCase().includes(artist.toLowerCase())
       const titleOk  = titlesMatch(title, svTitle)
       if (artistOk && titleOk) {
-        console.log(`[drift]   ${pad} SoundNet hit, iTunes no coverage, self-verified → accepted`)
-        return { features, itunes, usedArtist: step.artist, usedTitle: step.title, retriedCount: isOrig ? 0 : retriedCount, lastArtist: step.artist, lastTitle: step.title }
+        console.log(`[drift]   ${pad} SoundNet hit, iTunes no coverage, self-verified → accepted [hit variation ${index}]`)
+        return { features, itunes, usedArtist: step.artist, usedTitle: step.title, retriedCount: isOrig ? 0 : retriedCount, variationIndex: index, variations }
       }
       console.log(`[drift]   ${pad} SoundNet hit, iTunes no coverage, SoundNet mismatch → rejected`)
       continue
     }
 
     if (titlesMatch(title, foundTitle)) {
-      console.log(`[drift]   ${pad} SoundNet hit, iTunes confirmed "${foundTitle}" → accepted`)
-      return { features, itunes, usedArtist: step.artist, usedTitle: step.title, retriedCount: isOrig ? 0 : retriedCount, lastArtist: step.artist, lastTitle: step.title }
+      console.log(`[drift]   ${pad} SoundNet hit, iTunes confirmed "${foundTitle}" → accepted [hit variation ${index}]`)
+      return { features, itunes, usedArtist: step.artist, usedTitle: step.title, retriedCount: isOrig ? 0 : retriedCount, variationIndex: index, variations }
     }
 
     // iTunes found a different song — but if the overlap is zero (completely unrelated song,
@@ -181,8 +192,8 @@ async function runCascade(artist, title, spotifyDuration = null) {
     const itunesOverlap = titleSimilarity(title, foundTitle)
     const sentExactTitle = titleSimilarity(title, step.title) >= 1.0
     if (itunesOverlap === 0 && sentExactTitle && features.duration != null) {
-      console.log(`[drift]   ${pad} SoundNet hit, iTunes "${foundTitle}" zero overlap with "${title}", SoundNet query exact → accepted (iTunes search mismatch, SoundNet query exact)`)
-      return { features, itunes, usedArtist: step.artist, usedTitle: step.title, retriedCount: isOrig ? 0 : retriedCount, lastArtist: step.artist, lastTitle: step.title }
+      console.log(`[drift]   ${pad} SoundNet hit, iTunes "${foundTitle}" zero overlap with "${title}", SoundNet query exact → accepted (iTunes search mismatch, SoundNet query exact) [hit variation ${index}]`)
+      return { features, itunes, usedArtist: step.artist, usedTitle: step.title, retriedCount: isOrig ? 0 : retriedCount, variationIndex: index, variations }
     }
 
     console.log(`[drift]   ${pad} SoundNet hit, iTunes "${foundTitle}" ≠ "${title}" (overlap ${itunesOverlap.toFixed(2)}) → rejected, next variation`)
@@ -190,8 +201,13 @@ async function runCascade(artist, title, spotifyDuration = null) {
 
   // All steps exhausted without an accepted hit
   await resolveItunes()
-  console.log(`[drift]   all ${retriedCount} unique variation(s) tried, none accepted → unresolved`)
-  return { features: null, itunes, usedArtist: artist, usedTitle: title, retriedCount, lastArtist, lastTitle }
+  // Report DISTINCT queries actually attempted (includes V1), out of the 4 variation slots —
+  // so a comma track whose V3/V4 collapse into earlier slots still shows the primary split was
+  // tried, and a comma+suffix track that reaches V4 reports 4.
+  console.log(
+    `[drift]   attempted ${variations.length} distinct quer${variations.length === 1 ? 'y' : 'ies'} of 4 variation slots (fired V${firedSlots.join(', V')}), none accepted → unresolved`,
+  )
+  return { features: null, itunes, usedArtist: artist, usedTitle: title, retriedCount, variationIndex: null, variations }
 }
 
 // Format seconds as M:SS for duration display
@@ -207,8 +223,8 @@ function fmtDuration(sec) {
 // demo data) can reuse the same caching/dedup path without re-parsing a string.
 //
 // Returns the Supabase row augmented with _meta: { versionWarning, retriedCount,
-// lastArtist, lastTitle } for the reconciliation layer. _meta is NOT stored in the DB.
-export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null } = {}) {
+// variationIndex, variations } for the reconciliation layer. _meta is NOT stored in the DB.
+export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs } = {}) {
   // Return cached result if available (.limit(1) tolerates duplicate rows gracefully)
   const { data: rows } = await supabase
     .from('tracks')
@@ -230,7 +246,7 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
 
   // Cascade handles SoundNet (original + variations) and iTunes corroboration together.
   // iTunes runs in parallel inside runCascade; result is always resolved before return.
-  const cascade = await runCascade(artist, title, spotifyDuration)
+  const cascade = await runCascade(artist, title, spotifyDuration, timeoutMs)
   const { itunes } = cascade
   const features = cascade.features  // null if all variations failed/rejected
   // _matchedTitle/_matchedArtist are self-verification fields used inside runCascade only.
@@ -322,8 +338,8 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
     _meta: {
       versionWarning,
       retriedCount: cascade.retriedCount,
-      lastArtist: cascade.lastArtist,
-      lastTitle: cascade.lastTitle,
+      variationIndex: cascade.variationIndex,
+      variations: cascade.variations,
     },
   }
 }

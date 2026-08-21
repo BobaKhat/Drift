@@ -5,12 +5,11 @@ import { isSpotifyTrackUrl, resolveSpotifyUrl } from './oembed'
 // into mapped (plotted), warnings (version-mismatch flagged), and unresolved (shown on
 // reconciliation).
 
-// Bounded concurrency: process 4 entries at a time with a 300ms gap between batches. This lets
-// four slow SoundNet round-trips overlap (keeping the pipeline filled instead of idling on
-// network latency) while staying well under Spotify/SoundNet throttle thresholds — the
-// per-service pacing gates in oembed.js/soundnet.js (SoundNet at 350ms) still space the actual
-// requests, so a batch never truly fires at once and higher concurrency won't cause 429s.
-const CONCURRENCY = 4
+// Serial processing: one entry at a time with a 300ms gap between them. Concurrency was
+// dropped from 4 to 1 after finding SoundNet degrades under concurrent load — overlapping
+// round-trips pushed exact-match responses past the SoundNet timeout, misclassifying real
+// hits as "no exact match". Running serially keeps each lookup on an uncontended connection.
+const CONCURRENCY = 1
 const PAIR_DELAY = 300
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -78,12 +77,13 @@ async function processEntry(entry) {
           title,
           kind: 'nodata',
           reason: 'no audio data available',
-          // lastAttempt lets the reconciliation panel prefill the best variation attempted
-          lastAttempt: {
-            artist: track?._meta?.lastArtist ?? artist,
-            title: track?._meta?.lastTitle ?? title,
-          },
-          triedVariations: track?._meta?.retriedCount ?? 0,
+          // The panel prefills with the ORIGINAL artist/title (above). The variation list is
+          // carried through only as hover detail so the user can see what was already tried.
+          variations: track?._meta?.variations ?? [],
+          // Distinct queries actually attempted, including the original (up to 4). Counting the
+          // distinct set — not retriedCount — means a comma track whose V3/V4 dedup away still
+          // shows the primary-artist split was tried, and a V4-reaching track can report 4.
+          triedVariations: track?._meta?.variations?.length ?? 0,
         },
       }
     }
@@ -114,7 +114,7 @@ async function processEntry(entry) {
 //   unresolved — tracks that couldn't be found after all variations
 //   warnings   — subset of mapped tracks that had a duration-mismatch, with display data
 //
-// Processes entries in pairs (CONCURRENCY = 2) with a PAIR_DELAY gap between pairs.
+// Processes entries one at a time (CONCURRENCY = 1) with a PAIR_DELAY gap between them.
 export async function runImport(text, onProgress = () => {}) {
   const entries = parseInput(text)
   const total = entries.length
@@ -147,12 +147,31 @@ export async function runImport(text, onProgress = () => {}) {
     if (i + CONCURRENCY < entries.length) await sleep(PAIR_DELAY)
   }
 
+  // Variation-hit distribution: which V-slot produced each accepted match, so per-variation
+  // hit rate is readable straight from one log line. Cache hits return no _meta (they never
+  // ran the cascade) and are tallied separately.
+  const hitDist = { V1: 0, V2: 0, V3: 0, V4: 0 }
+  let cachedHits = 0
+  for (const t of mapped) {
+    const vi = t._meta?.variationIndex
+    if (vi >= 1 && vi <= 4) hitDist[`V${vi}`]++
+    else cachedHits++
+  }
+  console.log(
+    `[drift] import hit distribution — V1:${hitDist.V1} V2:${hitDist.V2} V3:${hitDist.V3} V4:${hitDist.V4} | cached:${cachedHits} | unresolved:${unresolved.length}`,
+  )
+
   return { mapped, unresolved, warnings }
 }
 
+// Manual per-track Retry gets a much longer SoundNet deadline than the bulk import (which
+// stays at SOUNDNET_TIMEOUT_MS). The user is re-fetching one track on purpose, so it's worth
+// waiting out a slow SoundNet response rather than treating it as a timeout "no exact match".
+const RETRY_TIMEOUT_MS = 45000
+
 // Re-analyze a single edited unresolved entry. Returns the track row on success, else null.
 export async function retryUnresolved(artist, title) {
-  const track = await analyzeTrackParts(artist, title)
+  const track = await analyzeTrackParts(artist, title, { timeoutMs: RETRY_TIMEOUT_MS })
   if (!track || track.status === 'unanalyzed') return null
   return track
 }
