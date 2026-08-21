@@ -32,11 +32,11 @@ const pace = createPacer(350)
 // Errors carry a `kind` so the cascade can decide whether to advance to the next variation
 // or halt. Two kinds mean "no exact match for this query" and ADVANCE the cascade:
 //   'miss'    → SoundNet returned 200 with an error body (track not in catalog)
-//   'timeout' → request aborted at SOUNDNET_TIMEOUT_MS. At the tightened 6s threshold a
-//               timeout is a reliable "no exact match" signal, not a stall to wait out:
-//               exact matches return in under 4s, while fallback searches grind for 42–45s
-//               before failing anyway (see scripts/probe-output.json). Advancing beats
-//               waiting on a search that won't resolve.
+//   'timeout' → request aborted at SOUNDNET_TIMEOUT_MS (10s). A timeout still means "no
+//               exact match" and advances the cascade: exact matches return in under 4s,
+//               while fallback searches grind for 42–45s before failing anyway (see
+//               scripts/probe-output.json). The 10s deadline (up from 6s) leaves headroom
+//               for exact matches that slow down under concurrent load.
 // The remaining kinds are genuinely transient and HALT the cascade — firing more variations
 // would only deepen an in-progress 429 penalty:
 //   'rate-limit' → HTTP 429 after all retries
@@ -50,14 +50,16 @@ function soundnetError(message, kind) {
 
 // A plain fetch has no deadline: behind our proxy SoundNet can stall a connection open
 // indefinitely. Abort each attempt after this long so a stall becomes a caught error the
-// cascade can act on. Set just above the ~4s ceiling for exact matches and well below the
-// 42–45s a fallback search burns before failing — so a timeout here reliably means
-// "no exact match" rather than a transient stall. See scripts/probe-output.json.
-const SOUNDNET_TIMEOUT_MS = 6000
+// cascade can act on. Raised to 10s after finding SoundNet degrades under concurrent load —
+// exact-match responses that normally return in <4s can be pushed past a tighter deadline,
+// which then misclassifies a real hit as "no exact match". 10s leaves headroom for a slow
+// exact match while still sitting below the 42–45s a true fallback search burns before
+// failing. See scripts/probe-output.json.
+const SOUNDNET_TIMEOUT_MS = 10000
 
-async function fetchWithTimeout(url) {
+async function fetchWithTimeout(url, timeoutMs = SOUNDNET_TIMEOUT_MS) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), SOUNDNET_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     return await fetch(url, { signal: controller.signal })
   } finally {
@@ -65,18 +67,18 @@ async function fetchWithTimeout(url) {
   }
 }
 
-async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
+async function fetchWithRetry(url, { timeoutMs = SOUNDNET_TIMEOUT_MS, retries = 3, delayMs = 2000 } = {}) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     await pace()
     let res
     try {
-      res = await fetchWithTimeout(url)
+      res = await fetchWithTimeout(url, timeoutMs)
     } catch (err) {
       // A timeout (AbortError) now means "no exact match" (see kind docs above), so don't
       // spend retries re-firing the same query — surface it at once and let the cascade
       // advance to the next variation.
       if (err.name === 'AbortError') {
-        throw soundnetError(`SoundNet timed out (>${SOUNDNET_TIMEOUT_MS}ms)`, 'timeout')
+        throw soundnetError(`SoundNet timed out (>${timeoutMs}ms)`, 'timeout')
       }
       // Genuine transport error — transient. Each attempt is bounded by SOUNDNET_TIMEOUT_MS,
       // so retrying can never hang indefinitely. Back off and retry; give up after the last.
@@ -96,7 +98,10 @@ async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
   }
 }
 
-export async function getAudioFeatures(artist, title) {
+// timeoutMs lets a caller override the per-request deadline. Bulk import uses the default
+// (SOUNDNET_TIMEOUT_MS); the manual per-track Retry passes a longer one to tolerate a slow
+// SoundNet response for a single track the user explicitly asked to re-fetch.
+export async function getAudioFeatures(artist, title, { timeoutMs = SOUNDNET_TIMEOUT_MS } = {}) {
   const params = new URLSearchParams({ artist, song: title })
   const url = `/api/soundnet/pktx/analysis?${params}`
 
@@ -105,7 +110,7 @@ export async function getAudioFeatures(artist, title) {
   console.log(`[soundnet] encoded query string: ${params.toString()}`)
   console.log(`[soundnet] → GET ${url}`)
 
-  const res = await fetchWithRetry(url)
+  const res = await fetchWithRetry(url, { timeoutMs })
 
   const data = await res.json()
 

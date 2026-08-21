@@ -85,7 +85,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // unique {artist, title} queries actually attempted (hover detail on unresolved rows).
 // itunes is always resolved before return (used for album art even on failure).
 // Does NOT touch Supabase — the caller owns caching so failed variants aren't stored.
-async function runCascade(artist, title, spotifyDuration = null) {
+async function runCascade(artist, title, spotifyDuration = null, timeoutMs = undefined) {
   console.log(`[drift] [cascade] "${artist}" – "${title}"`)
 
   // iTunes starts immediately and runs in parallel with SoundNet calls.
@@ -138,7 +138,7 @@ async function runCascade(artist, title, spotifyDuration = null) {
     // SoundNet lookup
     let features
     try {
-      features = await getAudioFeatures(step.artist, step.title)
+      features = await getAudioFeatures(step.artist, step.title, { timeoutMs })
     } catch (err) {
       // "No exact match" — a genuine miss or a timeout — advances the cascade to the next
       // variation. Rate-limit / transport / HTTP errors are transient; queuing another
@@ -224,7 +224,7 @@ function fmtDuration(sec) {
 //
 // Returns the Supabase row augmented with _meta: { versionWarning, retriedCount,
 // variationIndex, variations } for the reconciliation layer. _meta is NOT stored in the DB.
-export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null } = {}) {
+export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs } = {}) {
   // Return cached result if available (.limit(1) tolerates duplicate rows gracefully)
   const { data: rows } = await supabase
     .from('tracks')
@@ -246,7 +246,7 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
 
   // Cascade handles SoundNet (original + variations) and iTunes corroboration together.
   // iTunes runs in parallel inside runCascade; result is always resolved before return.
-  const cascade = await runCascade(artist, title, spotifyDuration)
+  const cascade = await runCascade(artist, title, spotifyDuration, timeoutMs)
   const { itunes } = cascade
   const features = cascade.features  // null if all variations failed/rejected
   // _matchedTitle/_matchedArtist are self-verification fields used inside runCascade only.

@@ -36,8 +36,9 @@ function UnresolvedRow({ entry, onRetry }) {
     if (!artist.trim() || !title.trim()) { setFailed(true); return }
     setBusy(true)
     setFailed(false)
-    // onRetry now applies the same miss-detection + a 6s SoundNet timeout as the import path,
-    // so it always settles. Guard anyway: a thrown promise must never leave the row spinning.
+    // onRetry applies the same miss-detection as the import path but a longer (45s) SoundNet
+    // timeout, since this is a deliberate single-track re-fetch. It always settles; guard
+    // anyway: a thrown promise must never leave the row spinning.
     let ok = false
     try {
       ok = await onRetry(entry.originalText, artist.trim(), title.trim())
