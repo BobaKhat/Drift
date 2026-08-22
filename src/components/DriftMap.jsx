@@ -1594,11 +1594,26 @@ function DriftMapInner({ tracks }) {
   // Depending on `chainSet` only while flow mode is ON keeps ordinary set-building (flow OFF) from
   // churning this memo — otherwise every wire the user connects would crossfade the whole nebula.
   const litSet = flowMode ? chainSet : null
+  // During a live import the density scale shifts as each song lands, which would re-rule EVERY song's
+  // cloud position on every arrival — the whole nebula jitters/shakes. So while importing we FREEZE each
+  // song's cloud where it first landed and only add the newcomer, exactly as the map's nodes freeze in
+  // append mode: the gas grows one blob per song, registered with the node, instead of the field
+  // re-ruling under it. Both settle to the full density layout when the import ends (importing → false
+  // clears the freeze and returns the live positions).
+  const nebulaFrozen = useRef(new Map()) // song id → frozen cloud position, import only
   const songPositions = useMemo(() => {
     const built = buildNodes(stagedTracks, presetConfig, geom.PAD)
     const lit = litSet ? built.filter((n) => litSet.has(n.id)) : built
-    return lit.map((n) => n.position)
-  }, [stagedTracks, presetConfig, geom.PAD, litSet])
+    if (!importing) {
+      nebulaFrozen.current.clear()
+      return lit.map((n) => n.position)
+    }
+    const frozen = nebulaFrozen.current
+    const ids = new Set(lit.map((n) => n.id))
+    for (const id of frozen.keys()) if (!ids.has(id)) frozen.delete(id) // drop the empty-activate reset
+    for (const n of lit) if (!frozen.has(n.id)) frozen.set(n.id, n.position) // freeze a newcomer once
+    return lit.map((n) => frozen.get(n.id))
+  }, [stagedTracks, presetConfig, geom.PAD, litSet, importing])
   useEffect(() => {
     const prev = prevBuildRef.current
     const wasEmpty = prev.tracks.length === 0
@@ -2116,7 +2131,7 @@ function DriftMapInner({ tracks }) {
           content is inserted first and the crosshair stays on top of the cloud; both sit below the
           nodes (ViewportPortal content renders under the node layer) and above the card's line grid,
           which is a CSS background on the wrapper below everything. */}
-      <NebulaLayer songPositions={songPositions} width={geom.W} height={H} />
+      <NebulaLayer songPositions={songPositions} width={geom.W} height={H} instant={importing} />
       <AxisLayer preset={presetConfig} geom={geom} />
       {/* Stack badges (Slice 14): one per cluster of ≥2 overlapping songs, floating above the
           representative. Rendered into the pane's ViewportPortal so they pan/zoom with the map; each is

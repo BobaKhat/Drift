@@ -126,10 +126,14 @@ const FADE_IN_MS = 400
 // what a chain is. Node origin is [0.5, 0.5], so a node's position IS its centre. The array's
 // identity is the redraw trigger, so it must come from a memo that changes only when the set or the
 // positions do — never from the live `nodes` array, which churns on hover, selection and dimming.
-export default function NebulaLayer({ songPositions, width, height }) {
+export default function NebulaLayer({ songPositions, width, height, instant = false }) {
   const wrapRef = useRef(null)
   const canvasRef = useRef(null)
   const store = useStoreApi()
+  // `instant` is true while a live import is streaming songs in. Read via a ref so toggling it never
+  // re-runs the redraw effect on its own — only an actual songPositions/size change redraws (below).
+  const instantRef = useRef(instant)
+  instantRef.current = instant
 
   // Zoom fade rides the wrapper; the breath rides the middle element (CSS-only, see index.css); the
   // preset crossfade rides the canvas. One opacity per element, multiplied by the browser, so no
@@ -235,6 +239,19 @@ export default function NebulaLayer({ songPositions, width, height }) {
       canvas.style.transition = `opacity ${FADE_IN_MS}ms ease-out`
       const raf = requestAnimationFrame(() => { canvas.style.opacity = '1' })
       return () => cancelAnimationFrame(raf)
+    }
+
+    // Live import: songs stream in one at a time, so songPositions changes constantly. Running the
+    // fade-to-black crossfade on each would blink the cloud out and back over and over — the "blinking"
+    // bug. Instead, update the field IN PLACE at full opacity (the gas just grows with the songs), and
+    // debounce so a burst of arrivals coalesces into one redraw rather than a full-field redraw per song.
+    if (instantRef.current) {
+      const t = setTimeout(() => {
+        canvas.style.transition = 'none'
+        canvas.style.opacity = '1'
+        draw()
+      }, 160)
+      return () => clearTimeout(t)
     }
 
     canvas.style.transition = `opacity ${FADE_OUT_MS}ms ease-in`

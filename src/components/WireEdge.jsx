@@ -1,4 +1,5 @@
 import { useContext } from 'react'
+import { useReducedMotion } from 'framer-motion'
 import { getBezierPath, useStore, useInternalNode, Position } from '@xyflow/react'
 import { getNodeScale, getTier, HEAD_CIRCLE_BUMP, BuildContext } from './TrackNode'
 import { ORPHAN_CORAL, ORPHAN_INACTIVE } from './import/tokens'
@@ -53,7 +54,11 @@ export const FLOW_STROBE_NAME = 'driftFlowStrobe'
 // chain ever janks; the look degrades gracefully toward faint banding.)
 const FLOW_TAPER_N = 12
 export const FLOW_LAYERS = [
-  { lenFrac: 0.9, width: 12, blur: 8, opacity: 0.1 }, // wide dim halo — the ambient glow
+  // Interval bloom: rides the comet (same traveling dash) and pulses its opacity 0→peak→0 on a repeating
+  // beat (driftFlowGlowPulse), so the moving strobe flares a bright accent glow "in intervals". Widest +
+  // softest, drawn first so it sits under the comet core. `pulse` tags it for the extra animation.
+  { lenFrac: 0.85, width: 16, blur: 9, opacity: 0.5, pulse: true },
+  { lenFrac: 0.9, width: 12, blur: 8, opacity: 0.1 }, // wide dim halo — the steady ambient glow
   ...Array.from({ length: FLOW_TAPER_N }, (_, k) => ({
     lenFrac: 1 - (k / FLOW_TAPER_N) * (1 - 0.04), // 1.0 (full pulse) → ~0.12 (bright centre)
     width: 3,
@@ -84,6 +89,7 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
   // per-frame recompute during zoom is cheap).
   const zoom = useStore((s) => s.transform[2])
   const { onWireClick, flowMode, flowTiming } = useContext(BuildContext)
+  const reduce = useReducedMotion() // drop the pulsing bloom (extra motion) under reduced-motion
   const scale = getNodeScale(zoom)
   const tier = getTier(zoom)
   const sNode = useInternalNode(source)
@@ -129,16 +135,24 @@ export default function WireEdge({ source, target, sourceX, sourceY, sourcePosit
         <path d={path} fill="none" stroke={DARK_WIRE} strokeWidth={2.5} strokeLinecap="round" />
         {/* Concentric centered dashes (widest/dimmest → narrowest/hottest), each on its own sliding
             offset keyframe but locked to the same period, so together they read as one pulse that's hot
-            in the centre and fades to the dark cable at both ends (see FLOW_LAYERS). */}
-        {t?.layers && FLOW_LAYERS.map((ly, li) => (
-          <path
-            key={li}
-            d={path} fill="none" stroke={FLOW_STROBE_COLOR}
-            strokeWidth={ly.width} strokeLinecap="round" strokeOpacity={ly.opacity}
-            pathLength={1} strokeDasharray={t.layers[li].dash}
-            style={{ animation: `${FLOW_STROBE_NAME}-${i}-${li} ${FLOW_PERIOD_S}s linear infinite`, filter: `blur(${ly.blur}px)` }}
-          />
-        ))}
+            in the centre and fades to the dark cable at both ends (see FLOW_LAYERS). The `pulse` layer
+            additionally swells its opacity on the interval keyframe, so the bloom flares as it travels. */}
+        {t?.layers && FLOW_LAYERS.map((ly, li) => {
+          if (ly.pulse && reduce) return null
+          const travel = `${FLOW_STROBE_NAME}-${i}-${li} ${FLOW_PERIOD_S}s linear infinite`
+          return (
+            <path
+              key={li}
+              d={path} fill="none" stroke={FLOW_STROBE_COLOR}
+              strokeWidth={ly.width} strokeLinecap="round" strokeOpacity={ly.opacity}
+              pathLength={1} strokeDasharray={t.layers[li].dash}
+              style={{
+                animation: ly.pulse ? `${travel}, driftFlowGlowPulse 2.6s ease-in-out infinite` : travel,
+                filter: `blur(${ly.blur}px)`,
+              }}
+            />
+          )
+        })}
         <path
           d={path} fill="none" stroke="transparent" strokeWidth={20} strokeLinecap="round"
           style={{ pointerEvents: 'stroke', cursor: 'pointer' }}

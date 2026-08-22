@@ -149,6 +149,19 @@ html, body, #root {
   }
 }
 
+/* —— Flow-mode strobe interval glow ————————————————————————————————————————————————————————
+   A bright accent bloom that rides WITH the traveling comet — NOT the whole wire. WireEdge puts this on
+   a dashed glow layer that travels via the same dash-offset animation as the comet, and adds THIS
+   keyframe to swell its opacity then hold it at 0 through the back half of the cycle, so the moving
+   strobe pulses "in intervals" rather than glowing steadily. Peak brightness is the layer's own
+   strokeOpacity; the keyframe just gates it 0→1→0. WireEdge omits the layer under reduced motion. */
+@keyframes driftFlowGlowPulse {
+  0%   { opacity: 0; }
+  22%  { opacity: 1; }
+  48%  { opacity: 0; }
+  100% { opacity: 0; }
+}
+
 /* —— Import progress-bar strobe ————————————————————————————————————————————————————————
    The loading bar's orange fill carries the same traveling pulse as a Flow-mode chain wire: a bright hot
    sweep glides across the fill, then parks off the end for a beat, on the SAME 3.6s sweep + 1s pause
