@@ -91,8 +91,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // or the acceptance/dedup rules below: a V1 miss simply returns unresolved so pass 2 can retry it
 // later with the full cascade. Everything else (corroboration, duration guard, self-verify) is
 // identical whether one step runs or four.
-async function runCascade(artist, title, spotifyDuration = null, timeoutMs = undefined, v1Only = false) {
-  console.log(`[drift] [cascade] "${artist}" – "${title}"${v1Only ? ' (V1 only)' : ''}`)
+//
+// skipV1 (import pass 2): pass 1 already ran V1 for every track and it missed, so re-running the
+// identical query here would just burn a full timeout before reaching a variation that could help.
+// Begin the cascade at V2. Dedup is preserved: V1's query string is pre-seeded into `tried`, so any
+// later variation that collapses to the same query as V1 (e.g. V4=orig+strip when the title has no
+// strippable suffix) is skipped rather than fired as a duplicate — exactly as if V1 had run.
+// Mutually exclusive with v1Only; the variation logic, acceptance, and dedup rules are untouched.
+async function runCascade(artist, title, spotifyDuration = null, timeoutMs = undefined, v1Only = false, skipV1 = false) {
+  console.log(`[drift] [cascade] "${artist}" – "${title}"${v1Only ? ' (V1 only)' : skipV1 ? ' (V2+)' : ''}`)
 
   // iTunes starts immediately and runs in parallel with SoundNet calls.
   // We only await it when a SoundNet hit arrives — so parallel time is free.
@@ -105,23 +112,29 @@ async function runCascade(artist, title, spotifyDuration = null, timeoutMs = und
     return itunes
   }
 
-  // Full step list: V1 unmodified original first, then the V2–V4 variations. Pass 1 (v1Only) runs
-  // just V1 — the fast exact-match probe — and leaves the variations to pass 2.
+  // Full step list, each tagged with its fixed V-slot (1–4). V1 is the unmodified original; V2–V4
+  // are the variations. Pass 1 (v1Only) runs just V1 — the fast exact-match probe. Pass 2 (skipV1)
+  // begins at V2 (V1 already ran in pass 1) while still deduping later variations against V1's query.
+  const v1Step = { slot: 1, label: 'V1 orig', artist, title }
+  const variationSteps = buildRetryVariations(artist, title).map((v, i) => ({ slot: i + 2, ...v }))
   const steps = v1Only
-    ? [{ label: 'V1 orig', artist, title }]
-    : [
-        { label: 'V1 orig',       artist,      title       },
-        ...buildRetryVariations(artist, title),
-      ]
+    ? [v1Step]
+    : skipV1
+      ? variationSteps
+      : [v1Step, ...variationSteps]
 
   const tried = new Set()
   const variations = []   // ordered unique {artist, title} actually queried — hover detail
   const firedSlots = []   // the V-slot indices (1–4) that ran as distinct queries — for logs
   let retriedCount = 0
 
-  for (const [i, step] of steps.entries()) {
-    const index = i + 1   // 1-based variation index, logged on hit for per-variation hit rate
-    const isOrig = i === 0
+  // Pass 2 skips firing V1 but must still dedup against it: pre-seed V1's query so any later
+  // variation that collapses to the same string is skipped, not re-fired as a duplicate.
+  if (skipV1) tried.add(`${artist}|${title}`)
+
+  for (const step of steps) {
+    const index = step.slot   // fixed 1-based V-slot, logged on hit for per-variation hit rate
+    const isOrig = step.slot === 1
     const key = `${step.artist}|${step.title}`
     const pad = step.label.padEnd(14)
 
@@ -210,11 +223,13 @@ async function runCascade(artist, title, spotifyDuration = null, timeoutMs = und
 
   // All steps exhausted without an accepted hit
   await resolveItunes()
-  // Report DISTINCT queries actually attempted (includes V1), out of the 4 variation slots —
-  // so a comma track whose V3/V4 collapse into earlier slots still shows the primary split was
-  // tried, and a comma+suffix track that reaches V4 reports 4.
+  // Report DISTINCT queries actually attempted, out of the 4 variation slots — so a comma track
+  // whose V3/V4 collapse into earlier slots still shows the primary split was tried, and a
+  // comma+suffix track that reaches V4 reports 4. In pass 2 (skipV1), V1 isn't counted; a track
+  // whose every variation dedups to V1 fires nothing here (firedSlots empty) and is unresolved.
+  const firedLabel = firedSlots.length ? `V${firedSlots.join(', V')}` : 'none'
   console.log(
-    `[drift]   attempted ${variations.length} distinct quer${variations.length === 1 ? 'y' : 'ies'} of 4 variation slots (fired V${firedSlots.join(', V')}), none accepted → unresolved`,
+    `[drift]   attempted ${variations.length} distinct quer${variations.length === 1 ? 'y' : 'ies'} of 4 variation slots (fired ${firedLabel}), none accepted → unresolved`,
   )
   return { features: null, itunes, usedArtist: artist, usedTitle: title, retriedCount, variationIndex: null, variations }
 }
@@ -233,7 +248,7 @@ function fmtDuration(sec) {
 //
 // Returns the Supabase row augmented with _meta: { versionWarning, retriedCount,
 // variationIndex, variations } for the reconciliation layer. _meta is NOT stored in the DB.
-export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs, v1Only = false } = {}) {
+export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs, v1Only = false, skipV1 = false } = {}) {
   // Return cached result if available (.limit(1) tolerates duplicate rows gracefully)
   const { data: rows } = await supabase
     .from('tracks')
@@ -255,7 +270,7 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
 
   // Cascade handles SoundNet (original + variations) and iTunes corroboration together.
   // iTunes runs in parallel inside runCascade; result is always resolved before return.
-  const cascade = await runCascade(artist, title, spotifyDuration, timeoutMs, v1Only)
+  const cascade = await runCascade(artist, title, spotifyDuration, timeoutMs, v1Only, skipV1)
   const { itunes } = cascade
   const features = cascade.features  // null if all variations failed/rejected
   // _matchedTitle/_matchedArtist are self-verification fields used inside runCascade only.
