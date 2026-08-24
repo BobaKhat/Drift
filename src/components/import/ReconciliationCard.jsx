@@ -94,6 +94,35 @@ function UnresolvedRow({ entry, onRetry }) {
               )
         )}
       </div>
+      {/* Version-mismatch detail: SoundNet had the track but only at a different length, so the
+          duration guard rejected it. Show what was searched vs. what SoundNet matched, with both
+          durations, so the user can judge before retrying. */}
+      {entry.kind === 'version' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: C.amber, fontSize: 13 }}>⚠</span>
+            <span style={{ fontFamily: FONT, fontSize: 13, fontWeight: 500, color: C.amber }}>
+              Found a different version
+            </span>
+          </div>
+          <div style={{ fontFamily: FONT, fontSize: 12, color: C.textSecondary, lineHeight: 1.6 }}>
+            <div>
+              <span style={{ color: C.iconPrimary }}>Searched for: </span>
+              <span style={{ color: C.textPrimary }}>{`${entry.searchedArtist} – ${entry.searchedTitle}`}</span>
+              {entry.referenceDurationFmt && (
+                <span style={{ color: C.iconPrimary }}>{`  (${entry.referenceSource}: ${entry.referenceDurationFmt})`}</span>
+              )}
+            </div>
+            <div>
+              <span style={{ color: C.iconPrimary }}>SoundNet matched as: </span>
+              <span style={{ color: C.textPrimary }}>{`${entry.matchedArtist} – ${entry.matchedTitle}`}</span>
+              {entry.soundnetDurationFmt && (
+                <span style={{ color: C.iconPrimary }}>{`  (${entry.soundnetDurationFmt})`}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <input value={artist} onChange={onEdit(setArtist)} placeholder="Artist" style={smallInput} />
         <input value={title} onChange={onEdit(setTitle)} placeholder="Title" style={smallInput} />
@@ -171,11 +200,11 @@ function VersionWarningRow({ w }) {
   )
 }
 
-// Final-misses panel (two-pass import). By the time this shows, the mapped tracks are already linked
-// and plotted on the live map — pass 1 and pass 2 wrote them as they landed. So this panel's job is
-// narrower than the old commit gate: report the pass-1 / pass-2 hit split, let the user rename the
-// auto-created playlist, and give the leftover misses a place to be retried (each retry links + plots
-// live). It only appears when something's left to sort out; a fully-resolved import shows no panel.
+// Final-misses panel. By the time this shows, the mapped tracks are already linked and plotted on the
+// live map — the import sweep wrote them as they landed. So this panel's job is narrow: report the hit
+// count, let the user rename the auto-created playlist, and give the leftover misses a place to be
+// retried (each retry runs the V2–V4 cascade and, on success, links + plots live). It only appears
+// when something's left to sort out; a fully-resolved import shows no panel.
 export default function ReconciliationCard() {
   const { reconciliation, finishReconcile, retry, playlists, activePlaylistId } = usePlaylistStore()
 
@@ -184,15 +213,16 @@ export default function ReconciliationCard() {
   const [name, setName] = useState(() => currentName || defaultName())
 
   const mappedCount = reconciliation?.mappedCount ?? 0
-  const pass1Hits = reconciliation?.pass1Hits ?? 0
-  const pass2Hits = reconciliation?.pass2Hits ?? 0
   const unresolved = reconciliation?.unresolved ?? []
   const warnings = reconciliation?.warnings ?? []
 
-  // Split the unresolved summary so a transient link-resolution failure reads differently
-  // from a genuine SoundNet miss (they used to collapse into one "couldn't be found" line).
+  // Split the unresolved summary by failure mode so each reads distinctly:
+  //   'url'     — a transient link-resolution failure (retry the link)
+  //   'version' — SoundNet had the track but only at a different length (duration guard rejected it)
+  //   the rest  — a genuine SoundNet miss ("no audio data available")
   const unresolvedUrl = unresolved.filter((u) => u.kind === 'url')
-  const unresolvedData = unresolved.filter((u) => u.kind !== 'url')
+  const unresolvedVersion = unresolved.filter((u) => u.kind === 'version')
+  const unresolvedData = unresolved.filter((u) => u.kind !== 'url' && u.kind !== 'version')
 
   return (
     <ModalCard width={570} style={{ gap: 24, alignItems: 'stretch' }}>
@@ -206,11 +236,9 @@ export default function ReconciliationCard() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {/* Mapped total, with the pass-1 / pass-2 split reported separately (pass 2 = the songs the
-            slow background cascade recovered that the fast first pass had missed). */}
+        {/* Mapped total — songs plotted on the map by the import sweep. */}
         <span style={{ fontFamily: FONT, fontSize: 14, color: C.green }}>
           {`● ${mappedCount} song${mappedCount === 1 ? '' : 's'} mapped`}
-          <span style={{ color: C.textSecondary }}>{`  (${pass1Hits} fast · ${pass2Hits} deep search)`}</span>
         </span>
         {warnings.length > 0 && (
           <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
@@ -220,6 +248,11 @@ export default function ReconciliationCard() {
         {unresolvedUrl.length > 0 && (
           <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
             {`● ${unresolvedUrl.length} link${unresolvedUrl.length === 1 ? '' : 's'} couldn't be resolved — try again`}
+          </span>
+        )}
+        {unresolvedVersion.length > 0 && (
+          <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
+            {`● ${unresolvedVersion.length} song${unresolvedVersion.length === 1 ? '' : 's'} — found a different version`}
           </span>
         )}
         {unresolvedData.length > 0 && (

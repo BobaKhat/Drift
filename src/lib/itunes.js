@@ -277,7 +277,12 @@ async function itunesPreviewResults(query) {
 async function verifiedDeezerLookup(artist, title, expectedDurationSec) {
   let data
   try {
-    const q = `artist:"${artist}" track:"${title}"`
+    // Clean the artist/title the SAME way the art query does (firstArtist + cleanTitle) BEFORE
+    // building Deezer's structured query. A raw multi-artist string ("A, B, C, …") plus a
+    // feat-suffixed title over-constrains artist:"…" track:"…" to zero hits — e.g. Calvin Harris'
+    // "Feels" returns nothing raw but resolves perfectly on "Calvin Harris" / "Feels". Verification
+    // below still runs against the FULL expected artist/title, so precision isn't lost.
+    const q = `artist:"${firstArtist(artist)}" track:"${cleanTitle(title)}"`
     const res = await fetch(`/api/deezer/search?q=${encodeURIComponent(q)}&limit=5`)
     if (!res.ok) return null
     data = await res.json()

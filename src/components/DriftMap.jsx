@@ -1259,7 +1259,7 @@ const FIT_MAX_ZOOM = 1.6
 
 function DriftMapInner({ tracks }) {
   const {
-    activePreset, customXFeature, customYFeature, setActivePanel,
+    activePreset, customXFeature, customYFeature, activePanel, setActivePanel,
     buildMode, flowMode, chain, orphanGroups, addHead, connectSong, unlinkAfter, registerMapControls,
     toggleDeck, closeDeck, deckTrackId, importing,
   } = usePlaylistStore()
@@ -1579,6 +1579,10 @@ function DriftMapInner({ tracks }) {
   // rescales every X proportionally (value 50 stays at 50% of W).
   const prevBuildRef = useRef({ tracks: stagedTracks, preset: presetConfig, pad: geom.PAD })
   const repositionTimer = useRef(null)
+  // Bumped whenever the map starts a reposition GLIDE (a preset/orientation change or the import-end
+  // settle) so NebulaLayer can hold its redraw until the songs finish moving instead of snapping the
+  // cloud under them. Only these node-gliding reflows bump it — a plain arrival/fit does not.
+  const [reflowNonce, setReflowNonce] = useState(0)
 
   // Song centres for the density nebula. Same pure function on the same inputs as the rebuild below,
   // so the cloud is drawn from exactly the positions the nodes land on and can't drift out of register
@@ -1601,12 +1605,25 @@ function DriftMapInner({ tracks }) {
   // re-ruling under it. Both settle to the full density layout when the import ends (importing → false
   // clears the freeze and returns the live positions).
   const nebulaFrozen = useRef(new Map()) // song id → frozen cloud position, import only
+  // The freeze basis: which preset/pad the frozen positions were ruled against. The freeze only
+  // exists to hold clouds still against DENSITY re-ruling as the song count climbs — a preset
+  // (orientation) or width change is a deliberate re-layout that the nodes follow with a glide, so
+  // the frozen clouds must be dropped and re-ruled to the new axes or the nebula strands at the old
+  // orientation while the songs move (mid-import filter change).
+  const nebulaBasis = useRef({ preset: presetConfig, pad: geom.PAD })
   const songPositions = useMemo(() => {
     const built = buildNodes(stagedTracks, presetConfig, geom.PAD)
     const lit = litSet ? built.filter((n) => litSet.has(n.id)) : built
     if (!importing) {
       nebulaFrozen.current.clear()
       return lit.map((n) => n.position)
+    }
+    // Orientation/width changed since the freeze was taken → the layout moved. Drop the freeze so
+    // every cloud re-freezes at its new coordinate below and the nebula tracks the songs.
+    const basis = nebulaBasis.current
+    if (basis.preset !== presetConfig || basis.pad !== geom.PAD) {
+      nebulaFrozen.current.clear()
+      nebulaBasis.current = { preset: presetConfig, pad: geom.PAD }
     }
     const frozen = nebulaFrozen.current
     const ids = new Set(lit.map((n) => n.id))
@@ -1685,6 +1702,7 @@ function DriftMapInner({ tracks }) {
       el?.classList.add('drift-repositioning')
       clearTimeout(repositionTimer.current)
       repositionTimer.current = setTimeout(() => el?.classList.remove('drift-repositioning'), 520)
+      setReflowNonce((n) => n + 1) // songs are gliding — tell the nebula to appear after they settle
     }
   }, [stagedTracks, presetConfig, geom.PAD, setNodes, rf])
 
@@ -1702,6 +1720,7 @@ function DriftMapInner({ tracks }) {
     el?.classList.add('drift-repositioning')
     clearTimeout(repositionTimer.current)
     repositionTimer.current = setTimeout(() => el?.classList.remove('drift-repositioning'), 520)
+    setReflowNonce((n) => n + 1) // import-end re-rule glides every song — nebula settles in behind it
     setNodes((prev) => prev.map((n) => {
       const b = builtById.get(n.id)
       const data = n.data.appearing ? { ...n.data, appearing: false } : n.data
@@ -1899,11 +1918,13 @@ function DriftMapInner({ tracks }) {
   // The set-builder panel isn't closeable while building (Decision Log #53), so a pane click only
   // dismisses panels outside build mode. It always dismisses an open compatibility card (Decision
   // Log #31 — "disappears on click-elsewhere") and the Deck View.
+  // Guard on the panel itself, not buildMode: buildMode arms ~320ms after the Set Creation panel
+  // opens, so a pane click in that window must not treat the (still-open) set builder as "closeable".
   const handlePaneClick = useCallback(() => {
     setSelectedWire(null)
     closeDeck()
-    if (!buildMode) setActivePanel(null)
-  }, [buildMode, setActivePanel, closeDeck])
+    if (activePanel !== 'sets') setActivePanel(null)
+  }, [activePanel, setActivePanel, closeDeck])
 
   // Bridge a tail socket's pointerdown (in TrackNode) to the drag overlay's imperative handle.
   const startWireDrag = useCallback((sourceId, cardinal, event) => {
@@ -2131,7 +2152,7 @@ function DriftMapInner({ tracks }) {
           content is inserted first and the crosshair stays on top of the cloud; both sit below the
           nodes (ViewportPortal content renders under the node layer) and above the card's line grid,
           which is a CSS background on the wrapper below everything. */}
-      <NebulaLayer songPositions={songPositions} width={geom.W} height={H} instant={importing} />
+      <NebulaLayer songPositions={songPositions} width={geom.W} height={H} instant={importing} reflowNonce={reflowNonce} />
       <AxisLayer preset={presetConfig} geom={geom} />
       {/* Stack badges (Slice 14): one per cluster of ≥2 overlapping songs, floating above the
           representative. Rendered into the pane's ViewportPortal so they pan/zoom with the map; each is

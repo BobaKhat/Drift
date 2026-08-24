@@ -127,6 +127,11 @@ async function runCascade(artist, title, spotifyDuration = null, timeoutMs = und
   const variations = []   // ordered unique {artist, title} actually queried — hover detail
   const firedSlots = []   // the V-slot indices (1–4) that ran as distinct queries — for logs
   let retriedCount = 0
+  // First SoundNet hit rejected purely by the duration guard, if any. When the whole cascade fails
+  // this lets the caller tell "SoundNet had the track but at a different length" (→ a version
+  // mismatch) apart from "SoundNet returned nothing at all" (→ no audio data). Searched-vs-matched
+  // plus both durations, pre-formatted for the reconciliation panel.
+  let durationReject = null
 
   // Pass 2 skips firing V1 but must still dedup against it: pre-seed V1's query so any later
   // variation that collapses to the same string is skipped, not re-fired as a duplicate.
@@ -177,12 +182,39 @@ async function runCascade(artist, title, spotifyDuration = null, timeoutMs = und
     await resolveItunes()
     const foundTitle = itunes?.trackName
 
-    // Duration guard: if we have a Spotify duration, reject any SoundNet result whose
-    // duration deviates by more than 15 seconds — it's a different version.
+    // Duration guard: reject any SoundNet result whose duration deviates by more than 15s from a
+    // reference — it's a different version. Spotify's duration is the preferred reference; when the
+    // import didn't supply one (spotifyDuration null), fall back to the resolved iTunes duration.
+    // Same 15s threshold, same reject behavior regardless of source. When NEITHER reference is
+    // available there's nothing to check against: accept the hit but mark it _unverifiedDuration
+    // (underscore-prefixed so featuresToStore strips it — internal flag, never written to the DB).
     const snDur = features.duration
-    if (spotifyDuration != null && snDur != null && Math.abs(snDur - spotifyDuration) > 15) {
-      console.log(`[drift]   ${pad} rejected (duration mismatch: Spotify ${fmtDuration(spotifyDuration)} vs SoundNet ${fmtDuration(snDur)})`)
-      continue
+    const itunesDur = itunes?.durationMs != null ? itunes.durationMs / 1000 : null
+    const refDur = spotifyDuration ?? itunesDur
+    const refSource = spotifyDuration != null ? 'Spotify' : itunesDur != null ? 'iTunes' : null
+    if (refDur != null) {
+      if (snDur != null && Math.abs(snDur - refDur) > 15) {
+        console.log(`[drift]   ${pad} rejected (duration mismatch: ${refSource} ${fmtDuration(refDur)} vs SoundNet ${fmtDuration(snDur)})`)
+        // Remember the first duration-guard rejection so a cascade that never lands can be reported
+        // as a version mismatch rather than a plain miss. "Matched" prefers SoundNet's own returned
+        // metadata, falling back to the query we sent.
+        if (!durationReject) {
+          durationReject = {
+            searchedArtist: artist,
+            searchedTitle: title,
+            matchedArtist: features._matchedArtist ?? step.artist,
+            matchedTitle: features._matchedTitle ?? step.title,
+            soundnetDurationFmt: fmtDuration(snDur),
+            referenceDurationFmt: fmtDuration(refDur),
+            referenceSource: refSource,
+          }
+        }
+        continue
+      }
+      console.log(`[drift]   ${pad} duration reference: ${refSource} ${fmtDuration(refDur)}`)
+    } else {
+      console.log(`[drift]   ${pad} duration unverified (no Spotify or iTunes reference) — accepting`)
+      features._unverifiedDuration = true
     }
 
     if (foundTitle == null) {
@@ -231,7 +263,7 @@ async function runCascade(artist, title, spotifyDuration = null, timeoutMs = und
   console.log(
     `[drift]   attempted ${variations.length} distinct quer${variations.length === 1 ? 'y' : 'ies'} of 4 variation slots (fired ${firedLabel}), none accepted → unresolved`,
   )
-  return { features: null, itunes, usedArtist: artist, usedTitle: title, retriedCount, variationIndex: null, variations }
+  return { features: null, itunes, usedArtist: artist, usedTitle: title, retriedCount, variationIndex: null, variations, durationReject }
 }
 
 // Format seconds as M:SS for duration display
@@ -247,7 +279,8 @@ function fmtDuration(sec) {
 // demo data) can reuse the same caching/dedup path without re-parsing a string.
 //
 // Returns the Supabase row augmented with _meta: { versionWarning, retriedCount,
-// variationIndex, variations } for the reconciliation layer. _meta is NOT stored in the DB.
+// variationIndex, variations, durationReject } for the reconciliation layer. _meta is NOT stored
+// in the DB.
 export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs, v1Only = false, skipV1 = false } = {}) {
   // Return cached result if available (.limit(1) tolerates duplicate rows gracefully)
   const { data: rows } = await supabase
@@ -378,6 +411,10 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
       retriedCount: cascade.retriedCount,
       variationIndex: cascade.variationIndex,
       variations: cascade.variations,
+      // Present only on a failed cascade where a SoundNet hit existed but every hit was rejected by
+      // the duration guard — lets the reconciliation panel show "Found a different version" (searched
+      // vs matched + both durations) instead of the plain "no audio data" line.
+      durationReject: cascade.durationReject ?? null,
     },
   }
 }
