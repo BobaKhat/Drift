@@ -192,13 +192,7 @@ html, body, #root {
   }
 }
 
-/* —— Import status chip (two-pass import) —————————————————————————————————————————————————————
-   The little dot on the non-blocking status chip pulses while the background pass-2 cascade runs, so
-   the chip reads as "still working" without a spinner. Reduced-motion keeps it a steady lit dot. */
-@keyframes driftStatusPulse {
-  0%, 100% { opacity: 0.35; transform: scale(0.82); }
-  50%      { opacity: 1;    transform: scale(1); }
-}
+/* —— Import status chip ————————————————————————————————————————————————————————————————————— */
 .drift-status-chip { animation: driftStatusIn 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 @keyframes driftStatusIn {
   0% { opacity: 0; transform: translate(-50%, 12px); }

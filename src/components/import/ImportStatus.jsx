@@ -2,30 +2,23 @@ import { usePlaylistStore } from '../../store/usePlaylistStore'
 import { C, FONT, NEO_BAR_BG, NEO_BAR_SHADOW, NEO_BAR_EDGE } from './tokens'
 
 // Non-blocking import status chip. It floats over the bottom of the map and never intercepts pointer
-// events — the map stays fully interactive. The two-pass structure is deliberately INVISIBLE here:
-// everything reads off one monotonic counter (importMapped = songs actually on the map, out of
-// importTotal = songs pasted), so the number never resets or jumps backward as the passes hand off.
-//   pass 1 — "Mapping your music · N of TOTAL"        (N = songs plotted so far)
-//   pass 2 — "Still searching · (TOTAL − N) left"     (songs not yet on the map)
-//   done   — "N of TOTAL mapped"                      (held briefly, then the chip dismisses)
+// events — the map stays fully interactive. Everything reads off one monotonic counter (importMapped
+// = songs actually on the map, out of importTotal = songs pasted), so the number never resets.
+//   mapping — "Mapping your music · N of TOTAL"        (N = songs plotted so far)
+//   done    — "N of TOTAL mapped"                      (held briefly, then the chip dismisses)
 // Renders nothing when no import is in flight (importPhase === null).
 export default function ImportStatus() {
   const { importPhase, importTotal, importMapped } = usePlaylistStore()
   if (!importPhase || importTotal <= 0) return null
 
-  const isPass2 = importPhase === 'pass2'
   const isDone = importPhase === 'done'
-  // "left" can never read negative even if mapped momentarily leads total (duplicate-line edge cases).
-  const left = Math.max(0, importTotal - importMapped)
 
-  // label = the primary phrase; detail = the count, kept in the secondary tone during the passes.
+  // label = the primary phrase; detail = the count, kept in the secondary tone while mapping.
   // On completion the whole message IS the count, so it takes the primary tone and drops the label.
-  const label = isDone ? null : (isPass2 ? 'Still searching' : 'Mapping your music')
+  const label = isDone ? null : 'Mapping your music'
   const detail = isDone
     ? `${importMapped} of ${importTotal} mapped`
-    : isPass2
-      ? `${left} left`
-      : `${importMapped} of ${importTotal}`
+    : `${importMapped} of ${importTotal}`
 
   return (
     <div
@@ -65,9 +58,6 @@ export default function ImportStatus() {
             background: isDone ? C.green : C.accent1,
             boxShadow: `0 0 8px ${isDone ? C.green : C.accent1}`,
             flexShrink: 0,
-            // Pass 2 runs quietly in the background, so its dot pulses ("still working"); pass 1 and the
-            // completion read keep a steady lit dot.
-            animation: isPass2 ? 'driftStatusPulse 1.4s ease-in-out infinite' : undefined,
           }}
         />
         {label && <span style={{ fontSize: 13, fontWeight: 500, color: C.textPrimary }}>{label}</span>}

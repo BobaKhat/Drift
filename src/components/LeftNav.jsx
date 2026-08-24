@@ -530,6 +530,13 @@ export default function LeftNav() {
           zIndex: 15,
           transform: activePanel ? 'translateX(0)' : `translateX(-${PANEL_LEFT + PANEL_W}px)`,
           transition: 'transform 300ms ease-out',
+          // Pre-promote the panel to its own compositor layer so the slide runs on the compositor
+          // thread — unaffected by the main-thread work the same click kicks off (the store update
+          // re-renders the map + mounts the panel content). Without this the layer is created lazily
+          // at click time and the first frames of the slide drop, which reads as a rough/janky open.
+          // This is the intended use of will-change: a single element that transforms on every toggle.
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
           pointerEvents: activePanel ? 'auto' : 'none',
           display: 'flex',
           flexDirection: 'column',

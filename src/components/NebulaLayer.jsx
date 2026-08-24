@@ -121,12 +121,20 @@ const zoomFade = (zoom, overview) => {
 const FADE_OUT_MS = 200
 const FADE_IN_MS = 400
 
+// A preset/orientation change glides every node to a new position over ~500ms (see
+// .drift-repositioning in index.css). On such a reflow the cloud must not travel WITH the nodes —
+// during a live import it would otherwise snap in place at the instant-redraw debounce (160ms),
+// jumping under songs that are still sliding. Instead the cloud fades out at once and holds its
+// redraw+fade-in until the songs have SETTLED, so the gas arrives behind the finished layout.
+// Matched to the node glide so the fade-in begins right as the songs stop.
+const SETTLE_DELAY_MS = 500
+
 // `songPositions` is the canvas-space centres of the songs that should GIVE OFF gas — already
 // filtered by the caller (flow mode narrows it to the chain), so this component never needs to know
 // what a chain is. Node origin is [0.5, 0.5], so a node's position IS its centre. The array's
 // identity is the redraw trigger, so it must come from a memo that changes only when the set or the
 // positions do — never from the live `nodes` array, which churns on hover, selection and dimming.
-export default function NebulaLayer({ songPositions, width, height, instant = false }) {
+export default function NebulaLayer({ songPositions, width, height, instant = false, reflowNonce = 0 }) {
   const wrapRef = useRef(null)
   const canvasRef = useRef(null)
   const store = useStoreApi()
@@ -134,6 +142,12 @@ export default function NebulaLayer({ songPositions, width, height, instant = fa
   // re-runs the redraw effect on its own — only an actual songPositions/size change redraws (below).
   const instantRef = useRef(instant)
   instantRef.current = instant
+  // `reflowNonce` bumps each time the map re-rules every position for a preset/orientation change (or
+  // the import-end settle) and glides the nodes over. Tracked so the redraw effect can tell that kind
+  // of change apart from an ordinary song arrival and run the settle crossfade instead of snapping.
+  const reflowNonceRef = useRef(reflowNonce)
+  const settleTimerRef = useRef(null)
+  const settlingRef = useRef(false)
 
   // Zoom fade rides the wrapper; the breath rides the middle element (CSS-only, see index.css); the
   // preset crossfade rides the canvas. One opacity per element, multiplied by the browser, so no
@@ -241,6 +255,31 @@ export default function NebulaLayer({ songPositions, width, height, instant = fa
       return () => cancelAnimationFrame(raf)
     }
 
+    // Reflow (preset/orientation change or import-end settle): the nodes glide to new positions over
+    // ~500ms. Fade the stale cloud out now, then redraw + fade in only AFTER they've settled, so the
+    // gas appears behind the finished layout instead of racing (or snapping under) the moving songs.
+    // The timer lives in a ref, not the effect cleanup, so an ordinary arrival redraw landing during
+    // the reorientation can't cancel it — and `settlingRef` makes that arrival skip its own snap.
+    const isReflow = reflowNonce !== reflowNonceRef.current
+    reflowNonceRef.current = reflowNonce
+    if (isReflow) {
+      clearTimeout(settleTimerRef.current)
+      settlingRef.current = true
+      canvas.style.transition = `opacity ${FADE_OUT_MS}ms ease-in`
+      canvas.style.opacity = '0'
+      settleTimerRef.current = setTimeout(() => {
+        if (!canvasRef.current) return
+        draw()
+        canvas.style.transition = `opacity ${FADE_IN_MS}ms ease-out`
+        canvas.style.opacity = '1'
+        settlingRef.current = false
+      }, SETTLE_DELAY_MS)
+      return
+    }
+    // A reflow settle is mid-flight — ignore the incidental songPositions churn of a song landing
+    // during the reorientation so it doesn't pull the cloud in before the glide completes.
+    if (settlingRef.current) return
+
     // Live import: songs stream in one at a time, so songPositions changes constantly. Running the
     // fade-to-black crossfade on each would blink the cloud out and back over and over — the "blinking"
     // bug. Instead, update the field IN PLACE at full opacity (the gas just grows with the songs), and
@@ -262,7 +301,7 @@ export default function NebulaLayer({ songPositions, width, height, instant = fa
       canvas.style.opacity = '1'
     }, FADE_OUT_MS)
     return () => clearTimeout(t)
-  }, [songPositions, width, height])
+  }, [songPositions, width, height, reflowNonce])
 
   return (
     <ViewportPortal>
