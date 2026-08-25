@@ -193,3 +193,13 @@ export async function retryUnresolved(artist, title) {
   if (!track || track.status === 'unanalyzed') return null
   return track
 }
+
+// "Use this version" (reconciliation, version rows only): re-run the lookup on the ORIGINAL artist/
+// title with acceptVersion, which accepts the first SoundNet hit as-is — the same match the duration
+// guard rejected — and stamps user_accepted_version on the stored row. Returns the analyzed track, or
+// null if SoundNet returns nothing this time (transient miss).
+export async function acceptVersion(artist, title) {
+  const track = await analyzeTrackParts(artist, title, { timeoutMs: RETRY_TIMEOUT_MS, acceptVersion: true })
+  if (!track || track.status === 'unanalyzed') return null
+  return track
+}

@@ -98,7 +98,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // later variation that collapses to the same query as V1 (e.g. V4=orig+strip when the title has no
 // strippable suffix) is skipped rather than fired as a duplicate — exactly as if V1 had run.
 // Mutually exclusive with v1Only; the variation logic, acceptance, and dedup rules are untouched.
-async function runCascade(artist, title, spotifyDuration = null, timeoutMs = undefined, v1Only = false, skipV1 = false) {
+async function runCascade(artist, title, spotifyDuration = null, timeoutMs = undefined, v1Only = false, skipV1 = false, acceptVersion = false) {
   console.log(`[drift] [cascade] "${artist}" – "${title}"${v1Only ? ' (V1 only)' : skipV1 ? ' (V2+)' : ''}`)
 
   // iTunes starts immediately and runs in parallel with SoundNet calls.
@@ -181,6 +181,14 @@ async function runCascade(artist, title, spotifyDuration = null, timeoutMs = und
     // SoundNet hit — corroborate with iTunes before accepting
     await resolveItunes()
     const foundTitle = itunes?.trackName
+
+    // User override ("Use this version"): accept the FIRST SoundNet hit as-is, skipping the duration
+    // guard AND the iTunes corroboration below. The user has already seen exactly what SoundNet
+    // matched (the version-mismatch row) and chosen to keep it, so second-guessing it would be wrong.
+    if (acceptVersion) {
+      console.log(`[drift]   ${pad} SoundNet hit — accepted by user override (Use this version) [variation ${index}]`)
+      return { features, itunes, usedArtist: step.artist, usedTitle: step.title, retriedCount: isOrig ? 0 : retriedCount, variationIndex: index, variations }
+    }
 
     // Duration guard: reject any SoundNet result whose duration deviates by more than 15s from a
     // reference — it's a different version. Spotify's duration is the preferred reference; when the
@@ -281,7 +289,7 @@ function fmtDuration(sec) {
 // Returns the Supabase row augmented with _meta: { versionWarning, retriedCount,
 // variationIndex, variations, durationReject } for the reconciliation layer. _meta is NOT stored
 // in the DB.
-export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs, v1Only = false, skipV1 = false } = {}) {
+export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs, v1Only = false, skipV1 = false, acceptVersion = false } = {}) {
   // Return cached result if available (.limit(1) tolerates duplicate rows gracefully)
   const { data: rows } = await supabase
     .from('tracks')
@@ -303,7 +311,7 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
 
   // Cascade handles SoundNet (original + variations) and iTunes corroboration together.
   // iTunes runs in parallel inside runCascade; result is always resolved before return.
-  const cascade = await runCascade(artist, title, spotifyDuration, timeoutMs, v1Only, skipV1)
+  const cascade = await runCascade(artist, title, spotifyDuration, timeoutMs, v1Only, skipV1, acceptVersion)
   const { itunes } = cascade
   const features = cascade.features  // null if all variations failed/rejected
   // _matchedTitle/_matchedArtist are self-verification fields used inside runCascade only.
@@ -378,6 +386,11 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
     source: 'soundnet',
     analyzed_at: new Date().toISOString(),
     status: features ? (features.status ?? 'analyzed') : 'unanalyzed',
+    // Persisted override flag: set only when the user hit "Use this version" and a hit was accepted,
+    // recording that they knowingly kept a match the duration guard would have rejected. NOT
+    // underscore-prefixed, so it survives featuresToStore and is written to the DB (needs a
+    // `user_accepted_version boolean` column on `tracks`).
+    ...(acceptVersion && features ? { user_accepted_version: true } : {}),
   }
 
   // UPDATE existing row if one already exists (avoids duplicate inserts on retry).

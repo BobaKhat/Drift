@@ -7,7 +7,7 @@ import {
   renamePlaylist,
   ensureDemoLibrary,
 } from '../lib/playlists'
-import { parseInput, runImport, retryUnresolved } from '../lib/import'
+import { parseInput, runImport, retryUnresolved, acceptVersion as acceptVersionLib } from '../lib/import'
 import { saveSet } from '../lib/sets'
 import { setArtResolvedHandler } from '../lib/preview'
 import { getUserId, hasSeenDemo, markSeenDemo } from '../lib/identity'
@@ -487,6 +487,25 @@ export function PlaylistProvider({ children }) {
     return true
   }, [activePlaylistId, appendTrackLive])
 
+  // "Use this version" on a version-mismatch row: re-run the lookup accepting the SoundNet match as-is
+  // (overriding the duration guard) and stamping user_accepted_version on the row. On success the track
+  // links + plots live and leaves the unresolved list — same path as a retry, minus the version warning.
+  const acceptVersion = useCallback(async (originalText, artist, title) => {
+    const track = await acceptVersionLib(artist, title)
+    if (!track) return false
+    const playlistId = importPlaylistIdRef.current ?? activePlaylistId
+    if (playlistId) await appendTrackLive(playlistId, track)
+    setReconciliation((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        mappedCount: (prev.mappedCount ?? 0) + 1,
+        unresolved: prev.unresolved.filter((u) => u.originalText !== originalText),
+      }
+    })
+    return true
+  }, [activePlaylistId, appendTrackLive])
+
   const value = {
     playlists,
     activePlaylistId,
@@ -507,6 +526,7 @@ export function PlaylistProvider({ children }) {
     loadDemo,
     finishReconcile,
     retry,
+    acceptVersion,
     activePanel,
     setActivePanel,
     togglePanel,

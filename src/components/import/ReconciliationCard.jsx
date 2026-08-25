@@ -15,7 +15,7 @@ const MAX_RETRIES = 2
 // One editable unresolved row. Prefills with the ORIGINAL artist/title (not the last
 // variation SoundNet tried) so the user edits from what they actually pasted; the list of
 // variations already attempted is available as hover detail on the row.
-function UnresolvedRow({ entry, onRetry }) {
+function UnresolvedRow({ entry, onRetry, onAccept }) {
   // Prefill from the original parsed artist/title.
   const [artist, setArtist] = useState(entry.artist)
   const [title, setTitle] = useState(entry.title)
@@ -29,8 +29,24 @@ function UnresolvedRow({ entry, onRetry }) {
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const [attempts, setAttempts] = useState(0)
+  const [accepting, setAccepting] = useState(false) // "Use this version" in flight (version rows only)
 
   const exhausted = attempts >= MAX_RETRIES
+
+  // "Use this version" (version rows): accept the SoundNet match as-is on the ORIGINAL artist/title —
+  // ignores any edits in the inputs, since it's keeping the version SoundNet already matched. On
+  // success the row unmounts (plotted on the map); on failure it flags the transient hint.
+  async function accept() {
+    setAccepting(true)
+    setFailed(false)
+    let ok = false
+    try {
+      ok = await onAccept(entry.originalText, entry.artist, entry.title)
+    } catch (err) {
+      console.error('[drift] use-this-version failed:', err)
+    }
+    if (!ok) { setFailed(true); setAccepting(false) }
+  }
 
   async function retry() {
     if (!artist.trim() || !title.trim()) { setFailed(true); return }
@@ -78,9 +94,13 @@ function UnresolvedRow({ entry, onRetry }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <span title={triedTooltip} style={{ fontFamily: FONT, fontSize: 12, color: C.textSecondary, cursor: triedTooltip ? 'help' : 'default' }}>
           {entry.originalText}
-          {exhausted
+          {/* "Not found" copy is only truthful for genuine no-data rows. A version row's track WAS
+              found (the duration guard rejected it), so it never shows this — its failure hint (below)
+              is worded for a transient re-fetch failure instead. */}
+          {entry.kind !== 'version' && (exhausted
             ? <span style={{ color: C.amber }}>{'  · not found in SoundNet — edit artist/title and resubmit'}</span>
-            : failed && <span style={{ color: C.amber }}>{'  · still not found'}</span>}
+            : failed && <span style={{ color: C.amber }}>{'  · still not found'}</span>)}
+          {entry.kind === 'version' && failed && <span style={{ color: C.amber }}>{'  · couldn’t reach SoundNet — try again'}</span>}
         </span>
         {!failed && !exhausted && (
           entry.kind === 'url'
@@ -123,30 +143,68 @@ function UnresolvedRow({ entry, onRetry }) {
           </div>
         </div>
       )}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <input value={artist} onChange={onEdit(setArtist)} placeholder="Artist" style={smallInput} />
-        <input value={title} onChange={onEdit(setTitle)} placeholder="Title" style={smallInput} />
-        <button
-          onClick={retry}
-          disabled={busy || exhausted}
-          style={{
-            height: 38,
-            padding: '0 16px',
-            borderRadius: RADIUS.pill,
-            background: 'transparent',
-            border: `1px solid ${C.accent1}`,
-            color: C.accent1,
-            fontFamily: FONT,
-            fontSize: 13,
-            fontWeight: 500,
-            opacity: exhausted ? 0.45 : 1,
-            cursor: busy ? 'wait' : exhausted ? 'not-allowed' : 'pointer',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {busy ? '…' : 'Retry'}
-        </button>
-      </div>
+      {(() => {
+        const retryBtn = (
+          <button
+            onClick={retry}
+            disabled={busy || exhausted}
+            style={{
+              height: 38,
+              padding: '0 16px',
+              borderRadius: RADIUS.pill,
+              background: 'transparent',
+              border: `1px solid ${C.accent1}`,
+              color: C.accent1,
+              fontFamily: FONT,
+              fontSize: 13,
+              fontWeight: 500,
+              opacity: exhausted ? 0.45 : 1,
+              cursor: busy ? 'wait' : exhausted ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
+            }}
+          >
+            {busy ? '…' : 'Retry'}
+          </button>
+        )
+        return (
+          <>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input value={artist} onChange={onEdit(setArtist)} placeholder="Artist" style={{ ...smallInput, minWidth: 0 }} />
+              <input value={title} onChange={onEdit(setTitle)} placeholder="Title" style={{ ...smallInput, minWidth: 0 }} />
+              {/* Non-version rows keep Retry inline; version rows move both actions to their own row below. */}
+              {entry.kind !== 'version' && retryBtn}
+            </div>
+            {entry.kind === 'version' && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {/* Accept SoundNet's match, overriding the duration guard. Same outline weight as
+                    Retry — the two are equal-weight choices, not primary/secondary. */}
+                <button
+                  onClick={accept}
+                  disabled={accepting || busy}
+                  style={{
+                    flex: 1,
+                    height: 38,
+                    padding: '0 16px',
+                    borderRadius: RADIUS.pill,
+                    background: 'transparent',
+                    border: `1px solid ${C.accent1}`,
+                    color: C.accent1,
+                    fontFamily: FONT,
+                    fontSize: 13,
+                    fontWeight: 500,
+                    cursor: accepting ? 'wait' : 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {accepting ? '…' : 'Use this version'}
+                </button>
+                {retryBtn}
+              </div>
+            )}
+          </>
+        )
+      })()}
     </div>
   )
 }
@@ -206,7 +264,7 @@ function VersionWarningRow({ w }) {
 // retried (each retry runs the V2–V4 cascade and, on success, links + plots live). It only appears
 // when something's left to sort out; a fully-resolved import shows no panel.
 export default function ReconciliationCard() {
-  const { reconciliation, finishReconcile, retry, playlists, activePlaylistId } = usePlaylistStore()
+  const { reconciliation, finishReconcile, retry, acceptVersion, playlists, activePlaylistId } = usePlaylistStore()
 
   // Prefill the rename field with the playlist's current (auto-assigned) name.
   const currentName = playlists.find((p) => p.id === activePlaylistId)?.name
@@ -225,63 +283,71 @@ export default function ReconciliationCard() {
   const unresolvedData = unresolved.filter((u) => u.kind !== 'url' && u.kind !== 'version')
 
   return (
-    <ModalCard width={570} style={{ gap: 24, alignItems: 'stretch' }}>
-      <h1 style={{ fontFamily: FONT, fontSize: 28, fontWeight: 600, color: C.textPrimary, letterSpacing: '-1px', margin: 0 }}>
+    // Fixed, viewport-bounded height: the modal is the SAME size no matter how many warnings/retries
+    // are inside, and can never grow into the browser's top/bottom edges. On short screens the
+    // min() clamps it to the viewport (minus a margin); the variable content scrolls internally.
+    <ModalCard width={570} style={{ gap: 20, alignItems: 'stretch', height: 'min(620px, calc(100vh - 48px))' }}>
+      <h1 style={{ fontFamily: FONT, fontSize: 28, fontWeight: 600, color: C.textPrimary, letterSpacing: '-1px', margin: 0, flexShrink: 0 }}>
         Your map is ready
       </h1>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
         <label style={{ fontFamily: FONT, fontSize: 12, color: C.textSecondary }}>Playlist name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} style={{ ...wellStyle, height: 44 }} />
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {/* Mapped total — songs plotted on the map by the import sweep. */}
-        <span style={{ fontFamily: FONT, fontSize: 14, color: C.green }}>
-          {`● ${mappedCount} song${mappedCount === 1 ? '' : 's'} mapped`}
-        </span>
+      {/* Everything variable (summary counts, version warnings, retry rows) shares ONE scroll region
+          that flexes to fill the fixed-height card, so the modal's overall size never changes with the
+          amount of content — only this middle area scrolls. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {/* Mapped total — songs plotted on the map by the import sweep. */}
+          <span style={{ fontFamily: FONT, fontSize: 14, color: C.green }}>
+            {`● ${mappedCount} song${mappedCount === 1 ? '' : 's'} mapped`}
+          </span>
+          {warnings.length > 0 && (
+            <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
+              {`● ${warnings.length} song${warnings.length === 1 ? '' : 's'} matched a different version`}
+            </span>
+          )}
+          {unresolvedUrl.length > 0 && (
+            <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
+              {`● ${unresolvedUrl.length} link${unresolvedUrl.length === 1 ? '' : 's'} couldn't be resolved — try again`}
+            </span>
+          )}
+          {unresolvedVersion.length > 0 && (
+            <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
+              {`● ${unresolvedVersion.length} song${unresolvedVersion.length === 1 ? '' : 's'} — found a different version`}
+            </span>
+          )}
+          {unresolvedData.length > 0 && (
+            <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
+              {`● ${unresolvedData.length} song${unresolvedData.length === 1 ? '' : 's'} — no audio data available`}
+            </span>
+          )}
+        </div>
+
+        {/* Version mismatch warnings — shown inline so the user can review before finishing */}
         {warnings.length > 0 && (
-          <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
-            {`● ${warnings.length} song${warnings.length === 1 ? '' : 's'} matched a different version`}
-          </span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {warnings.map((w, i) => (
+              <VersionWarningRow key={w.originalText ?? i} w={w} />
+            ))}
+          </div>
         )}
-        {unresolvedUrl.length > 0 && (
-          <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
-            {`● ${unresolvedUrl.length} link${unresolvedUrl.length === 1 ? '' : 's'} couldn't be resolved — try again`}
-          </span>
-        )}
-        {unresolvedVersion.length > 0 && (
-          <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
-            {`● ${unresolvedVersion.length} song${unresolvedVersion.length === 1 ? '' : 's'} — found a different version`}
-          </span>
-        )}
-        {unresolvedData.length > 0 && (
-          <span style={{ fontFamily: FONT, fontSize: 14, color: C.amber }}>
-            {`● ${unresolvedData.length} song${unresolvedData.length === 1 ? '' : 's'} — no audio data available`}
-          </span>
+
+        {/* Unresolved rows — prefilled with the original artist/title, variations on hover. A successful
+            retry links + plots the song on the map live and drops it from this list. */}
+        {unresolved.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {unresolved.map((u) => (
+              <UnresolvedRow key={u.originalText} entry={u} onRetry={retry} onAccept={acceptVersion} />
+            ))}
+          </div>
         )}
       </div>
 
-      {/* Version mismatch warnings — shown inline so the user can review before finishing */}
-      {warnings.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {warnings.map((w, i) => (
-            <VersionWarningRow key={w.originalText ?? i} w={w} />
-          ))}
-        </div>
-      )}
-
-      {/* Unresolved rows — prefilled with the original artist/title, variations on hover. A successful
-          retry links + plots the song on the map live and drops it from this list. */}
-      {unresolved.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
-          {unresolved.map((u) => (
-            <UnresolvedRow key={u.originalText} entry={u} onRetry={retry} />
-          ))}
-        </div>
-      )}
-
-      <div style={{ display: 'flex', gap: 15 }}>
+      <div style={{ display: 'flex', gap: 15, flexShrink: 0 }}>
         <PrimaryButton
           onClick={() => finishReconcile(name.trim() || currentName || defaultName())}
           style={{ flex: 1 }}
