@@ -583,6 +583,14 @@ function TrackInfoBar({ track }) {
 // —— Playback disc (Decision Log #61) — album art as a vinyl with a 0% orange progress ring —————
 // Fully fluid: a square tile whose height fills the bento row (alignSelf stretch + aspect-ratio),
 // with all internals (ring via SVG viewBox, art, spindle) sized in %, so it scales with the row.
+//
+// Interactive spin-to-scrub: grab the platter and drag around its center to scrub the preview —
+// clockwise seeks forward, counter-clockwise reverses — with the disc following your finger 1:1. One
+// full turn = SECONDS_PER_REV seconds, matching the idle spin rate so grabbing a spinning record
+// feels continuous. Rotation is rAF-driven (not the old CSS keyframe) so idle spin and manual scrub
+// share one transform with no snap on hand-off.
+const SECONDS_PER_REV = 8 // seconds of audio per full disc revolution while scrubbing (= idle spin rate)
+
 function PlaybackDisc({ track }) {
   const r = 47
   const circ = 2 * Math.PI * r
@@ -590,21 +598,96 @@ function PlaybackDisc({ track }) {
   const active = currentTrackId === track.id      // this track is the one loaded in the engine
   const playing = isPlaying && active
 
-  // currentTime is polled off the engine via rAF while playing (smoother than the 4Hz timeupdate
-  // event) to drive the ring + counter. Paused mid-preview holds the last value; stopping/switching
-  // makes this track inactive → reset to 0.
   const [time, setTime] = useState(0)
-  useEffect(() => {
-    if (!playing) return
-    let raf
-    const tick = () => { setTime(engine.getCurrentTime()); raf = requestAnimationFrame(tick) }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [playing, engine])
-  useEffect(() => { if (!active) setTime(0) }, [active])
+  const [scrubbing, setScrubbing] = useState(false) // drives the grab/grabbing cursor
 
-  // Ring fills over the real preview length (≈30s), falling back to 30 before metadata loads.
-  const dur = active && engine.getDuration() > 0 ? engine.getDuration() : 30
+  // Mirrors of props read inside the rAF loop / pointer handlers, kept fresh so those closures (which
+  // otherwise capture stale values) always see the latest state.
+  const playingRef = useRef(playing); playingRef.current = playing
+  const activeRef = useRef(active); activeRef.current = active
+  const rotationRef = useRef(0)      // current disc angle (deg), rAF-driven
+  const scrubbingRef = useRef(false)
+  const scrubTimeRef = useRef(0)     // target position (s) while dragging
+  const wasPlayingRef = useRef(false)// whether playback was running when the grab started (→ resume on release)
+  const lastAngleRef = useRef(0)     // last pointer angle (rad) around the platter center
+  const artRef = useRef(null)
+  const ringRef = useRef(null)
+
+  // Preview length (≈30s), falling back to 30 before metadata loads.
+  const durNow = () => (activeRef.current && engine.getDuration() > 0 ? engine.getDuration() : 30)
+
+  // One rAF loop drives BOTH the idle spin and the scrub. It's owned by an effect keyed on
+  // playing/scrubbing so React starts it and — crucially — CANCELS it on cleanup: managing the raf id
+  // by hand left it stuck non-zero and permanently blocked a restart. Rotation is written straight to
+  // the DOM (no per-frame React render); only the counter/ring `time` goes through state.
+  useEffect(() => {
+    if (!playing && !scrubbing) return undefined
+    let raf = 0
+    let last = 0
+    const frame = (ts) => {
+      const dt = last ? Math.min(ts - last, 100) : 16
+      last = ts
+      if (scrubbingRef.current) {
+        // Just tell the worklet where the finger is; it glides its playhead there and resamples the
+        // audio in between, so you hear the song follow the drag — forward, slowed, or reversed. The
+        // <audio> element is paused during the gesture (the worklet is the sound source).
+        engine.scrubTo(scrubTimeRef.current)
+        setTime(scrubTimeRef.current)
+      } else {
+        if (playingRef.current) rotationRef.current += (dt / 8000) * 360 // 8s / turn
+        setTime(engine.getCurrentTime())
+      }
+      if (artRef.current) artRef.current.style.transform = `rotate(${rotationRef.current}deg)`
+      raf = requestAnimationFrame(frame)
+    }
+    raf = requestAnimationFrame(frame)
+    return () => cancelAnimationFrame(raf)
+  }, [playing, scrubbing, engine])
+
+  // Stopping / switching songs makes this track inactive → reset ring, counter and angle to 0.
+  useEffect(() => {
+    if (!active) {
+      scrubbingRef.current = false; setScrubbing(false)
+      rotationRef.current = 0; setTime(0)
+      if (artRef.current) artRef.current.style.transform = 'rotate(0deg)'
+    }
+  }, [active])
+
+  // Pointer angle around the platter center (radians).
+  const angleAt = (e) => {
+    const rect = ringRef.current.getBoundingClientRect()
+    return Math.atan2(e.clientY - (rect.top + rect.height / 2), e.clientX - (rect.left + rect.width / 2))
+  }
+  const onPointerDown = (e) => {
+    if (!activeRef.current) return // nothing loaded yet — hit play first, then scrub
+    e.preventDefault()
+    try { ringRef.current.setPointerCapture(e.pointerId) } catch { /* unsupported */ }
+    scrubbingRef.current = true; setScrubbing(true) // setScrubbing starts the rAF loop via its effect
+    lastAngleRef.current = angleAt(e)
+    scrubTimeRef.current = engine.getCurrentTime()
+    wasPlayingRef.current = playingRef.current
+    engine.beginScrub() // async: decode → worklet; frames scrub silently until it's live (~instant when cached)
+  }
+  const onPointerMove = (e) => {
+    if (!scrubbingRef.current) return
+    const a = angleAt(e)
+    let d = a - lastAngleRef.current
+    if (d > Math.PI) d -= 2 * Math.PI          // shortest-arc wrap so crossing the ±π seam isn't
+    else if (d < -Math.PI) d += 2 * Math.PI    // read as a near-full turn the other way
+    lastAngleRef.current = a
+    rotationRef.current += (d * 180) / Math.PI                     // disc follows the finger 1:1
+    scrubTimeRef.current = Math.max(0, Math.min(scrubTimeRef.current + (d / (2 * Math.PI)) * SECONDS_PER_REV, durNow()))
+  }
+  const endScrub = (e) => {
+    if (!scrubbingRef.current) return
+    scrubbingRef.current = false; setScrubbing(false)
+    // Silence the worklet, seek the <audio> element to where we landed, and resume normal playback if
+    // it was playing when the grab started.
+    engine.endScrub(scrubTimeRef.current, wasPlayingRef.current)
+    try { ringRef.current.releasePointerCapture(e.pointerId) } catch { /* not captured */ }
+  }
+
+  const dur = durNow()
   const progress = Math.min(1, dur > 0 ? time / dur : 0)
   const dashoffset = circ * (1 - progress)
 
@@ -618,38 +701,44 @@ function PlaybackDisc({ track }) {
           rather than the whole tile (the tile is the raised module the platter is machined into) and
           rather than the art itself (the art is opaque and would hide it). What shows is the ring of
           floor between the art's edge and the platter rim, which is exactly where a real spindle well
-          would read. */}
-      <div style={{
-        position: 'relative', width: '74%', aspectRatio: '1 / 1',
-        borderRadius: '50%', background: NEO_SCREEN_BG, boxShadow: NEO_SCREEN_INSET,
-      }}>
-        {/* Progress ring: full faint track + an orange arc that fills clockwise with playback. */}
-        <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
+          would read. This element is the scrub target: pointer drags rotate the art and seek the audio. */}
+      <div
+        ref={ringRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endScrub}
+        onPointerCancel={endScrub}
+        style={{
+          position: 'relative', width: '74%', aspectRatio: '1 / 1',
+          borderRadius: '50%', background: NEO_SCREEN_BG, boxShadow: NEO_SCREEN_INSET,
+          cursor: active ? (scrubbing ? 'grabbing' : 'grab') : 'default',
+          touchAction: 'none', userSelect: 'none',
+        }}
+      >
+        {/* Progress ring: full faint track + an orange arc that fills clockwise with playback.
+            Decorative + non-interactive so pointer drags always reach the platter handler. */}
+        <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)', pointerEvents: 'none' }}>
           <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth="2.6" />
           <circle cx="50" cy="50" r={r} fill="none" stroke={ACCENT} strokeWidth="2.6"
             strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={dashoffset} />
         </svg>
-        {/* Album art record, clipped to a circle inside the ring. Spins while playing (~8s/turn,
-            linear); pausing freezes the angle; stopping (inactive) removes the animation → back to 0. */}
-        <div style={{
+        {/* Album art record, clipped to a circle inside the ring. rotationRef (rAF-driven) writes its
+            transform directly: it spins ~8s/turn while playing, freezes when paused, follows the finger
+            while scrubbing, and resets to 0° when the track goes inactive. */}
+        <div ref={artRef} style={{
           position: 'absolute', inset: '7%', borderRadius: '50%', overflow: 'hidden', background: '#222224',
-          // All-longhand (not the `animation` shorthand) so toggling animationPlayState per render
-          // doesn't clash with a shorthand reset. `none` name = no spin (stopped → snaps back to 0°).
-          animationName: active ? 'driftDiscSpin' : 'none',
-          animationDuration: '8s',
-          animationTimingFunction: 'linear',
-          animationIterationCount: 'infinite',
-          animationPlayState: playing ? 'running' : 'paused',
+          transform: 'rotate(0deg)', willChange: 'transform',
         }}>
           {track.album_art_url
             ? <img src={track.album_art_url} alt="" draggable={false} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
             : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><MusicNote size={20} /></div>}
         </div>
-        {/* Vinyl label + spindle hole. */}
+        {/* Vinyl label + spindle hole. Non-interactive so a grab on the center still scrubs. */}
         <div style={{
           position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)',
           width: '20%', aspectRatio: '1 / 1', borderRadius: '50%', background: CARD,
           border: '1px solid rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          pointerEvents: 'none',
         }}>
           <div style={{ width: '24%', aspectRatio: '1 / 1', borderRadius: '50%', background: '#060606' }} />
         </div>
@@ -775,7 +864,7 @@ function NextUp({ track, nextTrack }) {
         // short to allow anything else.
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'flex-end', gap: 6 }}>
           <div style={{ fontFamily: FONT, fontSize: 14, fontWeight: 600, color: SUB }}>Add to a set</div>
-          <div style={{ fontFamily: FONT, fontSize: 11, color: SUB }}>Chain this song in the Set Builder to see what mixes next.</div>
+          <div style={{ fontFamily: FONT, fontSize: 11, color: SUB }}>Chain this song in the Path Builder to see what mixes next.</div>
         </div>
       )}
     </div>

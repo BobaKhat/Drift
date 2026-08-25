@@ -325,7 +325,7 @@ function ExploreIcon({ active }) {
 
 const NAV_ITEMS = [
   { id: 'playlists', label: 'Playlists', Icon: PlaylistsIcon },
-  { id: 'sets', label: 'Set Creation', Icon: SetCreationIcon },
+  { id: 'sets', label: 'Path Builder', Icon: SetCreationIcon },
   { id: 'explore', label: 'Explore By', Icon: ExploreIcon },
 ]
 
@@ -414,13 +414,13 @@ function SetBuilderMiniBar({ onExpand }) {
     <motion.button
       initial="rest" animate="rest" whileHover={reduce ? undefined : 'hover'}
       onClick={onExpand}
-      title="Expand Set Builder"
+      title="Expand Path Builder"
       style={{
         width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         background: 'none', border: 'none', padding: '0 6px', cursor: 'pointer',
       }}
     >
-      <span style={{ fontFamily: FONT, fontSize: 16, fontWeight: 600, color: '#fff' }}>Set Builder</span>
+      <span style={{ fontFamily: FONT, fontSize: 16, fontWeight: 600, color: '#fff' }}>Path Builder</span>
       {/* Same treatment as an ACTIVE icon-rail button: sunken accent-ringed press surface + orange glyph. */}
       <span style={{ width: 30, height: 30, borderRadius: '50%', background: NEO_BTN_PRESS_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `inset 0 0 0 1.5px ${SELECTED.border}, ${NEO_BTN_PRESS}` }}>
         {/* universal maximize = square outline (restores the panel). Hover swells it a touch — a hint of

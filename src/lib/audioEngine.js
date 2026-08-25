@@ -84,11 +84,56 @@ function ensureGraph() {
   }
 }
 
+// —— Turntable scrub (Web Audio) ——————————————————————————————————————————————————————————————
+// Dragging the playback disc scratches the preview: instead of re-seeking the <audio> element ~60×/s
+// (which machine-guns the decoder into a distorted mess), we decode the preview ONCE into a mono
+// buffer and hand it to a ScrubProcessor AudioWorklet that resamples it at a drag-driven rate — so
+// the pitch bends smoothly and reverses when you spin backward. The <audio> element is paused for the
+// duration and re-seeked to the final position on release, so normal playback continues seamlessly.
+let scrubNode = null              // AudioWorkletNode running scrub-processor
+let workletLoad = null            // one-shot addModule() promise
+let scrubbing = false
+let scrubLoadedUrl = null         // url whose samples are currently loaded in the worklet
+const scrubCache = new Map()      // url -> { data: Float32Array (mono), sampleRate }
+
+async function ensureScrubNode() {
+  ensureGraph()
+  if (!ctx || !analyser) return null
+  if (!workletLoad) {
+    workletLoad = ctx.audioWorklet.addModule(new URL('./scrubProcessor.js', import.meta.url))
+  }
+  await workletLoad
+  if (!scrubNode) {
+    scrubNode = new AudioWorkletNode(ctx, 'scrub-processor')
+    scrubNode.connect(analyser) // into the existing analyser → destination path (feeds the visualizer too)
+  }
+  return scrubNode
+}
+
+// Decode a preview URL to a cached mono Float32Array (decodeAudioData resamples to the context rate,
+// so buffer sampleRate === ctx sampleRate and the worklet's `rate` maps 1:1 to playback speed).
+async function loadScrubBuffer(url) {
+  if (scrubCache.has(url)) return scrubCache.get(url)
+  const res = await fetch(url)
+  const audioBuf = await ctx.decodeAudioData(await res.arrayBuffer())
+  const len = audioBuf.length
+  const mono = new Float32Array(len)
+  const chs = audioBuf.numberOfChannels
+  for (let c = 0; c < chs; c++) {
+    const d = audioBuf.getChannelData(c)
+    for (let i = 0; i < len; i++) mono[i] += d[i] / chs
+  }
+  const entry = { data: mono, sampleRate: audioBuf.sampleRate }
+  scrubCache.set(url, entry)
+  return entry
+}
+
 export const audioEngine = {
   // —— Slice 14 hooks (visualizer + VU meter) ——
   get analyser() { return analyser },              // 256-pt, fast — DeckVisualizer
   get meterAnalyser() { return meterAnalyser },    // 2048-pt, high-res — MeterTile's kick band
   get audioContext() { return ctx },
+  get isScrubbing() { return scrubbing },
 
   // —— State reads ——
   get currentTrackId() { return snap.trackId },
@@ -115,6 +160,66 @@ export const audioEngine = {
 
   pause() { if (el) el.pause() },
 
+  // Scrub to an absolute position (seconds). Clamped to [0, duration] when the duration is known,
+  // else just floored at 0. Used by the interactive playback disc's spin-to-scrub gesture — safe to
+  // call every frame while dragging (setting currentTime on a buffered preview is cheap). No-op if
+  // nothing is loaded yet.
+  seek(seconds) {
+    if (!el || !el.src) return
+    const d = Number.isFinite(el.duration) ? el.duration : 0
+    const t = d > 0 ? Math.max(0, Math.min(seconds, d)) : Math.max(0, seconds)
+    try { el.currentTime = t } catch { /* not seekable until metadata loads */ }
+  },
+
+  // Start a scrub gesture: decode the current preview (once, cached), hand it to the worklet with the
+  // playhead at the current position, pause the <audio> element, and route the worklet's output. Async
+  // (decode + addModule); returns true when the Web-Audio scrub is live, false if it couldn't start
+  // (no context / decode failure) so the caller can fall back to a plain silent seek-on-release.
+  async beginScrub() {
+    if (!el || !el.src) return false
+    try {
+      const node = await ensureScrubNode()
+      if (!node) return false
+      if (ctx.state === 'suspended') await ctx.resume()
+      const entry = await loadScrubBuffer(el.src)
+      // Only ship the (multi-MB) samples when the track actually changed; otherwise just reposition.
+      const startPos = (el.currentTime || 0) * entry.sampleRate
+      if (scrubLoadedUrl !== el.src) {
+        node.port.postMessage({ type: 'load', data: entry.data, pos: startPos })
+        scrubLoadedUrl = el.src
+      } else {
+        node.port.postMessage({ type: 'target', pos: startPos }) // re-seat the follower at the current spot
+      }
+      scrubbing = true
+      el.pause()
+      return true
+    } catch {
+      return false
+    }
+  },
+
+  // Drive the scrub each frame: tell the worklet where the finger is (seconds). It glides its playhead
+  // there and resamples everything in between, so you hear the song track the drag — forward when the
+  // target is ahead, reversed when it's behind. No rate math on this side (that jitter is what made it
+  // sound scratchy); speed and direction fall out of how the target moves.
+  scrubTo(seconds) {
+    if (!scrubNode || !scrubLoadedUrl) return
+    const sr = scrubCache.get(scrubLoadedUrl)?.sampleRate || (ctx && ctx.sampleRate) || 44100
+    scrubNode.port.postMessage({ type: 'target', pos: seconds * sr })
+  },
+
+  // End the gesture: silence the worklet, seek the <audio> element to the final position, and resume
+  // normal playback if it was playing before the grab.
+  endScrub(seconds, resume) {
+    scrubbing = false
+    if (scrubNode) scrubNode.port.postMessage({ type: 'stop' })
+    if (el && el.src) {
+      const d = Number.isFinite(el.duration) ? el.duration : 0
+      try { el.currentTime = d > 0 ? Math.max(0, Math.min(seconds, d)) : Math.max(0, seconds) } catch { /* ignore */ }
+      if (resume) { const p = el.play(); if (p && p.catch) p.catch(() => {}) }
+    }
+  },
+
   // Resume the already-loaded element (the play/pause toggle uses this when the same track is paused).
   resume() {
     if (el && el.src) { const p = el.play(); if (p && p.catch) p.catch(() => {}) }
@@ -122,6 +227,8 @@ export const audioEngine = {
 
   // Full stop + reset (preview ended with no next song, or the deck closed).
   stop() {
+    scrubbing = false
+    if (scrubNode) scrubNode.port.postMessage({ type: 'stop' })
     if (el) { el.pause(); try { el.currentTime = 0 } catch { /* not loaded yet */ } }
     emit({ trackId: null, playing: false, duration: 0 })
   },

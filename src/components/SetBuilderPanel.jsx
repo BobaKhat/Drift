@@ -8,6 +8,7 @@ import {
 } from './import/tokens'
 import { formatSetMeta } from '../lib/setChain'
 import { SongThumb, RowText, TrackMeta, SongCardRow, ROW_ART, ROW_PY, ROW_GAP } from './SongListRow'
+import tutorialVideo from '../assets/path-builder-tutorial.mp4'
 
 // The Set Builder panel (Figma node 658:407). Always open while building, not closeable
 // (Decision Log #53). Renders: title, library-scoped search (Decision Log #56), the connected
@@ -395,12 +396,24 @@ export default function SetBuilderPanel() {
   const showDropdown = open && query.length >= 2
   const empty = chain.length === 0
 
+  // Force the tutorial to play + loop: the `autoPlay muted` attributes alone are unreliable (React can
+  // set `muted` too late for the autoplay gate, and a re-render can leave it paused), so kick it off
+  // imperatively whenever the empty state is showing.
+  const tutorialRef = useRef(null)
+  useEffect(() => {
+    const v = tutorialRef.current
+    if (!empty || !v) return
+    v.muted = true
+    const p = v.play()
+    if (p && p.catch) p.catch(() => {})
+  }, [empty])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, fontFamily: FONT }}>
       {/* Title + minimize (Slice 9 final #5) — collapse the panel to a thin bottom tab for full map
           visibility while staying in build mode. */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 18 }}>
-        <h2 style={{ margin: 0, fontFamily: MONO, fontSize: 24, fontWeight: 600, color: '#fff', lineHeight: 1.1 }}>Set Builder</h2>
+        <h2 style={{ margin: 0, fontFamily: MONO, fontSize: 24, fontWeight: 600, color: '#fff', lineHeight: 1.1 }}>Path Builder</h2>
         {/* Same construction as the toolbar's chevron: a raised button sitting directly on a slab (the
             panel), so it takes the outer-glow recipe rather than the tray buttons' inner bevel — there's
             no trench floor next to it for the outer light to wash out. See the rule atop the NEO_* block.
@@ -470,9 +483,24 @@ export default function SetBuilderPanel() {
       {/* Connected chain — scrolls independently above the pinned Disconnected section (Slice 9
           r2 #5). Empty prompt shows only when there's nothing at all in the set. */}
       {empty ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 8, padding: '0 20px' }}>
-          <div style={{ fontSize: 15, fontWeight: 500, color: C.textSecondary }}>Click a song to start your set</div>
-          <div style={{ fontSize: 12, color: C.textSecondary }}>Then drag a wire from its socket to chain the next track.</div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', gap: 14 }}>
+          {/* Feature tutorial (Figma-style): loops silently until the user starts a path — the whole
+              empty state unmounts the moment chain.length > 0. Spans the same width as the search bar
+              above (no extra horizontal padding), flat (no neomorphic shadow), capped in height so it
+              never crowds out the prompt beneath it. */}
+          <video
+            ref={tutorialRef}
+            src={tutorialVideo}
+            autoPlay
+            loop
+            muted
+            playsInline
+            style={{ width: '100%', maxHeight: '52vh', borderRadius: 12, display: 'block', objectFit: 'contain' }}
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 20px' }}>
+            <div style={{ fontSize: 15, fontWeight: 500, color: C.textSecondary }}>Click a song to start your set</div>
+            <div style={{ fontSize: 12, color: C.textSecondary }}>Then drag a wire from its socket to chain the next track.</div>
+          </div>
         </div>
       ) : (
         <div ref={scrollRef} className="hide-scrollbar" style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: ROW_GAP, flex: 1, overflowY: 'auto', minHeight: 0 }}>
