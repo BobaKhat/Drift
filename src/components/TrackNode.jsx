@@ -17,6 +17,31 @@ export const colorThief = new ColorThief()
 export const artColorCache = new Map()
 export const ART_FALLBACK = 'rgba(242,127,55,0.3)' // #F27F37 @ 30%
 
+// Album-art sources ship covers at 600–1000px, but a node paints its art at ≤42px (≤128 device px
+// at DPR 2, counting the hover 2× on circle-tier art). Rendering 200+ full-res covers stacks up
+// ~90 megapixels of decoded bitmap — enough texture memory to stall pan/zoom compositing on a big
+// library. Both hosts we pull from (Apple mzstatic, Deezer dzcdn) support path-based resizing, so
+// request a thumbnail sized to the largest on-map slot. Unknown hosts / unrecognized URL shapes fall
+// through untouched, and the ORIGINAL url stays the artColorCache key (below) so the Deck's shared
+// color lookup still hits. Only the <img src> is thumbed; a 128px cover is ample for both the crisp
+// render and ColorThief's dominant-color extraction.
+export const ART_THUMB_PX = 128
+export function artThumb(url) {
+  if (!url) return url
+  try {
+    const { hostname } = new URL(url)
+    // mzstatic: last path segment is the size token, e.g. ".../600x600bb.jpg".
+    if (hostname.endsWith('mzstatic.com')) {
+      return url.replace(/\/\d+x\d+([a-z]*\.\w+)$/i, `/${ART_THUMB_PX}x${ART_THUMB_PX}$1`)
+    }
+    // dzcdn: last segment starts with the size token, e.g. ".../1000x1000-000000-80-0-0.jpg".
+    if (hostname.endsWith('dzcdn.net')) {
+      return url.replace(/\/\d+x\d+(-[^/]*\.\w+)$/i, `/${ART_THUMB_PX}x${ART_THUMB_PX}$1`)
+    }
+  } catch { /* not a parseable URL — leave it exactly as given */ }
+  return url
+}
+
 // Solid, fully-opaque base fill for a pill/card node (the map never shows through).
 const NODE_CARD_BASE = '#121212'
 // Pull the r,g,b out of an 'rgb(...)' / 'rgba(...)' color so we can re-emit it at any alpha.
@@ -267,7 +292,7 @@ export function SongPreviewCard({ data }) {
       pointerEvents: 'none',
     }}>
       {albumArtUrl && !artFailed ? (
-        <img src={albumArtUrl} alt="" draggable={false} onError={() => setArtFailed(true)}
+        <img src={artThumb(albumArtUrl)} alt="" draggable={false} onError={() => setArtFailed(true)}
           style={{ width: CARD_ART, height: CARD_ART, borderRadius: 5, objectFit: 'cover', flexShrink: 0, display: 'block' }} />
       ) : (
         <div style={{ width: CARD_ART, height: CARD_ART, borderRadius: 5, background: '#222224', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -653,7 +678,7 @@ function TrackNode({ id, data }) {
       {albumArtUrl && artSrcMode !== 'failed' ? (
         <img
           key={artSrcMode}
-          src={albumArtUrl}
+          src={artThumb(albumArtUrl)}
           alt=""
           draggable={false}
           crossOrigin={artSrcMode === 'cors' ? 'anonymous' : undefined}
