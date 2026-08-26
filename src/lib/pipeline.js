@@ -282,6 +282,29 @@ function fmtDuration(sec) {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+// Escape SQL-LIKE metacharacters so a title containing % or _ (e.g. "50%") is matched literally by
+// the ilike lookups below instead of being read as a wildcard — which would let one song's cache
+// entry masquerade as another. Backslash is escaped first (it's ILIKE's default escape char).
+function likeEscape(s) {
+  return s.replace(/[\\%_]/g, '\\$&')
+}
+
+// Normalized cache lookup — case- and whitespace-insensitive to MATCH the DB's unique index on
+// (lower(trim(artist)), lower(trim(name))). ilike gives case-insensitivity; trim() on the input
+// mirrors the index's trim (stored values keep their display casing on purpose, so "Take Me to
+// Church" and "Take Me To Church" resolve to the SAME row). Shared by the initial cache check and
+// the insert-conflict recovery path so both agree with the index. .limit(1) tolerates any legacy
+// duplicate rows that predate the index.
+async function findCachedTrack(artist, title) {
+  const { data: rows } = await supabase
+    .from('tracks')
+    .select('*')
+    .ilike('artist', likeEscape(artist.trim()))
+    .ilike('name', likeEscape(title.trim()))
+    .limit(1)
+  return rows?.[0] ?? null
+}
+
 // Core pipeline: cache check → SoundNet cascade → iTunes art+corroboration → Supabase upsert.
 // Takes already-resolved artist/title so callers that resolved a Spotify URL (or have
 // demo data) can reuse the same caching/dedup path without re-parsing a string.
@@ -290,15 +313,9 @@ function fmtDuration(sec) {
 // variationIndex, variations, durationReject } for the reconciliation layer. _meta is NOT stored
 // in the DB.
 export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs, v1Only = false, skipV1 = false, acceptVersion = false } = {}) {
-  // Return cached result if available (.limit(1) tolerates duplicate rows gracefully)
-  const { data: rows } = await supabase
-    .from('tracks')
-    .select('*')
-    .eq('artist', artist)
-    .eq('name', title)
-    .limit(1)
-
-  const cached = rows?.[0] ?? null
+  // Return cached result if available. Normalized (lower+trim) to match the unique index, so a
+  // case/whitespace variant of an already-imported song hits the cache instead of re-analyzing.
+  const cached = await findCachedTrack(artist, title)
 
   // Only trust the cache if analysis actually succeeded — unanalyzed records get retried.
   if (cached && cached.status !== 'unanalyzed') {
@@ -411,9 +428,24 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
       .insert(track)
       .select()
       .single()
-    if (error) throw new Error(`Supabase insert failed: ${error.message}`)
-    console.log('[drift] cached track id:', data.id)
-    savedRow = data
+    if (error) {
+      // The unique index on (lower(trim(artist)), lower(trim(name))) rejects a duplicate with
+      // 23505. That means a concurrent import — or a case/whitespace variant that raced past the
+      // cache lookup above — already inserted this song. Recover by returning the row that won the
+      // race instead of failing the import. (A functional/expression index can't be a PostgREST
+      // .upsert onConflict target, so we insert-then-recover rather than ON CONFLICT DO UPDATE.)
+      if (error.code === '23505') {
+        const existing = await findCachedTrack(artist, title)
+        if (!existing) throw new Error(`Supabase insert conflicted but no existing row found: ${error.message}`)
+        console.log('[drift] insert conflict, reusing existing track id:', existing.id)
+        savedRow = existing
+      } else {
+        throw new Error(`Supabase insert failed: ${error.message}`)
+      }
+    } else {
+      console.log('[drift] cached track id:', data.id)
+      savedRow = data
+    }
   }
 
   // Attach reconciliation metadata — not stored in Supabase.
