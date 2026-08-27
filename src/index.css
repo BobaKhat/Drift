@@ -35,6 +35,15 @@ html, body, #root {
   transition: transform 80ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
+/* Pan-time paint relief — .is-panning is toggled for the duration of a pan/zoom gesture (DriftMap
+   onMoveStart/onMoveEnd). Promote every node to its own cached GPU layer so the viewport translate
+   composites those textures instead of re-rasterizing each node's shadow + text every frame. Cheap
+   and helps both modes. (The build-mode box-shadow drop that used to live here is gone: dimmed nodes
+   now carry no shadow at all — see TrackNode `dimActive` — so there's nothing to strip while panning.) */
+.drift-canvas.is-panning .react-flow__node {
+  will-change: transform;
+}
+
 /* Set-builder wire anchors: invisible handles pinned to each node's center — they only exist so
    React Flow can position the edge endpoints. The visible socket dots are drawn separately. */
 .react-flow__handle.wire-anchor {

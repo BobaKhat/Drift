@@ -1739,6 +1739,15 @@ function DriftMapInner({ tracks }) {
     zoomTimer.current = setTimeout(() => el.classList.remove('is-zooming'), 150)
   }, [])
 
+  // Pan-time paint relief (perf). While a pan/zoom gesture is live, .is-panning promotes each node to
+  // its own cached GPU layer (will-change:transform, see index.css) so the viewport translate composites
+  // those textures instead of re-rasterizing each node's shadow + text every frame — the dominant paint
+  // cost pills/cards add over circles. (Dimmed build-mode nodes carry no shadow at all now — see
+  // TrackNode `dimActive` — so there's nothing to strip mid-pan.) onMoveStart/onMoveEnd bracket the
+  // whole gesture, so the class is on for exactly its duration.
+  const handleMoveStart = useCallback(() => { wrapperRef.current?.classList.add('is-panning') }, [])
+  const handleMoveEnd = useCallback(() => { wrapperRef.current?.classList.remove('is-panning') }, [])
+
   const store = useStoreApi()
 
   // Keep the pan clamp EDGE_MARGIN_PX outside the axis box at the CURRENT zoom, so the pills never
@@ -1763,12 +1772,12 @@ function DriftMapInner({ tracks }) {
   // crosshair furniture in the ViewportPortal reads it to hold a constant screen size at any zoom.
   const applyZoom = useCallback((zoom) => {
     const el = wrapperRef.current
+    const next = getTier(zoom)
     if (el) {
       el.style.setProperty('--node-scale', String(getNodeScale(zoom)))
       el.style.setProperty('--axis-scale', String(1 / zoom))
     }
     applyExtent(zoom)
-    const next = getTier(zoom)
     if (next !== tierRef.current) {
       tierRef.current = next
       setTier(next)
@@ -2176,6 +2185,10 @@ function DriftMapInner({ tracks }) {
             edgeTypes={edgeTypes}
             onPaneClick={handlePaneClick}
             onNodeClick={handleNodeClick}
+            // Toggle .is-panning for the duration of any pan/zoom gesture (see handleMoveStart) so the
+            // canvas can shed per-frame paint cost while the viewport is moving.
+            onMoveStart={handleMoveStart}
+            onMoveEnd={handleMoveEnd}
             // Loose so a node's source+target handles both register bounds — the wires (which use
             // our own sourceHandle/targetHandle) resolve to the right cardinal regardless of type.
             connectionMode={ConnectionMode.Loose}

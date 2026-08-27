@@ -532,15 +532,24 @@ function TrackNode({ id, data }) {
       ? `0 0 2.5px 1px ${artColorResolved}, 0 0 5px 1px ${artColorResolved}, 0 0 8px 2px ${artColorResolved}`
       : `0px 0px 7px 0px ${artColorResolved}, inset 0px 0px 5px 0px #373737`
 
+  // Build-mode dim (replaces the old `filter: brightness(0.45)`): a non-chain, non-orphan song recedes
+  // so the set reads. `dimmed` is already false for the head + every connected/orphan song, and we also
+  // exclude compatibility-glow and the snap target — so those all stay lit. Feeds BOTH the dim scrim
+  // (rendered below) AND the box-shadow gate right here.
+  const dimActive = !flowMode && dimmed && !glow && !snapTarget
+
   // Node boxShadow, highest priority first: search highlight → orphan → head → album-art glow →
   // compatibility glow → default ambient. When the song is SELECTED (its Deck is open) the app's
   // selected treatment — a 1.5px accent ring + its drop — is layered OVER that, so a clicked song reads
-  // as selected while keeping its own album glow.
+  // as selected while keeping its own album glow. A DIMMED node (dimActive) carries NO shadow at all —
+  // no ambient, no art glow — so it reads as fully recessed and can't "breathe" a glow on/off during
+  // pan (only the head, chain, snap target and compatibility-glow songs keep a shadow). A search
+  // highlight still wins, so a found song lights up even while dimmed.
   const baseShadow = highlighted
     ? '0 0 0 2.5px #F27F37, 0 0 18px rgba(242,127,55,0.45)'
     // snapTarget's orange glow (folded into compatGlow) wins over orphan/head/art so the pre-connect
     // target always lights up, even when it's an orphan being re-plugged.
-    : (snapTarget ? compatGlow : (orphanGlow || headGlow || artGlow || compatGlow || '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)'))
+    : (snapTarget ? compatGlow : (orphanGlow || headGlow || artGlow || compatGlow || (dimActive ? 'none' : '0 0 20px rgba(255,255,255,0.08), 0 0 40px rgba(255,255,255,0.04)')))
   const nodeShadow = selected ? `0 0 0 1.5px ${SELECTED.border}, ${SELECTED.drop}, ${baseShadow}` : baseShadow
 
   // Counter-scale is driven by the shared --node-scale var; the circle-tier head gets a small size
@@ -582,12 +591,9 @@ function TrackNode({ id, data }) {
     ? `driftNodeEnter ${NODE_ENTER_MS}ms var(--enter-delay, 0ms) backwards`
     : undefined
 
-  // Build-mode dim (replaces the old `filter: brightness(0.45)`): a non-chain, non-orphan song recedes
-  // so the set reads. `dimmed` is already false for the head + every connected/orphan song, and we also
-  // exclude compatibility-glow and the snap target — so those all stay at full brightness. A black
-  // overlay at 0.55 alpha reproduces brightness(0.45) exactly (result = orig × (1 − 0.55) = orig × 0.45)
-  // but composites as a plain painted rect instead of a per-node filter surface.
-  const dimActive = !flowMode && dimmed && !glow && !snapTarget
+  // The dim scrim below paints rgba(0,0,0,0.55): a 0.55-alpha black overlay reproduces the old
+  // `filter: brightness(0.45)` exactly (result = orig × (1 − 0.55) = orig × 0.45) but composites as a
+  // plain painted rect instead of a per-node filter surface. Gated by `dimActive` (defined above).
 
   return (
     <div
@@ -702,10 +708,16 @@ function TrackNode({ id, data }) {
       {/* Build-mode dim overlay — a flat black scrim over the whole node (art + text), the cheap
           replacement for `filter: brightness(0.45)`. Sits above the content (zIndex 1) but below the
           socket dots (zIndex 5), inherits the node's corner radius, and never takes the pointer. Only
-          non-chain/non-orphan songs render it, so the head + chain stay full brightness. */}
+          non-chain/non-orphan songs render it, so the head + chain stay full brightness.
+          inset:0 anchors to the PADDING box (inside the 1px border), which left the pill/card border
+          (rgba(255,255,255,0.12)) undimmed — a bright ring around a darkened node that shimmered on
+          the edges while panning. inset:-1px on bordered tiers pushes the scrim out to the BORDER box
+          (exactly the node's outer edge, no further), so `borderRadius:inherit` overlays the outer
+          corners pixel-perfectly and the whole silhouette — border included — dims as one. Circles
+          have no border (0px, transparent), so they stay at inset:0 to avoid a faint dark halo ring. */}
       {dimActive && (
         <div aria-hidden style={{
-          position: 'absolute', inset: 0, borderRadius: 'inherit',
+          position: 'absolute', inset: effCircle ? 0 : -1, borderRadius: 'inherit',
           background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 2,
         }} />
       )}
