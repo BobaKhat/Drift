@@ -1908,12 +1908,18 @@ function DriftMapInner({ tracks }) {
     // Log #38, #42) and does NOT open the Deck — that click means "start my set here," not "inspect this
     // song." Every other click opens/toggles the song's Deck (Decision Log #6, #69), including later
     // build-mode clicks, since set additions happen by wiring rather than clicking.
+    // An orphan-group member can never be seated as the anchor. Orphans rejoin a set ONLY by being
+    // wired into the chain (connectSong, which absorbs the whole group) — promoting one to head here
+    // would leave it both in-chain and in an orphan group (isHead && isOrphan), the corrupt state that
+    // let orphans be tampered with on their own. If the chain is empty, a click on an orphan is a no-op
+    // for seating; it still can't open a Deck in build mode, so just ignore it.
+    const isOrphan = buildMode && buildGraph.groupByNode[node.id] != null
     if (buildMode && chain.length === 0) {
-      addHead(node.id)
+      if (!isOrphan) addHead(node.id)
     } else {
       toggleDeck(node.id) // clicking the open song again closes the deck
     }
-  }, [buildMode, flowMode, chainSet, chain.length, addHead, toggleDeck])
+  }, [buildMode, flowMode, chainSet, chain.length, buildGraph, addHead, toggleDeck])
 
   // The set-builder panel isn't closeable while building (Decision Log #53), so a pane click only
   // dismisses panels outside build mode. It always dismisses an open compatibility card (Decision

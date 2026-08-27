@@ -219,7 +219,14 @@ export function PlaylistProvider({ children }) {
   // an unselected node, the same fate as a single unlinked downstream song (see unlinkAfter). Guarded to
   // a ≤1 chain so it can never silently wipe a real multi-song set. No confirmation — it's a one-click
   // re-seat to undo (Decision Log #44: head actions are recoverable, no modal).
-  const removeHead = useCallback(() => { setChain((prev) => (prev.length <= 1 ? [] : prev)) }, [])
+  // Removing the last anchor means the set is gone, so its orphan groups go with it — otherwise the
+  // chain empties while disconnected groups keep floating, and clicking one would re-seat an orphan as
+  // a new anchor (an orphan must only ever rejoin by being wired in, never promoted on its own).
+  const removeHead = useCallback(() => {
+    if (chainRef.current.length > 1) return
+    setChain([])
+    setOrphanGroups([])
+  }, [])
 
   // Explicitly start a fresh set — clears the chain + orphans and drops the "saved" flag (Slice 9
   // r3 #3). Distinct from clearChain so the panel can also reset its own button state.
