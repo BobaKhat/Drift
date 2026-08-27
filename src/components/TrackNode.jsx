@@ -582,6 +582,13 @@ function TrackNode({ id, data }) {
     ? `driftNodeEnter ${NODE_ENTER_MS}ms var(--enter-delay, 0ms) backwards`
     : undefined
 
+  // Build-mode dim (replaces the old `filter: brightness(0.45)`): a non-chain, non-orphan song recedes
+  // so the set reads. `dimmed` is already false for the head + every connected/orphan song, and we also
+  // exclude compatibility-glow and the snap target — so those all stay at full brightness. A black
+  // overlay at 0.55 alpha reproduces brightness(0.45) exactly (result = orig × (1 − 0.55) = orig × 0.45)
+  // but composites as a plain painted rect instead of a per-node filter surface.
+  const dimActive = !flowMode && dimmed && !glow && !snapTarget
+
   return (
     <div
       title={effCircle ? `${artist} – ${name}` : undefined}
@@ -632,10 +639,10 @@ function TrackNode({ id, data }) {
           // Flow OFF: unconnected non-set songs stay fully OPAQUE (not transparent) but are darkened
           // 75% via the brightness filter below, so the set still reads clearly. Orphans keep their band.
           : (isOrphan ? (orphanBright ? 0.95 : 0.45) : 1),
-        // Flow OFF: darken unconnected non-set songs to 45% brightness instead of fading them — but NOT
-        // the compatibility-glow songs (glow strong/mild), and NOT the song the dragged wire is snapped
-        // to (`snapTarget`), which brightens to 100% as the pre-connect target.
-        filter: (!flowMode && dimmed && !glow && !snapTarget) ? 'brightness(0.45)' : undefined,
+        // Flow OFF: unconnected non-set songs are darkened to ~45% so the set reads. That dim is NOT a
+        // `filter: brightness()` here — a CSS filter forces each of 100+ nodes into its own filter
+        // surface and stalls pan compositing. Instead a cheap inner black overlay (see dimActive below)
+        // composites as a plain rect. See `dimActive`.
         // Flow ON hides every non-chain song (opacity 0, above). A hidden song must also stop taking the
         // pointer, or hovering/clicking what looks like blank map actually lands on the invisible node
         // sitting there — previewing or opening a song that isn't shown. Only the lit chain stays live.
@@ -690,6 +697,17 @@ function TrackNode({ id, data }) {
         <div style={{ ...artStyle, position: 'relative', zIndex: 1, background: '#222224', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <MusicNoteIcon size={Math.round(artSize * 0.5)} />
         </div>
+      )}
+
+      {/* Build-mode dim overlay — a flat black scrim over the whole node (art + text), the cheap
+          replacement for `filter: brightness(0.45)`. Sits above the content (zIndex 1) but below the
+          socket dots (zIndex 5), inherits the node's corner radius, and never takes the pointer. Only
+          non-chain/non-orphan songs render it, so the head + chain stay full brightness. */}
+      {dimActive && (
+        <div aria-hidden style={{
+          position: 'absolute', inset: 0, borderRadius: 'inherit',
+          background: 'rgba(0,0,0,0.55)', pointerEvents: 'none', zIndex: 2,
+        }} />
       )}
 
       {/* Pill: title only — minimal DOM (background + image + title), the lighter spread-view node. */}

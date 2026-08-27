@@ -1800,6 +1800,65 @@ function DriftMapInner({ tracks }) {
     return store.subscribe(apply)
   }, [store])
 
+  // Build-mode node culling (perf). Outside build mode React Flow's own onlyRenderVisibleElements
+  // culls off-screen nodes (there are no wires then, so nothing blinks). In build mode we can't use
+  // it: it has no per-node exemption, and a chain/orphan endpoint that culls off-screen loses its
+  // measured handle bounds, blinking its wire out (WireEdge reads sourceX/Y from those bounds). So we
+  // cull ourselves — hide any library node whose layout box falls outside an expanded viewport, but
+  // NEVER hide a node in the active set (the connected chain OR any orphan group). Those stay mounted
+  // so their wires are always drawable regardless of where the viewport is. Driven off the store
+  // transform (pan AND zoom) and throttled to ~30fps like the counter-scale driver. The prev-transform
+  // guard means our own setNodes (which fires the subscriber again) is a no-op, never a loop.
+  const CULL_MARGIN = 400 // flow-units of slack around the viewport, so nodes mount before they enter
+  useEffect(() => {
+    if (!buildMode) {
+      // Leaving build mode: drop any hidden flags we set so React Flow's own culling sees a clean list.
+      setNodes((prev) => prev.some((n) => n.hidden) ? prev.map((n) => (n.hidden ? { ...n, hidden: false } : n)) : prev)
+      return
+    }
+    // Force-mount set: every song in the connected chain plus every orphan-group member.
+    const forceMount = new Set(chainSet)
+    buildGraph.orphanIds?.forEach((id) => forceMount.add(id))
+
+    const recompute = () => {
+      const { transform, width, height } = store.getState()
+      const [tx, ty, z] = transform
+      const vx0 = -tx / z - CULL_MARGIN, vy0 = -ty / z - CULL_MARGIN
+      const vx1 = (width - tx) / z + CULL_MARGIN, vy1 = (height - ty) / z + CULL_MARGIN
+      setNodes((prev) => {
+        let changed = false
+        const next = prev.map((n) => {
+          let hide = false
+          if (!forceMount.has(n.id)) {
+            const w = n.measured?.width ?? 0, h = n.measured?.height ?? 0
+            const x = n.position.x, y = n.position.y
+            const inside = x <= vx1 && x + w >= vx0 && y <= vy1 && y + h >= vy0
+            hide = !inside
+          }
+          if (!!n.hidden !== hide) { changed = true; return { ...n, hidden: hide } }
+          return n
+        })
+        return changed ? next : prev
+      })
+    }
+
+    let raf = 0, last = 0, px = null, py = null, pz = null
+    const schedule = () => {
+      const now = performance.now()
+      if (now - last < VIEWPORT_FRAME_MS) { if (!raf) raf = requestAnimationFrame(() => { raf = 0; last = performance.now(); recompute() }); return }
+      last = now
+      recompute()
+    }
+    recompute() // seed for the current viewport / freshly-changed set
+    const unsub = store.subscribe((s) => {
+      const [x, y, z] = s.transform
+      if (x === px && y === py && z === pz) return // not a viewport change (e.g. our own setNodes) — skip
+      px = x; py = y; pz = z
+      schedule()
+    })
+    return () => { unsub(); if (raf) cancelAnimationFrame(raf) }
+  }, [buildMode, chainSet, buildGraph, store, setNodes])
+
   // Seed the var + tier from the current viewport before first paint (the watcher only fires on a
   // change), so nodes mount at the right scale/tier instead of flashing the default.
   useLayoutEffect(() => { applyZoom(rf.getViewport().zoom) }, [applyZoom, rf])
@@ -2135,7 +2194,10 @@ function DriftMapInner({ tracks }) {
             // Cull off-screen nodes during pan/zoom — only mount the ones inside the viewport.
             // Big win with 150+ songs. Culling uses each node's measured layout box (not its CSS
             // counter-scale transform), so edge nodes may mount/unmount a few px late while panning.
-            // Disabled in build mode so chain wires never blink out when an endpoint pans off-screen.
+            // Left OFF in build mode ON PURPOSE: React Flow's culling has no per-node exemption, so it
+            // would cull chain endpoints too and blink their wires. Build mode instead runs our own
+            // culler (see the build-mode culling effect) that hides off-screen LIBRARY nodes while
+            // force-mounting every chain/orphan node, so we get the same win without the blink.
             onlyRenderVisibleElements={!buildMode}
             style={{ background: 'transparent' }}
             proOptions={{ hideAttribution: true }}
