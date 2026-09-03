@@ -18,6 +18,7 @@ create table if not exists public.tracks (
   album             text,
   album_art_url     text,
   bpm               float,
+  bpm_source        text          default 'soundnet',
   energy            float,
   mood              float,
   danceability      float,
@@ -65,6 +66,11 @@ create policy "tracks_update_all" on public.tracks
 -- `tracks` may predate this column; guarded add so older environments pick up the 30-second
 -- preview URL (iTunes/Deezer) cached for Deck View playback (Slice 13, Decision #76).
 alter table public.tracks add column if not exists preview_url text;
+
+-- Per-BPM provenance: 'soundnet' (auto-analyzed by SoundNet, the default) or 'corrected' (a manual
+-- BPM fix — e.g. half-time tracks SoundNet reported at 2× tempo). Guarded add so existing
+-- environments pick it up without a full reset.
+alter table public.tracks add column if not exists bpm_source text default 'soundnet';
 
 -- Playlists: one active on the map at a time. user_id is "demo" until auth lands.
 create table if not exists public.playlists (
