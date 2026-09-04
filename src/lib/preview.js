@@ -15,12 +15,21 @@ const previewCache = new Map() // id -> url | null
 let onArtResolved = null
 export function setArtResolvedHandler(fn) { onArtResolved = fn }
 
+// Registered by usePlaylistStore so a fresh preview URL (e.g. a force re-resolve of an expired Deezer
+// token) is pushed back into the live `activeTracks` state. Without this the stale in-memory
+// track.preview_url short-circuits resolvePreview on the next play — and the once-per-session error
+// retry has already been spent — so a re-resolved track would silently fail on its second play.
+let onPreviewResolved = null
+export function setPreviewResolvedHandler(fn) { onPreviewResolved = fn }
+
 // Best-effort persist. Wrapped so a missing preview_url column or unreachable Supabase never breaks
-// playback — the in-memory cache still serves the current session.
+// playback — the in-memory cache still serves the current session. On a successful write of a real
+// URL, notifies the registered handler so the live state replaces any stale URL without a reload.
 async function persist(id, url) {
   if (!id) return
   try {
-    await supabase.from('tracks').update({ preview_url: url }).eq('id', id)
+    const { error } = await supabase.from('tracks').update({ preview_url: url }).eq('id', id)
+    if (!error && url) onPreviewResolved?.(id, url)
   } catch {
     /* ignore — playback works from the cache regardless */
   }

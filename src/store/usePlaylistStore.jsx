@@ -9,7 +9,7 @@ import {
 } from '../lib/playlists'
 import { parseInput, runImport, retryUnresolved, acceptVersion as acceptVersionLib } from '../lib/import'
 import { saveSet } from '../lib/sets'
-import { setArtResolvedHandler } from '../lib/preview'
+import { setArtResolvedHandler, setPreviewResolvedHandler } from '../lib/preview'
 import { getUserId, hasSeenDemo, markSeenDemo } from '../lib/identity'
 
 // Central app state for the playlist model + import flow.
@@ -50,6 +50,15 @@ export function PlaylistProvider({ children }) {
       setActiveTracks((prev) => prev.map((t) => (t.id === id ? { ...t, album_art_url: url } : t)))
     })
     return () => setArtResolvedHandler(null)
+  }, [])
+
+  // Same self-healing for the preview URL: a force re-resolve (e.g. of an expired Deezer token) writes
+  // the fresh URL back into activeTracks so the stale one no longer short-circuits the next play.
+  useEffect(() => {
+    setPreviewResolvedHandler((id, url) => {
+      setActiveTracks((prev) => prev.map((t) => (t.id === id ? { ...t, preview_url: url } : t)))
+    })
+    return () => setPreviewResolvedHandler(null)
   }, [])
 
   const [importState, setImportState] = useState(null) // null|'welcome'|'steps'|'progress'|'reconcile'
