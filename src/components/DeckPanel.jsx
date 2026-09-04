@@ -561,6 +561,15 @@ function TrackInfoBar({ track }) {
           tiles around it are not. Its face stays NEO_BTN_BG, a step ABOVE the tile it sits on, which is
           the same gap the rail's buttons hold over the rail. Filled with the album-color glyph; toggles
           this track's 30-second preview. Dimmed + disabled when the track has no available preview. */}
+      {/* Visible companion to the disabled/greyed play button so the empty state reads as intentional
+          ("no preview for this track") rather than a broken control. Only rendered when disabled. */}
+      {disabled && (
+        <span style={{
+          fontFamily: FONT, fontSize: F_TRACK_SUB, color: SUB, whiteSpace: 'nowrap', flexShrink: 0,
+        }}>
+          Preview unavailable
+        </span>
+      )}
       <button
         type="button"
         onClick={disabled ? undefined : () => toggle(track)}
