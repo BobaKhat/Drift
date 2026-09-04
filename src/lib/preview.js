@@ -54,6 +54,12 @@ async function persistArt(id, url) {
 // lookup (which is persisted + cached). Returns a URL, or null when the track has no preview.
 export async function resolvePreview(track, { force = false } = {}) {
   if (!track) return null
+  // Hard block: preview_blocked flags a track whose preview was confirmed (by listening) to be the
+  // WRONG audio — a mismatch the artist/title/duration verification couldn't catch. Return null before
+  // any cache read or lookup so the deck greys the play button out permanently. Without this, nulling
+  // preview_url alone doesn't stick: the lazy lookup below just re-resolves the same wrong preview and
+  // re-persists it on the next play. Checked even under `force` — a blocked track must never resolve.
+  if (track.preview_blocked) return null
   if (!force) {
     if (track.preview_url) return track.preview_url
     if (previewCache.has(track.id)) return previewCache.get(track.id)

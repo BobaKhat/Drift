@@ -906,7 +906,8 @@
 "camelot": "8A",
 "duration": 248,
 "popularity": 56,
-"preview_url": "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview221/v4/f0/f8/6f/f0f86fa0-d6ec-8a8f-abb2-fbced3ac1371/mzaf_10004349465599118874.plus.aac.p.m4a"
+"preview_url": null,
+"preview_blocked": true
 },
 {
 "name": "Running from Reality",
@@ -4294,7 +4295,8 @@
 "camelot": "3A",
 "duration": 283,
 "popularity": 76,
-"preview_url": "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview211/v4/4f/7e/98/4f7e987f-21e8-91a5-26d7-8a74b2895406/mzaf_7067832708888297349.plus.aac.p.m4a"
+"preview_url": null,
+"preview_blocked": true
 },
 {
 "name": "The Last Goodbye",
@@ -4882,7 +4884,8 @@
 "camelot": "11A",
 "duration": 187,
 "popularity": 67,
-"preview_url": "https://audio-ssl.itunes.apple.com/itunes-assets/AudioPreview125/v4/1b/17/86/1b178646-f96d-f0ed-55f1-17612380caf1/mzaf_14552762672082473801.plus.aac.p.m4a"
+"preview_url": null,
+"preview_blocked": true
 },
 {
 "name": "disco tits",
