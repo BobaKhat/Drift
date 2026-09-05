@@ -6,13 +6,19 @@ import { isSpotifyTrackUrl, resolveSpotifyUrl } from './oembed'
 // reconciliation).
 
 // Two automatic passes. Pass 1 (runImport): every track, tier 1 (original artist+title) only, no
-// cascade — a short 10s SoundNet timeout, concurrency 3; hits render on the map as they land. Pass 2
-// (runImportPass2): the tier 2-5 cascade over every Pass-1 miss, on the SAME concurrency + timeout
-// profile, hits plotting in place as they resolve while the user keeps exploring. Anything still
-// unresolved after Pass 2 goes to the reconciliation panel; the per-track Retry (retryUnresolved)
-// remains a manual escape hatch. PAIR_DELAY is the pacer gap between scheduled units.
+// cascade — a short 10s SoundNet timeout, concurrency 3; hits render on the map as they land, so the
+// deadline is kept tight to render fast. Pass 2 (runImportPass2): the tier 2-5 cascade over every
+// Pass-1 miss, same concurrency 3 but a MUCH longer 60s timeout — it's background and non-blocking,
+// so a slow tail costs only wall-clock, and SoundNet's fallback search takes ~42-60s to answer
+// whether it hits or misses (a 10s ceiling rejected every fallback before it could return). Hits plot
+// in place as they resolve while the user keeps exploring. Anything still unresolved after Pass 2
+// goes to the reconciliation panel; the per-track Retry (retryUnresolved) remains a manual escape
+// hatch. PAIR_DELAY is the pacer gap between scheduled units.
 const SWEEP_CONCURRENCY = 3
 const SWEEP_TIMEOUT_MS = 10000
+// Pass 2 per-request deadline. Long enough to let SoundNet's slow fallback search finish (it grinds
+// ~42-60s regardless of outcome); Pass 2 runs in the background so this only extends wall-clock.
+const PASS2_TIMEOUT_MS = 60000
 const PAIR_DELAY = 300
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -179,9 +185,10 @@ export async function runImport(text, { onTrack = () => {}, onProgress = () => {
 }
 
 // —— Automatic Pass 2: tier 2-5 cascade over Pass-1 misses ————————————————————————————————————
-// Runs after the Pass-1 sweep, over the entries that missed tier 1. Same background profile as Pass 1
-// (concurrency SWEEP_CONCURRENCY, per-request SWEEP_TIMEOUT_MS), but each entry goes through
-// processEntry with skipV1:true so ONLY tiers 2-5 fire — tier 1 already ran and missed in Pass 1, and
+// Runs after the Pass-1 sweep, over the entries that missed tier 1. Same concurrency as Pass 1
+// (SWEEP_CONCURRENCY) but a much longer per-request deadline (PASS2_TIMEOUT_MS = 60s) so SoundNet's
+// slow fallback search can actually answer. Each entry goes through processEntry with skipV1:true so
+// ONLY tiers 2-5 fire — tier 1 already ran and missed in Pass 1, and
 // skipV1 dedups it out of the cascade. Hits stream through onTrack so the map fills in place while the
 // user explores. The stored Pass-1 miss is an 'unanalyzed' row, so analyzeTrackParts' cache check
 // falls through and the cascade genuinely re-runs (no forceRefresh needed); resolved rows UPDATE in
@@ -211,7 +218,7 @@ export async function runImportPass2(unresolved, { onTrack = () => {}, onProgres
     await Promise.all(
       batch.map(async (u) => {
         const entry = { type: 'text', artist: u.artist, title: u.title, originalText: u.originalText }
-        const result = await processEntry(entry, { timeoutMs: SWEEP_TIMEOUT_MS, skipV1: true })
+        const result = await processEntry(entry, { timeoutMs: PASS2_TIMEOUT_MS, skipV1: true })
         if (result.track) {
           if (result.warning) warnings.push(result.warning)
           // onTrack carries the originalText so the caller can drop the row from the unresolved list.
