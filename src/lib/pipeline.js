@@ -382,15 +382,17 @@ export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArt
     ? Object.fromEntries(Object.entries(features).filter(([k]) => !k.startsWith('_')))
     : {}
 
-  // Version flag (track-level, non-blocking): a hit accepted on a VARIATION (Tier 2–5) rather than
-  // the unmodified original (Tier 1) means SoundNet matched a modified query — a primary-artist
-  // split, a stripped feat./version suffix, and/or folded diacritics — so it may be a different cut
-  // (radio edit, extended mix, solo vs collab, etc.). Flag it for the user to verify; the song still
-  // plots. A duration mismatch
+  // Version flag (track-level, non-blocking): a hit accepted on a TITLE-ALTERING variation (Tier 3–5)
+  // rather than the original — a stripped feat./version suffix, and/or folded diacritics — may be a
+  // different cut (radio edit, extended mix, solo vs collab, etc.), so flag it for the user to verify;
+  // the song still plots. Tier 2 is deliberately NOT flagged: it only splits the primary artist off a
+  // multi-artist string (title untouched), which is almost always the exact same track, and with
+  // automatic Pass 2 flagging every Tier-2 hit would flood the panel. resolved_via still records the
+  // tier for provenance. A duration mismatch
   // (SoundNet vs iTunes >15s) is folded in as extra evidence when present, but is no longer REQUIRED
   // to raise the flag — the variation match itself is the trigger now.
   let versionWarning = null
-  if (features && cascade.variationIndex > 1) {
+  if (features && cascade.variationIndex > 2) {
     const soundnetDur = features.duration
     const itunesDur = itunes?.durationMs != null ? itunes.durationMs / 1000 : null
     const durationMismatch = soundnetDur != null && itunesDur != null && Math.abs(soundnetDur - itunesDur) > 15

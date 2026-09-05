@@ -5,11 +5,12 @@ import { isSpotifyTrackUrl, resolveSpotifyUrl } from './oembed'
 // into mapped (plotted), warnings (version-mismatch flagged), and unresolved (shown on
 // reconciliation).
 
-// Single fast sweep: every track, V1 (original artist+title) only, no cascade. A short 10s SoundNet
-// timeout, concurrency 3. Hits render on the map as they land; when it finishes the map is fully
-// interactive. Tracks that miss V1 go straight to the reconciliation panel as unresolved — there is
-// no automatic background pass. The user recovers them one at a time with the per-track Retry, which
-// runs the V2–V4 cascade (see retryUnresolved). PAIR_DELAY is the pacer gap between scheduled units.
+// Two automatic passes. Pass 1 (runImport): every track, tier 1 (original artist+title) only, no
+// cascade — a short 10s SoundNet timeout, concurrency 3; hits render on the map as they land. Pass 2
+// (runImportPass2): the tier 2-5 cascade over every Pass-1 miss, on the SAME concurrency + timeout
+// profile, hits plotting in place as they resolve while the user keeps exploring. Anything still
+// unresolved after Pass 2 goes to the reconciliation panel; the per-track Retry (retryUnresolved)
+// remains a manual escape hatch. PAIR_DELAY is the pacer gap between scheduled units.
 const SWEEP_CONCURRENCY = 3
 const SWEEP_TIMEOUT_MS = 10000
 const PAIR_DELAY = 300
@@ -141,11 +142,11 @@ async function processEntry(entry, { timeoutMs, v1Only = false, skipV1 = false }
 // Returns { mapped, warnings, unresolved }:
 //   mapped     — track rows that resolved on V1 (already emitted via onTrack)
 //   warnings   — version-mismatch warnings among those hits
-//   unresolved — every entry that didn't resolve on V1, for the reconciliation panel: a genuine
-//                SoundNet miss (kind 'nodata'), a duration-guard rejection (kind 'version'), an
-//                unparseable line ('unparseable'), or an unresolved Spotify link ('url'). There is
-//                no automatic second pass; the user recovers these with the per-track Retry, which
-//                runs the V2–V4 cascade (see retryUnresolved).
+//   unresolved — every entry that didn't resolve on tier 1, handed to runImportPass2 for the
+//                automatic tier 2-5 pass: a genuine SoundNet miss (kind 'nodata'), a duration-guard
+//                rejection (kind 'version'), an unparseable line ('unparseable'), or an unresolved
+//                Spotify link ('url'). Pass 2 re-attempts the nodata/version ones; url/unparseable
+//                pass straight through to the reconciliation panel (recoverable via per-track Retry).
 export async function runImport(text, { onTrack = () => {}, onProgress = () => {} } = {}) {
   const entries = parseInput(text)
   const total = entries.length
@@ -173,8 +174,60 @@ export async function runImport(text, { onTrack = () => {}, onProgress = () => {
     if (i + SWEEP_CONCURRENCY < entries.length) await sleep(PAIR_DELAY)
   }
 
-  console.log(`[drift] import (V1 only) — hits:${mapped.length} / ${total} | unresolved:${unresolved.length}`)
+  console.log(`[drift] import (tier 1 only) — hits:${mapped.length} / ${total} | unresolved:${unresolved.length}`)
   return { mapped, warnings, unresolved }
+}
+
+// —— Automatic Pass 2: tier 2-5 cascade over Pass-1 misses ————————————————————————————————————
+// Runs after the Pass-1 sweep, over the entries that missed tier 1. Same background profile as Pass 1
+// (concurrency SWEEP_CONCURRENCY, per-request SWEEP_TIMEOUT_MS), but each entry goes through
+// processEntry with skipV1:true so ONLY tiers 2-5 fire — tier 1 already ran and missed in Pass 1, and
+// skipV1 dedups it out of the cascade. Hits stream through onTrack so the map fills in place while the
+// user explores. The stored Pass-1 miss is an 'unanalyzed' row, so analyzeTrackParts' cache check
+// falls through and the cascade genuinely re-runs (no forceRefresh needed); resolved rows UPDATE in
+// place, never insert or delete.
+//
+// Only genuine SoundNet misses are re-attempted — kind 'nodata' (no audio data) and 'version' (a hit
+// the duration guard rejected), both of which carry a resolved artist/title the cascade can vary.
+// 'url' (Spotify oEmbed never yielded an artist/title) and 'unparseable' can't be helped by tier
+// variation, so they pass through untouched in `skipped`.
+//
+// Returns { resolved, stillUnresolved, skipped, warnings, attempted }:
+//   resolved        — count newly resolved by tiers 2-5 (already emitted via onTrack)
+//   stillUnresolved — targets tiers 2-5 also couldn't resolve
+//   skipped         — url/unparseable entries never attempted (pass straight through)
+//   warnings        — version-mismatch warnings among the Pass-2 hits (a tier 2+ hit always raises one)
+export async function runImportPass2(unresolved, { onTrack = () => {}, onProgress = () => {} } = {}) {
+  const isTarget = (u) => (u.kind === 'nodata' || u.kind === 'version') && u.artist && u.title
+  const targets = unresolved.filter(isTarget)
+  const skipped = unresolved.filter((u) => !isTarget(u))
+  const total = targets.length
+  const stillUnresolved = []
+  const warnings = []
+  let done = 0
+
+  for (let i = 0; i < targets.length; i += SWEEP_CONCURRENCY) {
+    const batch = targets.slice(i, i + SWEEP_CONCURRENCY)
+    await Promise.all(
+      batch.map(async (u) => {
+        const entry = { type: 'text', artist: u.artist, title: u.title, originalText: u.originalText }
+        const result = await processEntry(entry, { timeoutMs: SWEEP_TIMEOUT_MS, skipV1: true })
+        if (result.track) {
+          if (result.warning) warnings.push(result.warning)
+          // onTrack carries the originalText so the caller can drop the row from the unresolved list.
+          onTrack(result.track, u.originalText)
+        } else {
+          stillUnresolved.push(result.unresolved)
+        }
+        done += 1
+        onProgress({ current: done, total, name: labelFor(entry) })
+      }),
+    )
+    if (i + SWEEP_CONCURRENCY < targets.length) await sleep(PAIR_DELAY)
+  }
+
+  console.log(`[drift] import pass 2 (tiers 2-5) — resolved:${total - stillUnresolved.length} / ${total} | still unresolved:${stillUnresolved.length}`)
+  return { resolved: total - stillUnresolved.length, stillUnresolved, skipped, warnings, attempted: total }
 }
 
 // Manual per-track Retry gets a much longer SoundNet deadline than the bulk import (which

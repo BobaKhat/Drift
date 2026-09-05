@@ -7,7 +7,7 @@ import {
   renamePlaylist,
   ensureDemoLibrary,
 } from '../lib/playlists'
-import { parseInput, runImport, retryUnresolved, acceptVersion as acceptVersionLib } from '../lib/import'
+import { parseInput, runImport, runImportPass2, retryUnresolved, acceptVersion as acceptVersionLib } from '../lib/import'
 import { saveSet } from '../lib/sets'
 import { setArtResolvedHandler, setPreviewResolvedHandler } from '../lib/preview'
 import { getUserId, hasSeenDemo, markSeenDemo } from '../lib/identity'
@@ -398,9 +398,10 @@ export function PlaylistProvider({ children }) {
     }
   }, [refreshPlaylists])
 
-  // Paste → live import. One fast V1 sweep plots hits on the map as they land; when it finishes the
-  // map is fully interactive. V1 misses go to the reconciliation panel, where the per-track Retry
-  // runs the V2–V4 cascade on demand — there is no automatic background pass. See src/lib/import.js.
+  // Paste → live import, two automatic passes. Pass 1 is a fast tier-1 sweep that plots hits as they
+  // land. Pass 2 automatically runs the tier 2-5 cascade over the Pass-1 misses, plotting in place as
+  // they resolve while the user keeps exploring; the reconciliation panel then opens once on whatever
+  // is still unresolved. The per-track Retry stays as a manual escape hatch. See src/lib/import.js.
   const runPaste = useCallback(async (text) => {
     clearTimeout(doneChipTimer.current)
     setReconciliation(null)
@@ -426,15 +427,24 @@ export function PlaylistProvider({ children }) {
       await refreshPlaylists()
       setImportState(null)       // dismiss the paste modal — the map is the surface now
 
-      // —— Fast V1 sweep. Each hit plots + advances the chip's "N of TOTAL". ——
-      const result = await runImport(text, {
+      // —— Pass 1: fast tier-1 sweep. Each hit plots + advances the chip's "N of TOTAL". ——
+      const pass1 = await runImport(text, {
+        onTrack: (track) => plotAndCount(playlistId, track),
+      })
+
+      // —— Pass 2 (automatic): tier 2-5 cascade over the Pass-1 misses. Tracks plot in place as they
+      // resolve (the map stays live and interactive throughout — the awaits yield to the event loop,
+      // they don't block the UI). We await it only so the reconciliation panel opens once, on the
+      // FINAL leftovers rather than the mid-flight Pass-1 list. ——
+      const pass2 = await runImportPass2(pass1.unresolved, {
         onTrack: (track) => plotAndCount(playlistId, track),
       })
 
       finishImport({
-        mappedCount: result.mapped.length,
-        unresolved: result.unresolved,
-        warnings: result.warnings,
+        mappedCount: pass1.mapped.length + pass2.resolved,
+        // Only what neither pass could resolve: url/unparseable (never attempted) + Pass-2 misses.
+        unresolved: [...pass2.skipped, ...pass2.stillUnresolved],
+        warnings: [...pass1.warnings, ...pass2.warnings],
       })
     } catch (err) {
       console.error('[drift] import failed:', err)
