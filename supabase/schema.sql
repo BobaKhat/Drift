@@ -35,7 +35,8 @@ create table if not exists public.tracks (
   analyzed_at       timestamptz,
   status            text          default 'analyzed',
   missing_features  text[],
-  preview_url       text
+  preview_url       text,
+  resolved_via      text
 );
 
 alter table public.tracks enable row level security;
@@ -71,6 +72,11 @@ alter table public.tracks add column if not exists preview_url text;
 -- BPM fix — e.g. half-time tracks SoundNet reported at 2× tempo). Guarded add so existing
 -- environments pick it up without a full reset.
 alter table public.tracks add column if not exists bpm_source text default 'soundnet';
+
+-- Which SoundNet query-cascade tier resolved a track: 'tier1_full', 'tier2_primary_artist',
+-- 'tier3_strip_feat', 'tier4_strip_version', or 'tier5_fold_diacritics' (see buildRetryVariations
+-- in src/lib/pipeline.js). null on unresolved rows. Guarded add so existing environments pick it up.
+alter table public.tracks add column if not exists resolved_via text;
 
 -- Playlists: one active on the map at a time. user_id is "demo" until auth lands.
 create table if not exists public.playlists (

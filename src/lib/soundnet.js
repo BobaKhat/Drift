@@ -102,12 +102,16 @@ async function fetchWithRetry(url, { timeoutMs = SOUNDNET_TIMEOUT_MS, retries = 
 // (SOUNDNET_TIMEOUT_MS); the manual per-track Retry passes a longer one to tolerate a slow
 // SoundNet response for a single track the user explicitly asked to re-fetch.
 export async function getAudioFeatures(artist, title, { timeoutMs = SOUNDNET_TIMEOUT_MS } = {}) {
-  const params = new URLSearchParams({ artist, song: title })
-  const url = `/api/soundnet/pktx/analysis?${params}`
+  // Every query parameter goes through encodeURIComponent() so special characters are escaped
+  // explicitly: spaces → %20 (not the '+' URLSearchParams emits), '&' → %26, ',' → %2C, and
+  // diacritics → their UTF-8 %-escapes (e.g. 'ū' → %C5%AB). This removes any dependence on the
+  // upstream decoder treating '+' as a space.
+  const qs = `artist=${encodeURIComponent(artist)}&song=${encodeURIComponent(title)}`
+  const url = `/api/soundnet/pktx/analysis?${qs}`
 
   // Log both the decoded form (readable) and the raw encoded query string (exact wire format)
   console.log(`[soundnet] artist="${artist}" | song="${title}"`)
-  console.log(`[soundnet] encoded query string: ${params.toString()}`)
+  console.log(`[soundnet] encoded query string: ${qs}`)
   console.log(`[soundnet] → GET ${url}`)
 
   const res = await fetchWithRetry(url, { timeoutMs })
