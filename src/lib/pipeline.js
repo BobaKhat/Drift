@@ -338,18 +338,34 @@ async function findCachedTrack(artist, title) {
 // Takes already-resolved artist/title so callers that resolved a Spotify URL (or have
 // demo data) can reuse the same caching/dedup path without re-parsing a string.
 //
+// forceRefresh (per-track Retry / "Use this version"): skip the cache short-circuit and always run
+// the cascade, then UPDATE the existing row in place. Bulk import leaves it false so cached hits
+// stay fast. Cache hits otherwise require usable features (see the usableCache check below).
+//
 // Returns the Supabase row augmented with _meta: { versionWarning, retriedCount,
 // variationIndex, resolvedVia, variations, durationReject } for the reconciliation layer. _meta is
 // NOT stored in the DB (but resolved_via IS a real column on the row itself).
-export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs, v1Only = false, skipV1 = false, acceptVersion = false } = {}) {
-  // Return cached result if available. Normalized (lower+trim) to match the unique index, so a
-  // case/whitespace variant of an already-imported song hits the cache instead of re-analyzing.
+export async function analyzeTrackParts(artist, title, { delayMs = 0, spotifyArtUrl = null, spotifyDuration = null, timeoutMs, v1Only = false, skipV1 = false, acceptVersion = false, forceRefresh = false } = {}) {
+  // Look up any existing row. Normalized (lower+trim) to match the unique index, so a
+  // case/whitespace variant of an already-imported song reuses the same row instead of duplicating.
+  // We ALWAYS fetch it (even under forceRefresh) so a re-run UPDATEs that row in place rather than
+  // inserting a duplicate — see the update-vs-insert branch below.
   const cached = await findCachedTrack(artist, title)
 
-  // Only trust the cache if analysis actually succeeded — unanalyzed records get retried.
-  if (cached && cached.status !== 'unanalyzed') {
+  // Cache HIT only when the row carries USABLE features. A stored MISS must never short-circuit:
+  //   • status 'unanalyzed'      — the pipeline's marker for "SoundNet returned nothing"
+  //   • null bpm or null energy  — the two core fields a real SoundNet hit always includes; a row
+  //                                missing either was never truly analyzed, whatever its status says
+  // Either case falls through to the full tier cascade so the track gets a real lookup. forceRefresh
+  // (per-track Retry / "Use this version") bypasses the cache unconditionally and re-runs.
+  const usableCache =
+    cached && cached.status !== 'unanalyzed' && cached.bpm != null && cached.energy != null
+  if (!forceRefresh && usableCache) {
     console.log('[drift] cache hit:', cached.artist, '–', cached.name)
     return cached
+  }
+  if (forceRefresh && cached) {
+    console.log('[drift] forced refresh — bypassing cache, re-running cascade for:', cached.artist, '–', cached.name)
   }
 
   // Stagger SoundNet calls to stay within rate limits — delay only on cache miss.

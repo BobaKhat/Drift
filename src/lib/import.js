@@ -182,14 +182,19 @@ export async function runImport(text, { onTrack = () => {}, onProgress = () => {
 // waiting out a slow SoundNet response rather than treating it as a timeout "no exact match".
 const RETRY_TIMEOUT_MS = 45000
 
-// Re-analyze a single unresolved entry through the FULL V1–V4 cascade. The user may have edited the
-// artist/title before retrying, and the edit itself is often the fix — so V1 must fire on whatever
-// string they submit (skipping it would dedup an unedited-shaped query down to zero fired variations,
-// e.g. a no-comma/no-suffix title). The tradeoff: an UNEDITED retry re-fires the V1 that already
-// missed during import before reaching V2–V4, but the deliberate 45s manual deadline absorbs that.
+// Re-analyze a single unresolved entry through the FULL tier cascade (Tier 1 → 5). The user may have
+// edited the artist/title before retrying, and the edit itself is often the fix — so Tier 1 must fire
+// on whatever string they submit (skipping it would dedup an unedited-shaped query down to zero fired
+// variations, e.g. a no-comma/no-suffix title). The tradeoff: an UNEDITED retry re-fires the Tier 1
+// that already missed during import before reaching the variations, but the deliberate 45s manual
+// deadline absorbs that.
+//
+// forceRefresh is REQUIRED here: the import stored this track's miss as an 'unanalyzed' row, and even
+// once features exist a Retry must re-run rather than be served the stale cached row — otherwise
+// Retry is a silent no-op. analyzeTrackParts still UPDATEs that row in place (no new row, no delete).
 // Returns the track row on success, else null.
 export async function retryUnresolved(artist, title) {
-  const track = await analyzeTrackParts(artist, title, { timeoutMs: RETRY_TIMEOUT_MS })
+  const track = await analyzeTrackParts(artist, title, { timeoutMs: RETRY_TIMEOUT_MS, forceRefresh: true })
   if (!track || track.status === 'unanalyzed') return null
   return track
 }
@@ -199,7 +204,7 @@ export async function retryUnresolved(artist, title) {
 // guard rejected — and stamps user_accepted_version on the stored row. Returns the analyzed track, or
 // null if SoundNet returns nothing this time (transient miss).
 export async function acceptVersion(artist, title) {
-  const track = await analyzeTrackParts(artist, title, { timeoutMs: RETRY_TIMEOUT_MS, acceptVersion: true })
+  const track = await analyzeTrackParts(artist, title, { timeoutMs: RETRY_TIMEOUT_MS, acceptVersion: true, forceRefresh: true })
   if (!track || track.status === 'unanalyzed') return null
   return track
 }
