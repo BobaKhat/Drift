@@ -299,7 +299,7 @@ export default function ReconciliationCard() {
       {/* Everything variable (summary counts, version warnings, retry rows) shares ONE scroll region
           that flexes to fill the fixed-height card, so the modal's overall size never changes with the
           amount of content — only this middle area scrolls. */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div className="drift-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: 20, flex: 1, minHeight: 0, overflowY: 'auto' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {/* Mapped total — songs plotted on the map by the import sweep. */}
           <span style={{ fontFamily: FONT, fontSize: 14, color: C.green }}>

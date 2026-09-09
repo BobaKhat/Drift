@@ -503,7 +503,7 @@ export default function SetBuilderPanel() {
           </div>
         </div>
       ) : (
-        <div ref={scrollRef} className="hide-scrollbar" style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: ROW_GAP, flex: 1, overflowY: 'auto', minHeight: 0 }}>
+        <div ref={scrollRef} className="drift-scrollbar" style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: ROW_GAP, flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {chainTracks.map((track, i) => (
             <div key={chain[i]} ref={(el) => { rowRefs.current[i] = el }}>
               <ChainRow
@@ -557,7 +557,7 @@ export default function SetBuilderPanel() {
               </span>
             </button>
             {expanded && (
-              <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 240, overflowY: 'auto' }}>
+              <div className="drift-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 240, overflowY: 'auto' }}>
                 {orphanGroups.map((group, gi) => (
                   <OrphanGroup
                     key={group.id}

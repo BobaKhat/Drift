@@ -30,6 +30,30 @@ html, body, #root {
   display: none;
 }
 
+/* Dark-aesthetic scrollbar — reusable across the scrolling panels (reconciliation, playlist, set
+   builder). Transparent track; a thin (6px) fully-rounded thumb in the secondary gray (C.textSecondary
+   #848484 → rgb(132,132,132)) at low opacity, brightening slightly on hover. Firefox gets the same via
+   the thin native scrollbar with matching thumb/track colors. Add this class to any overflow container
+   that should show a scrollbar instead of hiding it. */
+.drift-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(132, 132, 132, 0.28) transparent;
+}
+.drift-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.drift-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.drift-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(132, 132, 132, 0.28);
+  border-radius: 9999px;
+}
+.drift-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(132, 132, 132, 0.45);
+}
+
 /* Smooth zoom steps only — class toggled via JS on wheel+ctrl (pinch/zoom), not on pan */
 .drift-canvas.is-zooming .react-flow__viewport {
   transition: transform 80ms cubic-bezier(0.25, 0.1, 0.25, 1);

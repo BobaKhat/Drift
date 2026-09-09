@@ -33,7 +33,7 @@ export default function ExploreByPanel() {
       </div>
 
       {/* ——— Scrollable body ——— */}
-      <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div className="drift-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1, minHeight: 0, overflowY: 'auto' }}>
 
         {/* Preset rows */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>

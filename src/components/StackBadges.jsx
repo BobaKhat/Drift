@@ -123,7 +123,7 @@ export const StackPopover = function StackPopover({ innerRef, songs, tiers, onSe
       {/* Subtle divider — a hairline, not a heavy border */}
       <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', width: '100%', margin: '12px 0' }} />
       {/* Scrollable song list — the only scroll region, so the header stays put */}
-      <div className="hide-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: ROW_GAP, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+      <div className="drift-scrollbar" style={{ display: 'flex', flexDirection: 'column', gap: ROW_GAP, flex: 1, minHeight: 0, overflowY: 'auto' }}>
         {songs.map((song) => (
           <SongCardRow
             key={song.id}

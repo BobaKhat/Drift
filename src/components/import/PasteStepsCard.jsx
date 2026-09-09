@@ -38,6 +38,7 @@ export default function PasteStepsCard() {
           </ol>
 
           <textarea
+            className="drift-scrollbar"
             value={text}
             onChange={(e) => { setText(e.target.value); if (error) setError(null) }}
             placeholder="Artist – Title or Spotify link, one per line"
