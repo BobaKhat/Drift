@@ -1579,6 +1579,12 @@ function DriftMapInner({ tracks }) {
   // rescales every X proportionally (value 50 stays at 50% of W).
   const prevBuildRef = useRef({ tracks: stagedTracks, preset: presetConfig, pad: geom.PAD })
   const repositionTimer = useRef(null)
+  // While a preset reposition GLIDE is in flight we turn OFF React Flow's viewport culling
+  // (onlyRenderVisibleElements) so EVERY node — including ones parked off-screen — stays mounted and
+  // can CSS-transition to its new spot. Without this, a culled node isn't in the DOM at its old
+  // position, so it mounts fresh at the new one and teleports instead of gliding — invisible when
+  // zoomed out (the viewport holds everything) but obvious when zoomed in. Re-enabled when the glide ends.
+  const [repositioning, setRepositioning] = useState(false)
   // Bumped whenever the map starts a reposition GLIDE (a preset/orientation change or the import-end
   // settle) so NebulaLayer can hold its redraw until the songs finish moving instead of snapping the
   // cloud under them. Only these node-gliding reflows bump it — a plain arrival/fit does not.
@@ -1671,6 +1677,34 @@ function DriftMapInner({ tracks }) {
       return
     }
 
+    // —— Preset-only reposition (not mid-import, no track/width change): glide EVERY node ————————————
+    // A preset change re-rules every coordinate and we want them all to GLIDE. The glide is a CSS
+    // transition on each node's transform, which can only animate a node that's already in the DOM at
+    // its old position — but React Flow culls off-viewport nodes (onlyRenderVisibleElements), so when
+    // zoomed in the off-screen ones aren't mounted and would teleport straight to their new spot. So we
+    // do it in two phases: first flip culling OFF (mount every node where it currently is), then on the
+    // next frame apply the new positions + arm the glide, so the browser sees a transform change to
+    // animate for ALL nodes. Culling is restored when the glide finishes.
+    const presetOnly = presetChanged && !tracksChanged && !widthChanged && !importingRef.current
+    if (presetOnly) {
+      const el = wrapperRef.current
+      setRepositioning(true) // onlyRenderVisibleElements -> false; current nodes stay mounted at old pos
+      // Two rAFs: the first lets React commit + paint the un-culled tree at the OLD positions, the
+      // second then moves them so the transform actually changes (a same-frame move has no "from").
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        setNodes(built) // new positions -> every mounted node glides
+        el?.classList.add('drift-repositioning')
+        recomputeRef.current?.(rf.getViewport().zoom, built, true)
+        setReflowNonce((n) => n + 1) // songs are gliding — tell the nebula to appear after they settle
+        clearTimeout(repositionTimer.current)
+        repositionTimer.current = setTimeout(() => {
+          el?.classList.remove('drift-repositioning')
+          setRepositioning(false) // glide done — re-enable viewport culling
+        }, 520)
+      }))
+      return
+    }
+
     // —— Full rebuild (playlist swap, preset/axis change, resize — INCLUDING mid-import) —————————————
     // Every node moves to its freshly-ruled position. Mid-import we merge the new positions onto the
     // LIVE nodes — preserving each song's data and any in-flight `appearing` fade — instead of replacing
@@ -1692,9 +1726,9 @@ function DriftMapInner({ tracks }) {
     // Positions changed → re-cluster from the fresh list (the store still holds the old positions), and
     // force the commit so the rebuilt (all-visible) nodes get re-hidden even if the grouping is unchanged.
     recomputeRef.current?.(rf.getViewport().zoom, built, true)
-    // A track/width change re-fits the axis box; a preset-only change glides in place with the viewport
-    // held. Mid-import only preset/width reach here (a pure track change took the append path), so a
-    // preset change correctly glides without yanking the map the user is interacting with.
+    // A track/width change re-fits the axis box. A preset change reaches here only MID-IMPORT now (the
+    // non-import preset case took the un-cull-then-glide early return above); mid-import the nodes are
+    // largely on-screen anyway, so a plain in-place glide is enough and we skip the culling dance.
     if (tracksChanged || widthChanged) {
       hasFit.current = false
     } else if (presetChanged) {
@@ -2211,7 +2245,7 @@ function DriftMapInner({ tracks }) {
             // would cull chain endpoints too and blink their wires. Build mode instead runs our own
             // culler (see the build-mode culling effect) that hides off-screen LIBRARY nodes while
             // force-mounting every chain/orphan node, so we get the same win without the blink.
-            onlyRenderVisibleElements={!buildMode}
+            onlyRenderVisibleElements={!buildMode && !repositioning}
             style={{ background: 'transparent' }}
             proOptions={{ hideAttribution: true }}
           />
