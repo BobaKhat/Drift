@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
@@ -253,6 +253,130 @@ function selectModeForTrack(track, complexity) {
 
 const MODE_KEYS = ['n1', 'k1', 'phi1', 's1', 'n2', 'k2', 'phi2', 's2']
 const sameMode = (a, b) => !!a && !!b && MODE_KEYS.every((k) => a[k] === b[k])
+
+// —— Graceful fallback: capabilities + a static 2D Chladni figure —————————————————————————————————————
+// Used when WebGL is unavailable, a shader won't compile, or the context is lost. The figure is drawn
+// from the SAME mode parameters the WebGL sim uses for the track (selectModeForTrack), so the fallback
+// is a still frame of the same pattern rather than a placeholder.
+
+// Bessel J_n via the integral J_n(x) = (1/π)∫₀^π cos(nτ − x·sinτ) dτ, Simpson's rule, 64 intervals.
+// Plenty accurate for the x ≤ ~18 range here, and only called to build a small radial lookup per mode.
+function besselJ(n, x) {
+  const N = 64, h = Math.PI / N
+  let s = Math.cos(n * 0) + Math.cos(n * Math.PI - x * Math.sin(Math.PI))
+  for (let i = 1; i < N; i++) {
+    const t = i * h
+    s += (i % 2 ? 4 : 2) * Math.cos(n * t - x * Math.sin(t))
+  }
+  return (s * h / 3) / Math.PI
+}
+
+const smstep = (e0, e1, x) => {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)))
+  return t * t * (3 - 2 * t)
+}
+
+// WebGL capability snapshot for the ?debug=1 overlay. Best-effort; never throws.
+function readDiag(gl) {
+  try {
+    const is2 = typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info')
+    const gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)
+    return {
+      ua: typeof navigator !== 'undefined' ? navigator.userAgent : '(no navigator)',
+      webgl: is2 ? 'WebGL2' : 'WebGL1',
+      gpu: String(gpu),
+      extColorBufferFloat: !!gl.getExtension('EXT_color_buffer_float'),
+      extColorBufferHalfFloat: !!gl.getExtension('EXT_color_buffer_half_float'),
+      oesTextureFloatLinear: !!gl.getExtension('OES_texture_float_linear'),
+    }
+  } catch (e) {
+    return { ua: navigator?.userAgent, webgl: 'error', gpu: String(e), extColorBufferFloat: false, extColorBufferHalfFloat: false, oesTextureFloatLinear: false }
+  }
+}
+
+// Probe capabilities from a throwaway context when the real renderer failed to even construct.
+function probeWebGL() {
+  try {
+    const c = document.createElement('canvas')
+    const gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl')
+    if (!gl) return { ua: navigator?.userAgent, webgl: 'none', gpu: '(no WebGL context)', extColorBufferFloat: false, extColorBufferHalfFloat: false, oesTextureFloatLinear: false }
+    return readDiag(gl)
+  } catch (e) {
+    return { ua: navigator?.userAgent, webgl: 'none', gpu: String(e), extColorBufferFloat: false, extColorBufferHalfFloat: false, oesTextureFloatLinear: false }
+  }
+}
+
+// Lighten a dark album colour so the figure still reads on the near-black tile: scale so the brightest
+// channel reaches ~0.85. rgb01 is [r,g,b] in 0..1; returns 0..255 ints.
+function tintBytes(rgb01) {
+  const src = rgb01 || FALLBACK_RGB
+  const peak = Math.max(src[0], src[1], src[2], 0.001)
+  const g = Math.min(1 / peak, 2.2) * 0.85
+  return src.map((v) => Math.round(Math.min(255, v * g * 255)))
+}
+
+// Render the track's Chladni figure as a static image into a 2D canvas: sand piles where the mode
+// field's |displacement| → 0, so those nodal lines are drawn bright (album-tinted) on the dark BG,
+// the disc centred in the tile just like the WebGL version. Mirrors the sim's r-normalisation
+// (field r = 1 at FIELD_R) and rim margin (grains contained inside EDGE_R).
+function drawFallbackFigure(canvas, mode, albumRgb01) {
+  const host = canvas.parentElement
+  const cssW = Math.max(1, host?.clientWidth || 300)
+  const cssH = Math.max(1, host?.clientHeight || 200)
+  // Cap the backing store; per-pixel field eval is cheap at this size and CSS scales it up to fill.
+  const cap = 340
+  const aspect = cssW / cssH
+  const cw = aspect >= 1 ? cap : Math.round(cap * aspect)
+  const ch = aspect >= 1 ? Math.round(cap / aspect) : cap
+  canvas.width = cw
+  canvas.height = ch
+  const ctx = canvas.getContext('2d')
+  if (!ctx || !mode) return
+
+  const [tr, tg, tb] = tintBytes(albumRgb01)
+  const bg = 10 // 0x0a
+  const discR = Math.min(cw, ch) * 0.5
+  const cx = cw / 2, cy = ch / 2
+  const rimInner = EDGE_R / PLATE_R          // grains stop here; beyond fades to the dark margin
+  const rScale = PLATE_R / FIELD_R           // visual edge (physical PLATE_R) in field-normalised units
+
+  // Radial lookup: J_n(k · fieldR) sampled along r — the field is separable, so this is all the Bessel
+  // work; the per-pixel loop only multiplies by the angular cosine.
+  const LUT = 512
+  const j1 = new Float32Array(LUT), j2 = new Float32Array(LUT)
+  for (let i = 0; i < LUT; i++) {
+    const fr = (i / (LUT - 1)) * rScale
+    j1[i] = besselJ(mode.n1, mode.k1 * fr)
+    j2[i] = besselJ(mode.n2, mode.k2 * fr)
+  }
+
+  const img = ctx.createImageData(cw, ch)
+  const d = img.data
+  for (let y = 0; y < ch; y++) {
+    for (let x = 0; x < cw; x++) {
+      const idx = (y * cw + x) * 4
+      const dx = (x - cx) / discR, dy = (y - cy) / discR
+      const rn = Math.hypot(dx, dy)
+      let r8 = bg, g8 = bg, b8 = bg
+      if (rn <= 1) {
+        const th = Math.atan2(dy, dx)
+        const li = Math.min(LUT - 1, (rn * (LUT - 1)) | 0)
+        const disp = mode.s1 * j1[li] * Math.cos(mode.n1 * th + mode.phi1)
+                   + mode.s2 * j2[li] * Math.cos(mode.n2 * th + mode.phi2)
+        // Bright where the plate is still (|disp| ≈ 0) — that's where the sand collects.
+        let inten = 1 - Math.min(1, Math.abs(disp) / 0.14)
+        inten *= inten
+        inten *= smstep(1.0, rimInner, rn) // fade out across the rim margin, like the sim's containment
+        r8 = bg + inten * (tr - bg)
+        g8 = bg + inten * (tg - bg)
+        b8 = bg + inten * (tb - bg)
+      }
+      d[idx] = r8; d[idx + 1] = g8; d[idx + 2] = b8; d[idx + 3] = 255
+    }
+  }
+  ctx.putImageData(img, 0, 0)
+}
 
 // —— GPGPU passes. All render a fullscreen quad; vUv is the particle's texel address.
 const QUAD_VERT = /* glsl */ `
@@ -1039,6 +1163,11 @@ export default function DeckVisualizer({ track, open }) {
   const { engine } = useAudio()
   const hostRef = useRef(null)
   const stateRef = useRef(null)
+  const fallbackRef = useRef(null)
+  // failure = {reason, detail} once WebGL can't run (renderer create, shader compile, or context loss)
+  // → switch to the static 2D figure. diag = capability snapshot rendered by the ?debug=1 overlay.
+  const [failure, setFailure] = useState(null)
+  const [diag, setDiag] = useState(null)
 
   // Album-art accent (same extraction as the ambient glow / track bar): 'r, g, b' or null.
   const albumRgb = useAlbumColor(track?.album_art_url)
@@ -1060,6 +1189,16 @@ export default function DeckVisualizer({ track, open }) {
     ambient: clamp01((track?.energy ?? 50) / 100) * 0.003,
   }
 
+  // Draw the static 2D figure whenever we're in fallback mode — and redraw it when the track (its mode)
+  // or album colour changes. The canvas only exists in the DOM while `failure` is set (see the return),
+  // so this runs after that render commits and the ref is live.
+  useEffect(() => {
+    if (!failure) return
+    const cvs = fallbackRef.current
+    if (!cvs) return
+    drawFallbackFigure(cvs, featRef.current?.mode, featRef.current?.album)
+  }, [failure, track?.id, albumRgb])
+
   // Build the Three.js pipeline once per mount.
   useEffect(() => {
     const host = hostRef.current
@@ -1070,17 +1209,17 @@ export default function DeckVisualizer({ track, open }) {
         antialias: true,
         alpha: false,
         // 'default' (not 'high-performance'): on dual-GPU MacBooks high-performance forces the discrete
-        // GPU, and macOS screen-share / FaceTime capture often can't read that GPU's layer — so the canvas
-        // shows BLACK in the shared/recorded video while rendering fine on the actual screen. Integrated-GPU
-        // output is captured far more reliably. Costs a little GPU headroom for the 65k-grain sim.
+        // GPU, whose layer can render black on the actual screen with some macOS/driver/browser combos (and
+        // which OS screen-capture also tends to miss). Integrated-GPU output is more reliable on both counts.
         powerPreference: 'default',
-        // preserveDrawingBuffer keeps the rendered frame in the buffer after compositing, which lets capture
-        // pipelines that miss the live GPU layer still read a filled canvas instead of black. Small
-        // perf/memory cost (blocks a buffer-swap optimization); worth it so the deck survives screen shares.
-        preserveDrawingBuffer: true,
       })
-    } catch {
-      return // no WebGL → leave the dark tile
+    } catch (e) {
+      // No WebGL context at all. Record the reason + whatever capabilities we can still probe, and flip to
+      // the 2D fallback figure instead of leaving a silent black tile.
+      console.error('[drift:visualizer] WebGLRenderer creation failed:', e)
+      setDiag(probeWebGL())
+      setFailure({ reason: 'renderer-create', detail: String(e?.message || e) })
+      return
     }
     const pr = Math.min(window.devicePixelRatio, 2)
     renderer.setPixelRatio(pr)
@@ -1099,6 +1238,24 @@ export default function DeckVisualizer({ track, open }) {
     const gl = renderer.getContext()
     const canFloat = !!gl.getExtension('EXT_color_buffer_float')
     const DATA_TYPE = canFloat ? THREE.FloatType : THREE.HalfFloatType
+
+    // —— Failure diagnostics + graceful-fallback hooks ——————————————————————————————————————————————
+    // Record capabilities for the ?debug=1 overlay (shown even on success, so a report screenshot is useful).
+    setDiag(readDiag(gl))
+    // Shader compile/link failure — a GPU/driver rejecting a shader that compiled fine elsewhere is the
+    // classic "black on their machine, works on mine". three calls this on the failing program.
+    renderer.debug.onShaderError = (glc, program) => {
+      const log = (glc.getProgramInfoLog(program) || '').trim()
+      console.error('[drift:visualizer] shader compile/link failed:\n' + log)
+      setFailure({ reason: 'shader-compile', detail: log.split('\n').slice(0, 8).join('\n') })
+    }
+    // Context loss — GPU reset, or too many live WebGL contexts (see forceContextLoss in cleanup).
+    const onContextLost = (e) => {
+      e.preventDefault()
+      console.error('[drift:visualizer] webglcontextlost')
+      setFailure({ reason: 'context-lost', detail: 'webglcontextlost fired' })
+    }
+    renderer.domElement.addEventListener('webglcontextlost', onContextLost)
 
     const f = featRef.current
     const c0 = f.album ?? FALLBACK_RGB
@@ -1593,6 +1750,9 @@ export default function DeckVisualizer({ track, open }) {
 
     return () => {
       ro.disconnect()
+      // Remove before forceContextLoss below, so the synthetic context-loss it fires doesn't trip the
+      // fallback during a normal unmount.
+      renderer.domElement.removeEventListener('webglcontextlost', onContextLost)
       stateRef.current = null
       posA.dispose()
       posB.dispose()
@@ -1611,6 +1771,11 @@ export default function DeckVisualizer({ track, open }) {
       bloom.dispose()
       composer?.dispose()
       renderer.dispose()
+      // Actively drop the GL context (WEBGL_lose_context). renderer.dispose() alone frees three's own
+      // resources but leaves the context to be reclaimed by GC — so rapidly opening/closing decks could
+      // pile up live contexts and hit the browser's ~16-context ceiling, at which point NEW contexts fail
+      // and the visualizer goes black. Forcing the loss here keeps the count at one.
+      renderer.forceContextLoss()
       host.removeChild(renderer.domElement)
     }
   }, [engine])
@@ -1619,18 +1784,28 @@ export default function DeckVisualizer({ track, open }) {
   // persists on the canvas for the slide-out).
   useEffect(() => {
     const st = stateRef.current
-    if (!open || !st) return
+    if (!open || !st || failure) return // a WebGL failure switches to the static 2D fallback — stop the loop
     st.last = 0 // don't integrate the time the panel spent closed
     let raf = requestAnimationFrame(function tick(now) {
       raf = requestAnimationFrame(tick)
       stateRef.current?.frame(now)
     })
     return () => cancelAnimationFrame(raf)
-  }, [open, engine])
+  }, [open, engine, failure])
+
+  const debug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1'
+  const debugText = diag && [
+    `WebGL: ${diag.webgl}`,
+    `GPU: ${diag.gpu}`,
+    `EXT_color_buffer_float: ${diag.extColorBufferFloat}`,
+    `EXT_color_buffer_half_float: ${diag.extColorBufferHalfFloat}`,
+    `OES_texture_float_linear: ${diag.oesTextureFloatLinear}`,
+    `failure: ${failure ? `${failure.reason}${failure.detail ? ' — ' + failure.detail : ''}` : 'none'}`,
+    `UA: ${diag.ua}`,
+  ].join('\n')
 
   return (
     <div
-      ref={hostRef}
       style={{
         // Deliberately OUTSIDE the neomorphic system. This tile is a screen, not a mounted gauge: no cast,
         // no bevel, no shadow of any kind — it sits flush in the panel and its edge is a plain 1px border.
@@ -1638,11 +1813,37 @@ export default function DeckVisualizer({ track, open }) {
         // that is the point: a shadow would put it in the room with the gauges, and a screen is a hole in
         // the panel. Do not "fix" the inconsistency by giving this a tile recipe.
         // The face stays #0A0A0A rather than the tiles' TILE_BG: the canvas hides it whenever there IS a
-        // canvas, so the only moments it paints are the frame before mount and the no-WebGL fallback
-        // below — both of which want the dark void this tile reads as, not a lit grey slab.
+        // canvas, so the only moments it paints are the frame before mount and the fallback below — both of
+        // which want the dark void this tile reads as, not a lit grey slab.
         position: 'relative', height: '100%', minHeight: 0, borderRadius: 20, overflow: 'hidden',
         background: '#0A0A0A', border: `1px solid ${C.border}`,
       }}
-    />
+    >
+      {/* The WebGL canvas is appended here imperatively (see the pipeline effect). */}
+      <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
+
+      {/* Graceful fallback: a static 2D render of the same Chladni figure, covering the black/absent WebGL
+          canvas whenever the GPU pipeline can't run. */}
+      {failure && (
+        <canvas
+          ref={fallbackRef}
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block' }}
+        />
+      )}
+
+      {/* ?debug=1 capability overlay — shown on success too, so a bug-report screenshot is always useful. */}
+      {debug && debugText && (
+        <pre
+          style={{
+            position: 'absolute', left: 8, top: 8, right: 8, margin: 0, zIndex: 2,
+            font: '10px/1.45 ui-monospace, Menlo, monospace', color: '#d0d0d0',
+            background: 'rgba(0,0,0,0.6)', padding: '6px 8px', borderRadius: 6,
+            whiteSpace: 'pre-wrap', wordBreak: 'break-word', pointerEvents: 'none',
+          }}
+        >
+          {debugText}
+        </pre>
+      )}
+    </div>
   )
 }
