@@ -1203,6 +1203,14 @@ export default function DeckVisualizer({ track, open }) {
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
+    // QA aid: ?forcefail=1 forces the graceful 2D fallback without having to break WebGL, so the fallback
+    // figure can be verified on any machine. Pair with ?debug=1 to also see the capability/error overlay.
+    if (new URLSearchParams(window.location.search).get('forcefail')) {
+      console.warn('[drift:visualizer] ?forcefail=1 — forcing the 2D fallback (QA aid)')
+      setDiag(probeWebGL())
+      setFailure({ reason: 'forced-test', detail: '?forcefail=1' })
+      return
+    }
     let renderer
     try {
       renderer = new THREE.WebGLRenderer({
