@@ -1066,7 +1066,19 @@ export default function DeckVisualizer({ track, open }) {
     if (!host) return
     let renderer
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
+      renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: false,
+        // 'default' (not 'high-performance'): on dual-GPU MacBooks high-performance forces the discrete
+        // GPU, and macOS screen-share / FaceTime capture often can't read that GPU's layer — so the canvas
+        // shows BLACK in the shared/recorded video while rendering fine on the actual screen. Integrated-GPU
+        // output is captured far more reliably. Costs a little GPU headroom for the 65k-grain sim.
+        powerPreference: 'default',
+        // preserveDrawingBuffer keeps the rendered frame in the buffer after compositing, which lets capture
+        // pipelines that miss the live GPU layer still read a filled canvas instead of black. Small
+        // perf/memory cost (blocks a buffer-swap optimization); worth it so the deck survives screen shares.
+        preserveDrawingBuffer: true,
+      })
     } catch {
       return // no WebGL → leave the dark tile
     }
